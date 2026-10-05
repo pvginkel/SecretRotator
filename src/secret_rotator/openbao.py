@@ -52,9 +52,12 @@ class OpenBao:
             urllib.request.urlopen, context=ssl.create_default_context(), timeout=TIMEOUT
         )
         self.clock = clock
-        # Where the client takes the role_id and secret_id it logs in with again before its
-        # token's lease ends, read when it does; None: it never logs in again.
-        self.credentials: Callable[[], tuple[str, str]] | None = None
+        # The leaf whose role_id and secret_id the client logs in with again when its token's
+        # lease ends; None: it never logs in again.
+        self.credential_leaf: str | None = None
+        # Those of the last login, or of the leaf as this client last wrote it: a token that has
+        # ended cannot read the leaf.
+        self._credentials: tuple[str, str] | None = None
         self.expires: float | None = None  # when the token's lease ends, by clock
         self._relogging = False
 
@@ -102,10 +105,11 @@ class OpenBao:
         return status, doc
 
     def _fresh(self) -> None:
-        """Logs in again when the token's lease is about to end. The credentials are read with the
-        token still valid, and the requests that read them do not log in again themselves."""
+        """Logs in again when the token's lease is about to end, or has ended while nothing was
+        asked: with the leaf's credentials while the token can still read them, else with those in
+        hand. The requests that read them do not log in again themselves."""
         if (
-            self.credentials is None
+            self.credential_leaf is None
             or self.expires is None
             or self._relogging
             or self.clock() < self.expires - RELOGIN_MARGIN
@@ -113,15 +117,27 @@ class OpenBao:
             return
         self._relogging = True
         try:
-            self.login_approle(*self.credentials())
+            ended = self.clock() >= self.expires
+            self.login_approle(*(self._credentials if ended else self._stored_credentials()))
         finally:
             self._relogging = False
+
+    def _stored_credentials(self) -> tuple[str, str]:
+        leaf = self.credential_leaf
+        return self.value(leaf, "role_id"), self.value(leaf, "secret_id")
+
+    def _wrote(self, leaf: str) -> None:
+        """A rotation of the client's own AppRole writes the new secret_id to the credential leaf
+        before it destroys the old one."""
+        if leaf == self.credential_leaf:
+            self._credentials = self._stored_credentials()
 
     def login_approle(self, role_id: str, secret_id: str) -> None:
         _, doc = self.call(
             "POST", "auth/approle/login", {"role_id": role_id, "secret_id": secret_id}
         )
         self.token = doc["auth"]["client_token"]
+        self._credentials = role_id, secret_id
         lease = doc["auth"].get("lease_duration") or 0
         self.expires = self.clock() + lease if lease else None
 
@@ -178,6 +194,7 @@ class OpenBao:
         if cas is not None:
             body["options"] = {"cas": cas}
         _, doc = self.call("POST", f"{MOUNT}/data/{leaf}", body)
+        self._wrote(leaf)
         return doc["data"]["version"]
 
     def create(self, leaf: str, data: dict[str, str]) -> None:
@@ -196,6 +213,7 @@ class OpenBao:
         )
         if status == 404:
             raise OpenBaoError(f"PATCH {path}: HTTP 404: no leaf {leaf}", status)
+        self._wrote(leaf)
         return doc["data"]["version"]
 
     def value(self, leaf: str, key: str) -> str:

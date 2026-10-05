@@ -4,7 +4,7 @@ values, metadata patch, create, and refusals and transport failures it names."""
 import urllib.error
 
 import pytest
-from fake_openbao import ROLE_ID, SECRET_ID, TOKEN, FakeOpenBao
+from fake_openbao import ROLE_ID, SECRET_ID, TOKEN, FakeOpenBao, approle
 from fixtures import COMPLIANT, data_of
 
 from secret_rotator.openbao import ADDR, RELOGIN_MARGIN, OpenBao, OpenBaoError, Version
@@ -183,43 +183,59 @@ class TestLoggingInAgain:
     """The rotator's token lives 1 h from login and cannot renew itself: a client logs in again
     before its lease ends, from credentials read with the token still valid."""
 
+    LEAF = "iac/rotator-approle"
+
     def logged_in(self, bao, now):
+        bao.leaves[self.LEAF] = {"data": {"role_id": ROLE_ID, "secret_id": SECRET_ID}, "meta": {}}
         c = OpenBao(opener=bao, clock=lambda: now[0])
         c.login_approle(ROLE_ID, SECRET_ID)
-        reads = []
-
-        def credentials():
-            reads.append(c.read("iac/rotator-approle"))
-            return ROLE_ID, SECRET_ID
-
-        c.credentials = credentials
-        return c, reads
+        c.credential_leaf = self.LEAF
+        return c
 
     def logins(self, bao):
         return [r for r in bao.requests if r[1] == "auth/approle/login"]
 
+    def reads(self, bao):
+        return [r for r in bao.requests if r[1] == f"kv/data/{self.LEAF}"]
+
     def test_within_its_lease_less_the_margin_it_does_not(self):
         bao, now = fake(), [0.0]
-        c, reads = self.logged_in(bao, now)
+        c = self.logged_in(bao, now)
         now[0] = 3600 - RELOGIN_MARGIN - 1
         c.metadata("shared/wifi")
-        assert len(self.logins(bao)) == 1 and reads == []
+        assert len(self.logins(bao)) == 1 and self.reads(bao) == []
 
     def test_near_the_end_of_its_lease_it_logs_in_first_and_once(self):
         bao, now = fake(), [0.0]
-        bao.leaves["iac/rotator-approle"] = {"data": {"secret_id": "SECRET-x"}, "meta": {}}
-        c, reads = self.logged_in(bao, now)
+        c = self.logged_in(bao, now)
         now[0] = 3600 - RELOGIN_MARGIN
         c.metadata("shared/wifi")
         c.metadata("shared/wifi")
-        assert len(self.logins(bao)) == 2 and len(reads) == 1
-        assert [r[:2] for r in bao.requests[-4:]] == [
-            ("GET", "kv/data/iac/rotator-approle"),
+        assert len(self.logins(bao)) == 2
+        assert [r[:2] for r in bao.requests[-5:]] == [
+            ("GET", f"kv/data/{self.LEAF}"),
+            ("GET", f"kv/data/{self.LEAF}"),
             ("POST", "auth/approle/login"),
             ("GET", "kv/metadata/shared/wifi"),
             ("GET", "kv/metadata/shared/wifi"),
         ]
         assert c.expires == now[0] + 3600
+
+    def test_past_the_end_of_its_lease_it_logs_in_with_the_credentials_in_hand(self):
+        bao, now = fake(), [0.0]
+        c = self.logged_in(bao, now)
+        now[0] = 3600
+        c.metadata("shared/wifi")
+        assert len(self.logins(bao)) == 2 and self.reads(bao) == []
+
+    def test_a_write_of_the_credential_leaf_puts_what_it_holds_in_hand(self):
+        bao, now = fake(), [0.0]
+        bao.approles = {"rotator": approle(ROLE_ID, **{SECRET_ID: "a-0", "SECRET-new": "a-1"})}
+        c = self.logged_in(bao, now)
+        c.patch(self.LEAF, {"secret_id": "SECRET-new"}, cas=1)
+        now[0] = 3600
+        c.metadata("shared/wifi")
+        assert self.logins(bao)[-1][3] == {"role_id": ROLE_ID, "secret_id": "SECRET-new"}
 
     def test_a_client_without_credentials_never_does(self):
         bao, now = fake(), [0.0]

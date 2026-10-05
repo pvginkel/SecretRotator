@@ -203,26 +203,46 @@ class TestRunPathTellsTelegram:
         )
 
 
-def test_after_its_own_rotation_a_run_logs_in_again_with_the_secret_id_the_leaf_holds():
-    bao = FakeOpenBao(
+def own_store(now):
+    """The rotator's own leaf and AppRole; its token is refused an hour after each login."""
+    return FakeOpenBao(
         {
             cli.OWN_LEAF: {"data": {"role_id": ROLE_ID, "secret_id": SECRET_ID}, "meta": {}},
             "shared/x": {"data": {"k": "v"}, "meta": {}},
         },
-        approles={"rotator": approle(ROLE_ID)},
+        approles={"rotator": approle(ROLE_ID, **{SECRET_ID: "accessor-0"})},
+        clock=lambda: now[0],
     )
+
+
+def logins(bao):
+    return [r[3]["secret_id"] for r in bao.requests if r[1] == "auth/approle/login"]
+
+
+def test_a_wait_past_the_end_of_its_token_logs_in_again_with_the_secret_id_in_hand():
     now = [0.0]
+    bao = own_store(now)
     c = cli.connect(ENV, bao, lambda: now[0])
-    # The approle kind's kv delivery rewrote the leaf; the environment's secret_id is destroyed.
-    bao.leaves[cli.OWN_LEAF]["data"]["secret_id"] = "SECRET-rotator-new-1"
-    bao.approles["rotator"]["secret_ids"]["SECRET-rotator-new-1"] = {"accessor": "a1", "ttl": 0}
-    now[0] = 3600.0
+    now[0] = 3290.0  # the last request before a step waits (jenkins.job: up to 30 min)
     c.metadata("shared/x")
-    logins = [r[3] for r in bao.requests if r[1] == "auth/approle/login"]
-    assert logins == [
-        {"role_id": ROLE_ID, "secret_id": SECRET_ID},
-        {"role_id": ROLE_ID, "secret_id": "SECRET-rotator-new-1"},
-    ]
+    now[0] = 3700.0
+    assert c.metadata("shared/x") == {}
+    assert logins(bao) == [SECRET_ID, SECRET_ID]
+
+
+@pytest.mark.parametrize("then", [3400.0, 3700.0], ids=["before-its-end", "past-its-end"])
+def test_after_its_own_rotation_a_run_logs_in_again_with_the_new_secret_id(then):
+    now = [0.0]
+    bao = own_store(now)
+    c = cli.connect(ENV, bao, lambda: now[0])
+    # The approle kind's kv delivery: mint, kv.write's patch of the leaf, destroy the old one.
+    _, minted = c.call("POST", "auth/approle/role/rotator/secret-id", {"ttl": "2160h"})
+    c.patch(cli.OWN_LEAF, {"secret_id": minted["data"]["secret_id"]}, cas=1)
+    destroy = {"secret_id_accessor": "accessor-0"}
+    c.call("POST", "auth/approle/role/rotator/secret-id-accessor/destroy", destroy)
+    now[0] = then
+    assert c.metadata("shared/x") == {}
+    assert logins(bao) == [SECRET_ID, "SECRET-rotator-new-1"]
 
 
 def test_a_missing_seed_is_an_error_not_a_trace():

@@ -15,6 +15,7 @@ from secret_rotator.openbao import ADDR
 ROLE_ID = "role-id-of-the-rotator"
 SECRET_ID = "SECRET-secret-id-of-the-rotator"
 TOKEN = "token-of-the-rotator"
+LEASE = 3600  # the rotator's token_ttl
 
 APPROLE = re.compile(
     r"auth/approle/role/(?P<role>[^/]+)/(?P<what>role-id|secret-id|secret-id/lookup"
@@ -49,7 +50,7 @@ class FakeResponse(io.BytesIO):
 
 
 class FakeOpenBao:
-    def __init__(self, leaves=None, approles=None):
+    def __init__(self, leaves=None, approles=None, clock=None):
         # path -> {"data": dict | None, "meta": dict}, and once written "version" (the current
         # version's number, else 1) and "history" (version number -> that version's data)
         self.leaves = copy.deepcopy(leaves or {})
@@ -61,6 +62,10 @@ class FakeOpenBao:
         self.approles = copy.deepcopy(approles or {})
         self.minted = 0
         self.refused_logins = set()  # roles whose logins it refuses, as a bound CIDR does
+        # With a clock, TOKEN is refused from LEASE seconds after its last login, as OpenBao 2.5.4
+        # refuses a token that has ended; a login carrying it is still answered.
+        self.clock = clock
+        self.token_ends = None
 
     def __call__(self, req):
         url = urllib.parse.urlsplit(req.full_url)
@@ -74,20 +79,22 @@ class FakeOpenBao:
             if key in self.broken:
                 raise self.broken[key]
         if path == "auth/approle/login":
-            if body == {"role_id": ROLE_ID, "secret_id": SECRET_ID}:
-                return self.answer(200, {"auth": {"client_token": TOKEN, "lease_duration": 3600}})
+            # The rotator's AppRole, unless one of the approles is it
+            own = not any(role["role_id"] == ROLE_ID for role in self.approles.values())
+            if own and body == {"role_id": ROLE_ID, "secret_id": SECRET_ID}:
+                return self.logged_in(TOKEN)
             for name, role in self.approles.items():
                 if (
                     body["role_id"] == role["role_id"]
                     and body["secret_id"] in role["secret_ids"]
                     and name not in self.refused_logins
                 ):
-                    token = TOKEN if role["role_id"] == ROLE_ID else f"token-of-{name}"
-                    return self.answer(
-                        200, {"auth": {"client_token": token, "lease_duration": 3600}}
+                    return self.logged_in(
+                        TOKEN if role["role_id"] == ROLE_ID else f"token-of-{name}"
                     )
             return self.answer(400, {"errors": ["invalid role or secret ID"]})
-        if req.get_header("X-vault-token") != TOKEN:
+        ended = self.token_ends is not None and self.clock() >= self.token_ends
+        if req.get_header("X-vault-token") != TOKEN or ended:
             return self.answer(403, {"errors": ["permission denied"]})
         if (method, path) in self.refuse:
             errors = ["1 error occurred:\n\t* permission denied\n\n"]
@@ -187,6 +194,11 @@ class FakeOpenBao:
             else:
                 meta[key] = value
         return self.answer(204, None)
+
+    def logged_in(self, token):
+        if token == TOKEN and self.clock is not None:
+            self.token_ends = self.clock() + LEASE
+        return self.answer(200, {"auth": {"client_token": token, "lease_duration": LEASE}})
 
     def approle(self, method, name, what, body):
         role = self.approles.get(name)

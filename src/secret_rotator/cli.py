@@ -104,13 +104,8 @@ def connect(
 ) -> OpenBao:
     bao = OpenBao(opener=opener, clock=clock)
     bao.login_approle(environ[ROLE_ID_ENV], environ[SECRET_ID_ENV])
-    bao.credentials = functools.partial(own_credentials, bao)
+    bao.credential_leaf = OWN_LEAF
     return bao
-
-
-def own_credentials(bao: OpenBao) -> tuple[str, str]:
-    """The rotator's AppRole as the store holds it now."""
-    return bao.value(OWN_LEAF, "role_id"), bao.value(OWN_LEAF, "secret_id")
 
 
 def notifier(

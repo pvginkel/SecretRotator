@@ -168,7 +168,7 @@ class Night:
         self.card: Card | None = None
         self.card_known = False  # whether the open card was found, or found to be none
         self.locked: Holder | None = None
-        self.executed = 0  # plans started, or in a dry run planned, under the cap
+        self.executed = 0  # plans started, under the cap
         self.deferred = 0
         self.rotated: list[str] = []
         self.failures: list[str] = []
@@ -285,7 +285,8 @@ class Night:
         if self.locked is not None:
             self.out("    not started: the lock is held")
             return
-        if self.executed >= self.switches.max_rotations_per_run:
+        # A dry run starts no plan: it plans every due one (A9).
+        if not self.dry_run and self.executed >= self.switches.max_rotations_per_run:
             self.deferred += 1
             self.out(f"    not started: past the cap of {self.switches.max_rotations_per_run}")
             return
@@ -293,13 +294,13 @@ class Night:
             self.out(f"    skipped: {why}")
             self.skipped.append(f"`{due.leaf}`: its {due.kind} plan of {keys(due)}: {why}")
             return
-        self.executed += 1
         if self.dry_run:
             self.out(f"    {plan.description}")
             for line in plan_lines(plan):
                 self.out(f"    {line}")
             self.rotated.append(str(due))
             return
+        self.executed += 1
         self.execute(plan, due)
 
     def manual_due(self, due: Due) -> None:

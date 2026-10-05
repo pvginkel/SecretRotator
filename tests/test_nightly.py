@@ -169,6 +169,17 @@ class TestDryRun:
         assert digest.startswith("Dry run. Secret rotation, 2026-10-05\nWould rotate 2:\n")
         assert f"• random plan of {TRELLO} (bearer-token)" in digest
 
+    def test_it_is_not_capped_it_plans_every_due_plan(self):
+        night = Night()
+        night(dry_run=True, max_rotations_per_run=1)
+        log = night.log()
+        for leaf in (LEAF, TRELLO):
+            plan = log.split(f"── random plan of {leaf}")[1].split("──")[0]
+            assert "kv.write" in plan and "k8s.rollout" in plan
+        (digest,) = night.telegram.messages
+        assert digest.startswith("Dry run. Secret rotation, 2026-10-05\nWould rotate 2:\n")
+        assert "past the cap" not in log + digest
+
     def test_its_card_is_marked_as_a_dry_run(self):
         bao = world()
         bao.leaves[STRAY] = {"data": {"x": "SECRET-stray"}, "meta": dict(NOT_ANNOTATED)}
