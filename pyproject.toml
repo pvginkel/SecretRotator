@@ -10,6 +10,11 @@ dependencies = ["pyyaml (>=6.0,<7)"]
 [project.scripts]
 secret-rotator = "secret_rotator.cli:main"
 
+# One package per kind (design §6, plugin contract): the registry finds them here.
+[project.entry-points."secret_rotator.kinds"]
+random = "secret_rotator.kinds.random:Random"
+manual = "secret_rotator.kinds.manual:Manual"
+
 [tool.poetry]
 packages = [{ include = "secret_rotator", from = "src" }]
 

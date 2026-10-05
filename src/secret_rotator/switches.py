@@ -1,12 +1,13 @@
 """The committed switches (design §8): switches.yaml ships inside the package, so a run reads the
 copy its install brought."""
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from importlib import resources
 
 import yaml
 
-from secret_rotator.contract import KINDS
+from secret_rotator import registry
 
 SWITCHES = resources.files("secret_rotator") / "switches.yaml"
 
@@ -25,8 +26,8 @@ class Switches:
     telegram_chat_id: int | None
 
 
-def parse(text: str) -> Switches:
-    """SwitchesError lists every problem."""
+def parse(text: str, implemented: Collection[str]) -> Switches:
+    """SwitchesError lists every problem. implemented: the kinds the install has a plugin for."""
     try:
         doc = yaml.safe_load(text)
     except yaml.YAMLError as e:
@@ -51,7 +52,7 @@ def parse(text: str) -> Switches:
         check("kinds_enabled", False, "not a list of kind names")
     else:
         for kind in kinds:
-            if kind not in KINDS or not KINDS[kind].implemented:
+            if kind not in implemented:
                 problems.append(f"kinds_enabled: {kind!r} is not an implemented kind")
     count = doc.get("max_rotations_per_run")
     check("max_rotations_per_run", is_int(count) and count >= 1, "not a whole number from 1")
@@ -72,4 +73,4 @@ def parse(text: str) -> Switches:
 
 
 def load() -> Switches:
-    return parse(SWITCHES.read_text())
+    return parse(SWITCHES.read_text(), registry.load())

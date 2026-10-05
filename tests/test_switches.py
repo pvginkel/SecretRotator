@@ -15,9 +15,12 @@ VALID = {
 }
 
 
+IMPLEMENTED = {"random", "manual"}
+
+
 def parse(**changes):
     doc = {**VALID, **changes}
-    return sw.parse(yaml.safe_dump({k: v for k, v in doc.items() if v is not ...}))
+    return sw.parse(yaml.safe_dump({k: v for k, v in doc.items() if v is not ...}), IMPLEMENTED)
 
 
 def test_the_packaged_switches_ship_inside_the_package_and_start_in_dry_run():
@@ -34,11 +37,7 @@ def test_the_packaged_switches_ship_inside_the_package_and_start_in_dry_run():
 
 def test_a_valid_file_parses():
     assert parse().telegram_chat_id == -1001234567890
-    assert parse(kinds_enabled=["random", "approle", "manual"]).kinds_enabled == {
-        "random",
-        "approle",
-        "manual",
-    }
+    assert parse(kinds_enabled=["random", "manual"]).kinds_enabled == {"random", "manual"}
     assert parse(kinds_enabled=[]).kinds_enabled == frozenset()
 
 
@@ -52,6 +51,7 @@ def test_a_valid_file_parses():
             {"kinds_enabled": ["keycloak-client"]},
             "kinds_enabled: 'keycloak-client' is not an implemented kind",
         ),
+        ({"kinds_enabled": ["approle"]}, "kinds_enabled: 'approle' is not an implemented kind"),
         ({"kinds_enabled": ["none"]}, "kinds_enabled: 'none' is not an implemented kind"),
         ({"max_rotations_per_run": 0}, "max_rotations_per_run: not a whole number from 1"),
         ({"max_rotations_per_run": True}, "max_rotations_per_run: not a whole number from 1"),
@@ -69,4 +69,4 @@ def test_every_problem_is_named(changes, problem):
 
 def test_a_file_that_is_not_a_mapping():
     with pytest.raises(sw.SwitchesError, match="not a mapping of switches"):
-        sw.parse("- dry_run\n")
+        sw.parse("- dry_run\n", IMPLEMENTED)

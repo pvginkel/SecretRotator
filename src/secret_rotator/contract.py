@@ -13,6 +13,10 @@ MOUNT = "kv"
 STAGING_PREFIX = "rotator/staging/"
 LOCK_LEAF = "rotator/lock"
 
+# What annotate creates a marker leaf's one data key holding (catalog § rotator/): the credential
+# itself is never in KV.
+MARKER_VALUE = "marker leaf: the credential is not kept in KV"
+
 # The rotator's run state on a leaf (design §3.4), written by metadata patch.
 STATUS = "rotator_status"
 STEP = "rotator_step"
@@ -36,14 +40,13 @@ ALL, ONE = "all", "one"
 class KindSpec:
     owns: str | frozenset[str]
     implicit_none: frozenset[str] = frozenset()  # keys that resolve to none without an override
-    implemented: bool = False
 
 
-# Every kind of design §6, both tables. A kind not implemented yet is known: its keys are no
-# finding, and they are skipped.
+# Every kind of design §6, both tables. Which of them are implemented is what the installed
+# plugins say (registry); a kind without one is known: its keys are no finding, and are skipped.
 KINDS: dict[str, KindSpec] = {
-    "random": KindSpec(ALL, implemented=True),
-    "approle": KindSpec(ONE, implemented=True),
+    "random": KindSpec(ALL),
+    "approle": KindSpec(ONE),
     "keycloak-client": KindSpec(frozenset({"client_secret"}), frozenset({"client_id"})),
     "cnpg-role": KindSpec(frozenset({"password"})),
     "jenkins-token": KindSpec(ONE),
@@ -55,7 +58,7 @@ KINDS: dict[str, KindSpec] = {
     "terraform": KindSpec(ONE),
     "mosquitto-user": KindSpec(ONE),
     "samba-user": KindSpec(ONE),
-    "manual": KindSpec(ALL, implemented=True),
+    "manual": KindSpec(ALL),
     "k8s-sa-token": KindSpec(ONE),
     "cephx": KindSpec(ONE),
     "rgw-admin": KindSpec(ONE),
@@ -94,10 +97,6 @@ def copy_target(kind: str | None) -> tuple[str, str] | None:
 def is_scheduled(kind: str | None) -> bool:
     """A key of this kind is rotated on its own schedule: neither none nor a copy (design §3.2)."""
     return kind is not None and kind != NONE and copy_target(kind) is None
-
-
-def is_implemented(kind: str) -> bool:
-    return kind == NONE or copy_target(kind) is not None or KINDS[kind].implemented
 
 
 def resolve(meta: Mapping[str, str], keys: Iterable[str]) -> dict[str, str | None]:
@@ -168,6 +167,11 @@ class Activator:
     name: str
     arg: str | None = None
     targets: tuple[str, ...] = ()
+
+    def __str__(self) -> str:
+        """The spec as rotation_activate writes it."""
+        rest = self.arg if self.arg is not None else ",".join(self.targets)
+        return f"{self.name}:{rest}" if rest else self.name
 
 
 WORKLOAD = re.compile(r"[a-z0-9-]+/(deployment|statefulset|daemonset)/[a-z0-9.-]+")

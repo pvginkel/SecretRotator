@@ -75,8 +75,8 @@ def test_rotation_args_belong_to_the_leaf_s_kind_only():
         (TRELLO, "random", ["api-key"], "api-key is not a random key"),
         (LEAF, "random", [], "no key to rotate"),
         ("no/such/leaf", "random", ["token"], "no such leaf"),
-        ("eso/prd/app/prd/oidc", "keycloak-client", ["client_secret"], "not a kind the rotator"),
         (COPY, f"copy:{LEAF}#token", ["token"], "not a kind the rotator"),
+        (COPY, "none", ["token"], "not a kind the rotator"),
     ],
 )
 def test_a_target_the_annotations_do_not_give_is_refused(leaf, kind, keys, problem):

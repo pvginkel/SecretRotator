@@ -23,6 +23,21 @@ def fake():
     )
 
 
+def fake_of(store, data=None):
+    """The fake OpenBao holding the store's leaves with their annotations; data: a leaf's data
+    where it is not SECRET-<path>-<key> per key."""
+    data = data or {}
+    return FakeOpenBao(
+        {
+            path: {
+                "data": data.get(path) or {k: f"SECRET-{path}-{k}" for k in sorted(leaf.keys)},
+                "meta": dict(leaf.meta),
+            }
+            for path, leaf in store.items()
+        }
+    )
+
+
 def client(bao):
     return OpenBao(opener=bao, token=TOKEN)
 
@@ -90,9 +105,19 @@ class RandomLike:
     """random's shape: generate each key, write it and its copies; then the extra steps."""
 
     name = "random"
+    per_key = False
 
     def __init__(self, *extra):
         self.extra = extra
+
+    def args_problems(self, args):
+        return []
+
+    def ask(self, leaf):
+        return ""
+
+    def description(self, leaf):
+        return f"rotates {', '.join(leaf.keys)}"
 
     def plan(self, leaf, ctx):
         steps = [s for key in leaf.keys for s in ctx.steps.generate(key)]

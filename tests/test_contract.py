@@ -36,12 +36,24 @@ DESIGN_6_KINDS = {
 }
 
 
-def test_every_kind_of_design_6_is_known_and_five_are_implemented():
+def test_every_kind_of_design_6_is_known():
     assert set(c.KINDS) == DESIGN_6_KINDS
-    assert {k for k in c.KINDS if c.is_implemented(k)} == {"random", "approle", "manual"}
-    assert c.is_implemented("none")
-    assert c.is_implemented("copy:eso/prd/x#token")
     assert c.kind_error("keycloak") is not None
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        "eso",
+        "k8s-rollout",
+        "k8s-rollout:a/deployment/b,a/statefulset/c",
+        "manual:set it then restart",
+        "jenkins-job:YouTrack/YouTrackConfiguration?ROTATE_TOKEN=true",
+    ],
+)
+def test_an_activator_reads_as_rotation_activate_writes_it(spec):
+    (activator,) = c.parse_activate(spec)
+    assert str(activator) == spec
 
 
 def test_the_kind_of_every_key_is_resolved_as_design_3_1_says():

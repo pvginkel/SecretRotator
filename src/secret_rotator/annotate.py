@@ -12,6 +12,7 @@ import yaml
 
 from secret_rotator.audit import Leaf
 from secret_rotator.contract import (
+    MARKER_VALUE,
     MAX_KEY_BYTES,
     MAX_KEYS,
     MAX_VALUE_BYTES,
@@ -38,7 +39,6 @@ SEED_PREFIXES = ("key_", "interval_")
 # when the store lacks it. Only under rotator/, the one prefix the rotator's policy may create in.
 MARKER = "marker"
 MARKER_PREFIX = "rotator/"
-MARKER_VALUE = "marker leaf: the credential is not kept in KV"
 DATA_KEY = re.compile(r"[^/\s]+")
 
 # Where the seed adds notes to a leaf that already has other notes, the earlier text follows.

@@ -8,6 +8,9 @@ from pathlib import Path
 
 from secret_rotator import annotate as ann
 from secret_rotator import audit as aud
+from secret_rotator import registry, terminal
+from secret_rotator.console import Console
+from secret_rotator.lock import holder_name, utcnow
 from secret_rotator.openbao import OpenBao, OpenBaoError
 
 # The rotator's AppRole, kv/iac/rotator-approle, which iac-impl puts in the iac container's
@@ -55,6 +58,28 @@ def parser() -> argparse.ArgumentParser:
     )
     annotate.add_argument("--seed", type=Path, help="the seed (default: the packaged one)")
     annotate.add_argument("--apply", action="store_true", help="write what the dry run lists")
+    plan = commands.add_parser(
+        "plan",
+        help="print a leaf's plans and execute nothing",
+        description="Prints each plan of the leaf — one per kind, one per key for manual — with "
+        "when it falls due and every step with its target, then why each other key has none.",
+    )
+    plan.add_argument("path", help="the leaf, a path of the kv mount")
+    plan.add_argument(
+        "--keys",
+        type=Path,
+        help="offline: plan from the seed over FILE's key names instead of the store",
+        metavar="FILE",
+    )
+    plan.add_argument("--seed", type=Path, help="with --keys: the seed (default: the packaged one)")
+    run = commands.add_parser(
+        "run",
+        help="run a plan of a leaf in the terminal, its operator steps as prompts",
+        description="Takes up the leaf's plan in flight, else runs the plan picked from its plans. "
+        "A value is entered at a hidden prompt, never on the command line.",
+    )
+    run.add_argument("path", help="the leaf, a path of the kv mount")
+    run.set_defaults(keys=None, seed=None)
     return p
 
 
@@ -70,28 +95,39 @@ def main(
     opener: Callable | None = None,
     out: Callable[[str], None] = PRINT,
     environ: Mapping[str, str] = os.environ,
+    console: Callable[[], Console] = Console,
 ) -> int:
     p = parser()
     args = p.parse_args(argv)
-    offline = args.command == "audit" and args.keys is not None
-    if args.command == "audit" and args.seed and not offline:
-        p.error("the live audit reads the store, not a seed: --seed goes with --keys")
+    offline = args.command in ("audit", "plan") and args.keys is not None
+    if args.command in ("audit", "plan") and args.seed and not offline:
+        p.error(f"the live {args.command} reads the store, not a seed: --seed goes with --keys")
     if not offline and not (environ.get(ROLE_ID_ENV) and environ.get(SECRET_ID_ENV)):
         p.error(
             f"{ROLE_ID_ENV} and {SECRET_ID_ENV} are not set: the rotator's AppRole, "
             f"kv/iac/rotator-approle"
         )
     seed_path = args.seed or ann.DEFAULT_SEED
+    today = utcnow().date()
     try:
+        kinds = registry.load() if args.command in ("plan", "run") else {}
         if offline:
             store = ann.offline_store(args.keys, ann.load_seed(seed_path), out)
+            if args.command == "plan":
+                return terminal.print_leaf(out, args.path, store, aud.audit(store), kinds, today)
             return aud.report(aud.audit(store), store, out)
         seed = ann.load_seed(seed_path) if args.command == "annotate" else None
         bao = connect(environ, opener)
+        if args.command == "run":
+            holder = holder_name(f"run {args.path}")
+            return terminal.run_leaf(bao, args.path, kinds, console(), holder=holder, today=today)
         if seed is None:
             store = aud.live_store(bao)
-            return aud.report(aud.audit(store), store, out)
+            result = aud.audit(store)
+            if args.command == "plan":
+                return terminal.print_leaf(out, args.path, store, result, kinds, today)
+            return aud.report(result, store, out)
         return ann.run_apply(bao, seed, args.apply, out)
-    except (ann.SeedError, OpenBaoError, OSError) as e:
+    except (ann.SeedError, registry.RegistryError, OpenBaoError, OSError) as e:
         out(f"error: {e}")
         return 1
