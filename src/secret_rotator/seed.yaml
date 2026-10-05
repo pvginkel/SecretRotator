@@ -1,0 +1,757 @@
+# The rotation annotations of every leaf of the kv mount, transcribed from AnsibleSpecs
+# secret-rotation/catalog.md: a change to a catalog row is made here too. `secret-rotator annotate`
+# writes them; `secret-rotator audit --keys store-keys.json` holds this seed to the contract
+# offline, over the key names of every leaf the seed covers (store-keys.json beside it).
+#
+# Every value is a string. rotation_interval is absent only where every key is a copy or none.
+# `marker: <key>` declares a marker leaf (catalog § rotator/), created with that one data key.
+---
+
+# --- eso/dev: the dev cluster is off by default; nothing is activated ------------------------
+
+eso/dev/electronics-inventory/dev/oidc:
+  rotation_mechanism: keycloak-client
+  rotation_args: '{"realm":"homelab-dev"}'
+  rotation_interval: 14d
+  rotation_activate: none
+
+eso/dev/iac-provisioner/api/token:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: none
+
+eso/dev/postgres-pas/pgadmin-admin:
+  rotation_mechanism: cnpg-role
+  key_username: none
+  rotation_interval: 14d
+  rotation_activate: none
+
+eso/dev/postgres-pas/terraform-admin:
+  rotation_mechanism: cnpg-role
+  key_username: none
+  rotation_interval: 14d
+  rotation_activate: none
+
+# --- eso/prd ----------------------------------------------------------------------------------
+
+eso/prd/argocd-hooks/git:
+  rotation_mechanism: manual
+  rotation_interval: 365d
+  rotation_activate: none
+
+eso/prd/argocd/prd/git:
+  rotation_mechanism: manual
+  rotation_interval: 365d
+  rotation_activate: none
+
+eso/prd/argocd/prd/oidc:
+  rotation_mechanism: keycloak-client
+  rotation_args: '{"realm":"homelab","client":"argocd"}'
+  rotation_interval: 14d
+  rotation_activate: k8s-rollout:argocd-prd/deployment/argocd-prd-server
+
+eso/prd/argocd/prd/webhook:
+  rotation_mechanism: random
+  rotation_interval: 365d
+  rotation_activate: "k8s-rollout:argocd-prd/deployment/argocd-prd-webhook-relay,manual:each deploy repo re-stamps its GitHub webhook on its next sync"
+
+eso/prd/calendar-support/prd/google-service-account:
+  rotation_mechanism: google-sa-key
+  rotation_interval: 30d
+  rotation_activate: auto
+
+eso/prd/dnsmasq/prd/dhcp-app:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/dnsmasq/prd/management-api:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/dnsmasq/prd/oidc:
+  rotation_mechanism: keycloak-client
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/elasticsearch/prd/elastic:
+  rotation_mechanism: elastic-user
+  rotation_args: '{"user":"elastic"}'
+  rotation_interval: 365d
+  rotation_activate: auto
+
+eso/prd/elasticsearch/prd/filebeat-reader:
+  rotation_mechanism: elastic-user
+  rotation_args: '{"user":"reader"}'
+  rotation_interval: 14d
+  rotation_activate: none
+
+eso/prd/elasticsearch/prd/kibana-encryption-key:
+  rotation_mechanism: random
+  rotation_interval: 365d
+  rotation_activate: auto
+
+eso/prd/elasticsearch/prd/kibana-system:
+  rotation_mechanism: elastic-user
+  rotation_args: '{"user":"kibana_system"}'
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/electronics-inventory/prd/app:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/electronics-inventory/prd/drain-auth:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/electronics-inventory/prd/mouser:
+  rotation_mechanism: manual
+  rotation_interval: 365d
+  rotation_activate: auto
+
+eso/prd/electronics-inventory/prd/oidc:
+  rotation_mechanism: keycloak-client
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/electronics-inventory/prd/openai:
+  rotation_mechanism: manual
+  rotation_interval: 365d
+  rotation_activate: auto
+
+eso/prd/fieldnotes/prd/client-token-mcp:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/fieldnotes/prd/client-token-skills:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/fieldnotes/prd/github-webhook-secret:
+  rotation_mechanism: github-webhook-secret
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/fieldnotes/prd/kubecoder-controller:
+  rotation_mechanism: kubecoder-client
+  rotation_interval: 365d
+  rotation_activate: auto
+
+eso/prd/fieldnotes/prd/mcp-token:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/fieldnotes/prd/oidc:
+  rotation_mechanism: keycloak-client
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/fieldnotes/prd/store-token:
+  rotation_mechanism: manual
+  rotation_interval: 365d
+  rotation_activate: auto
+
+eso/prd/fieldnotes/prd/youtrack-token:
+  rotation_mechanism: youtrack-token
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/fieldnotes/prd/youtrack-webhook-token:
+  rotation_mechanism: copy:eso/prd/youtrack/prd/webhook-token#token
+  rotation_activate: auto
+
+eso/prd/filebeat/prd/elastic-credentials:
+  rotation_mechanism: elastic-user
+  key_username: none
+  rotation_args: '{"user":"filebeat_writer"}'
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/git-sync/prd/github:
+  rotation_mechanism: manual
+  rotation_interval: 365d
+  rotation_activate: none
+
+eso/prd/grafana/prd/admin:
+  rotation_mechanism: grafana-admin
+  key_admin-user: none
+  rotation_interval: 365d
+  rotation_activate: none
+
+eso/prd/grafana/prd/oidc:
+  rotation_mechanism: keycloak-client
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/homeapps/extension-signing:
+  rotation_mechanism: manual
+  rotation_interval: never
+  rotation_activate: none
+  notes: "rotating invalidates distributed extensions"
+
+eso/prd/homeassistant-mcp/prd/homeassistant:
+  rotation_mechanism: home-assistant-token
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/iac-provisioner/api/token:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/intercom/prd/mqtt:
+  rotation_mechanism: mosquitto-user
+  rotation_interval: 365d
+  rotation_activate: auto
+
+eso/prd/intercom/prd/openai:
+  rotation_mechanism: manual
+  rotation_interval: 365d
+  rotation_activate: auto
+
+eso/prd/iot/prd/app:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/iot/prd/architecture-pipeline:
+  rotation_mechanism: jenkins-job-token
+  rotation_interval: 365d
+  rotation_activate: auto
+
+eso/prd/iot/prd/elastic-credentials:
+  rotation_mechanism: elastic-user
+  key_username: none
+  rotation_args: '{"user":"iotsupport"}'
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/iot/prd/keycloak-admin:
+  rotation_mechanism: keycloak-client
+  rotation_args: '{"realm":"homelab","client":"iotsupport-admin"}'
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/iot/prd/mqtt:
+  rotation_mechanism: mosquitto-user
+  key_username: none
+  rotation_interval: 365d
+  rotation_activate: auto
+
+eso/prd/iot/prd/mqtt-cronjob:
+  rotation_mechanism: mosquitto-user
+  key_username: none
+  rotation_interval: 365d
+  rotation_activate: auto
+
+eso/prd/iot/prd/oidc:
+  rotation_mechanism: keycloak-client
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/jenkins-mcp/prd/config:
+  rotation_mechanism: random
+  key_authorization: manual
+  rotation_interval: 14d
+  interval_authorization: 365d
+  rotation_activate: auto
+  notes: "authorization is an upstream Basic <user:token> header, kept as is by slice 044;
+    the Jenkins-token kind's slice turns it into a template when it first mints the token"
+
+eso/prd/jenkins-telegram-bot/prd/config:
+  rotation_mechanism: jenkins-token
+  key_telegram-bot-token: manual
+  key_telegram-chat-id: none
+  rotation_interval: 14d
+  interval_telegram-bot-token: 365d
+  rotation_activate: auto
+
+eso/prd/kubecoder/dev/bot-token:
+  rotation_mechanism: manual
+  rotation_interval: 365d
+  rotation_activate: auto
+
+eso/prd/kubecoder/dev/catalog:
+  rotation_mechanism: manual
+  key_github-rw: copy:eso/prd/kubecoder/dev/github-token#token
+  key_iotsupport-keycloak-admin-client-id: copy:jenkins/keycloak-iotsupport-admin#client_id
+  key_iotsupport-keycloak-admin-client-secret: copy:jenkins/keycloak-iotsupport-admin#client_secret
+  key_jenkins-user: none
+  key_kubeconfig: copy:eso/prd/kubecoder/prd/catalog#kubeconfig
+  key_kubeconfig-dev-write: copy:eso/prd/kubecoder/prd/catalog#kubeconfig-dev-write
+  key_kubeconfig-prd-write: copy:eso/prd/kubecoder/prd/catalog#kubeconfig-prd-write
+  key_openai-api-key: copy:eso/prd/kubecoder/prd/catalog#openai-api-key
+  key_tf-backend-age-public-key: copy:iac/tf-backend#age_public_key
+  key_tf-backend-age-secret-key: copy:iac/tf-backend#age_secret_key
+  rotation_activate: k8s-rollout:kubecoder-dev/deployment/kubecoder-controller
+
+eso/prd/kubecoder/dev/client-token-bot:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/kubecoder/dev/client-token-mcp:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/kubecoder/dev/github-token:
+  rotation_mechanism: manual
+  rotation_interval: 365d
+  rotation_activate: auto
+
+eso/prd/kubecoder/dev/mcp-auth-token:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/kubecoder/dev/step-ca-provisioner-password:
+  rotation_mechanism: copy:eso/prd/kubecoder/prd/step-ca-provisioner-password#password
+  rotation_activate: auto
+
+eso/prd/kubecoder/prd/bot-token:
+  rotation_mechanism: manual
+  rotation_interval: 365d
+  rotation_activate: auto
+
+# The keys without a key_<name> (ansible-vault-password, argocd-token, grafana-api-key,
+# openai-api-key, ssh-key-pve) are the leaf's manual ones.
+eso/prd/kubecoder/prd/catalog:
+  rotation_mechanism: manual
+  key_backup-server-token: copy:eso/prd/storage/prd/backup-server#management_token
+  key_dns-reservation-token: copy:eso/prd/dnsmasq/prd/management-api#auth_token
+  key_elastic-password: copy:eso/prd/elasticsearch/prd/filebeat-reader#password
+  key_fieldnotes-mcp-token: copy:eso/prd/fieldnotes/prd/mcp-token#token
+  key_fieldnotes-skills-token: copy:eso/prd/fieldnotes/prd/client-token-skills#token
+  key_github-rw: copy:eso/prd/kubecoder/prd/github-token#token
+  key_iotsupport-keycloak-admin-client-id: copy:jenkins/keycloak-iotsupport-admin#client_id
+  key_iotsupport-keycloak-admin-client-secret: copy:jenkins/keycloak-iotsupport-admin#client_secret
+  key_jenkins-mcp-token: copy:eso/prd/jenkins-mcp/prd/config#bearer-token
+  key_jenkins-token: jenkins-token
+  key_jenkins-user: none
+  key_kubeconfig: k8s-sa-token
+  key_kubeconfig-dev-write: k8s-sa-token
+  key_kubeconfig-prd-write: k8s-sa-token
+  key_proxmox-password: copy:iac/proxmox#password
+  key_ssh-key-ansible: copy:iac/ansible-ssh-key#private
+  key_tf-backend-age-public-key: copy:iac/tf-backend#age_public_key
+  key_tf-backend-age-secret-key: copy:iac/tf-backend#age_secret_key
+  key_trello-api-key: copy:eso/prd/trello-mcp/prd/trello#api-key
+  key_trello-bearer-token: copy:eso/prd/trello-mcp/prd/trello#bearer-token
+  key_trello-token: copy:eso/prd/trello-mcp/prd/trello#token
+  key_youtrack-api-key: youtrack-token
+  key_youtrack-mcp-token: copy:eso/prd/youtrack/prd/mcp#bearer-token
+  rotation_interval: 365d
+  interval_jenkins-token: 14d
+  interval_youtrack-api-key: 14d
+  rotation_activate: k8s-rollout:kubecoder-prd/deployment/kubecoder-controller
+
+eso/prd/kubecoder/prd/client-token-bot:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/kubecoder/prd/client-token-mcp:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/kubecoder/prd/github-token:
+  rotation_mechanism: manual
+  rotation_interval: 365d
+  rotation_activate: auto
+
+eso/prd/kubecoder/prd/mcp-auth-token:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/kubecoder/prd/step-ca-provisioner-password:
+  rotation_mechanism: step-ca-password
+  rotation_interval: 365d
+  rotation_activate: "eso,k8s-rollout,manual:deploy StepCaDeploy and roll step-ca"
+
+eso/prd/media/prd/gluetun-wg:
+  rotation_mechanism: manual
+  rotation_interval: 365d
+  rotation_activate: auto
+
+eso/prd/media/prd/mydownloads-firebase:
+  rotation_mechanism: google-sa-key
+  rotation_interval: 30d
+  rotation_activate: auto
+
+eso/prd/media/prd/mydownloads-tvdb:
+  rotation_mechanism: manual
+  rotation_interval: 365d
+  rotation_activate: auto
+
+eso/prd/media/prd/mydownloads-user:
+  rotation_mechanism: samba-user
+  key_username: none
+  rotation_interval: 14d
+  rotation_activate: k8s-rollout:media-prd/deployment/mydownloads
+
+eso/prd/media/prd/mydownloads-users:
+  rotation_mechanism: manual
+  rotation_interval: never
+  rotation_activate: none
+  notes: "human users' password hashes"
+
+eso/prd/newsfilter/prd/openai:
+  rotation_mechanism: manual
+  rotation_interval: 365d
+  rotation_activate: none
+
+eso/prd/newsfilter/prd/telegram:
+  rotation_mechanism: manual
+  key_chat-ids: none
+  rotation_interval: 365d
+  rotation_activate: none
+
+eso/prd/pgadmin/prd/oidc:
+  rotation_mechanism: keycloak-client
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/postgres-pas/pgadmin-admin:
+  rotation_mechanism: cnpg-role
+  key_username: none
+  rotation_args: '{"role":"pgadmin_admin"}'
+  rotation_interval: 14d
+  rotation_activate: k8s-rollout:pgadmin-prd/deployment/pgadmin
+
+eso/prd/postgres-pas/terraform-admin:
+  rotation_mechanism: cnpg-role
+  key_username: none
+  rotation_args: '{"role":"terraform_admin"}'
+  rotation_interval: 14d
+  rotation_activate: none
+
+eso/prd/prometheus/prd/healthchecks:
+  rotation_mechanism: manual
+  rotation_interval: never
+  rotation_activate: none
+  notes: "the ping URL is the check"
+
+eso/prd/prometheus/prd/telegram:
+  rotation_mechanism: manual
+  key_chat_id: none
+  rotation_interval: 365d
+  rotation_activate: k8s-rollout:prometheus-prd/statefulset/prometheus-prd-alertmanager
+
+eso/prd/registry/prd/http-signing:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/storage/prd/backup-server:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/storage/prd/s3-mirror:
+  rotation_mechanism: manual
+  rotation_interval: never
+  rotation_activate: none
+  notes: "rclone crypt key of the existing mirror"
+
+eso/prd/telegram-mcp/prd/telegram:
+  rotation_mechanism: manual
+  key_chat-ids: none
+  rotation_interval: 365d
+  rotation_activate: auto
+
+eso/prd/trello-mcp/prd/trello:
+  rotation_mechanism: manual
+  key_bearer-token: random
+  rotation_interval: never
+  interval_bearer-token: 14d
+  rotation_activate: auto
+  notes: "api-key and token cannot be rotated (operator, 2026-10-04)"
+
+eso/prd/version-poller/prd/jenkins:
+  rotation_mechanism: jenkins-token
+  key_user: none
+  rotation_interval: 14d
+  rotation_activate: none
+
+eso/prd/youtrack/prd/backup:
+  rotation_mechanism: youtrack-token
+  rotation_interval: 14d
+  rotation_activate: none
+
+eso/prd/youtrack/prd/mcp:
+  rotation_mechanism: youtrack-token
+  key_bearer-token: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/youtrack/prd/webhook-token:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: jenkins-job:YouTrack/YouTrackConfiguration?ROTATE_TOKEN=true
+
+eso/prd/zigbee2mqtt/prd/app:
+  rotation_mechanism: random
+  rotation_interval: 14d
+  rotation_activate: auto
+
+eso/prd/zigbee2mqtt/prd/oidc:
+  rotation_mechanism: keycloak-client
+  rotation_interval: 14d
+  rotation_activate: auto
+
+# --- iac: iac-impl resolves at every run ------------------------------------------------------
+
+iac/ansible-ssh-key:
+  rotation_mechanism: ssh-key
+  rotation_interval: 365d
+  rotation_activate: none
+
+iac/backup-server:
+  rotation_mechanism: copy:eso/prd/storage/prd/backup-server#management_token
+  rotation_activate: none
+
+iac/dns-reservation:
+  rotation_mechanism: copy:eso/prd/dnsmasq/prd/management-api#auth_token
+  rotation_activate: none
+
+iac/proxmox:
+  rotation_mechanism: pve-root-password
+  rotation_interval: 365d
+  rotation_activate: none
+
+iac/tf-backend:
+  rotation_mechanism: manual
+  key_age_public_key: none
+  rotation_interval: never
+  interval_github_token: 365d
+  rotation_activate: none
+  notes: "age_secret_key encrypts every Terraform state, and re-encrypting them all is a project, not a rotation"
+
+# The rotator's own credentials (catalog § rotator/): iac-impl materialises both into the iac
+# container.
+iac/rotator-approle:
+  rotation_mechanism: approle
+  key_role_id: none
+  rotation_args: '{"role":"rotator","delivery":"kv"}'
+  rotation_interval: 14d
+  rotation_activate: none
+
+iac/rotator-k8s-token:
+  rotation_mechanism: k8s-sa-token
+  rotation_interval: 365d
+  rotation_activate: none
+
+# --- jenkins: read at build time --------------------------------------------------------------
+
+jenkins/home-automation-fleet:
+  rotation_mechanism: home-assistant-token
+  rotation_interval: 14d
+  rotation_activate: none
+
+jenkins/iot-mqtt:
+  rotation_mechanism: manual
+  rotation_interval: never
+  rotation_activate: none
+  notes: "baked into flashed firmware with shared/wifi-iot"
+
+jenkins/iotsupport-pipeline-oidc:
+  rotation_mechanism: keycloak-client
+  rotation_interval: 14d
+  rotation_activate: none
+
+# To be deleted under ANS-229; the seed holds whether or not the store still has it.
+jenkins/keycloak-da-admin:
+  rotation_mechanism: keycloak-client
+  rotation_args: '{"realm":"homelab-dev"}'
+  rotation_interval: 14d
+  rotation_activate: none
+
+jenkins/keycloak-iotsupport-admin:
+  rotation_mechanism: keycloak-client
+  rotation_args: '{"realm":"homelab-dev","client":"iotsupport-admin"}'
+  rotation_interval: 14d
+  rotation_activate: none
+
+jenkins/mydownloads-android-keystore:
+  rotation_mechanism: manual
+  rotation_interval: never
+  rotation_activate: none
+  notes: "keystore password, today the same personal password as the other Android keystore; re-keying is an operator project, not a copy relation"
+
+jenkins/openai-ci-cd:
+  rotation_mechanism: manual
+  rotation_interval: 365d
+  rotation_activate: none
+
+jenkins/scantopdf-android-keystore:
+  rotation_mechanism: manual
+  rotation_interval: never
+  rotation_activate: none
+  notes: "keystore password, today the same personal password as the other Android keystore; re-keying is an operator project, not a copy relation"
+
+jenkins/youtrack:
+  rotation_mechanism: youtrack-token
+  key_webhook-token: copy:eso/prd/youtrack/prd/webhook-token#token
+  rotation_interval: 14d
+  rotation_activate: none
+
+# --- shared -----------------------------------------------------------------------------------
+
+shared/dev/ceph-csi:
+  rotation_mechanism: cephx
+  key_user_id: none
+  rotation_interval: 365d
+  rotation_activate: none
+
+shared/dev/ceph-rgw/s3:
+  rotation_mechanism: rgw-admin
+  key_access_key_id: none
+  rotation_interval: 365d
+  rotation_activate: none
+
+shared/jenkins/admin-password:
+  rotation_mechanism: jenkins-admin-password
+  rotation_interval: 365d
+  rotation_activate: auto
+
+shared/prd/ceph-csi:
+  rotation_mechanism: cephx
+  key_user_id: none
+  rotation_interval: 365d
+  rotation_activate: none
+
+shared/prd/ceph-rgw/s3:
+  rotation_mechanism: rgw-admin
+  key_access_key_id: none
+  rotation_interval: 365d
+  rotation_activate: none
+
+shared/samba/users:
+  rotation_mechanism: samba-user
+  key_mvdbovenkamp: manual
+  rotation_interval: 365d
+  interval_mvdbovenkamp: never
+  rotation_activate: "eso,k8s-rollout,manual:set the new password in the Windows environments that mount the shares"
+  notes: "mvdbovenkamp is another person's own password, not rotated on a schedule"
+
+shared/wifi-iot:
+  rotation_mechanism: manual
+  rotation_interval: never
+  rotation_activate: none
+  notes: "PSK in every provisioned device"
+
+# --- rotator: the rotator's own leaves; the rotator and iac-impl read them at every run ---------
+
+rotator/jenkins:
+  rotation_mechanism: jenkins-token
+  key_user: none
+  rotation_interval: 365d
+  rotation_activate: none
+
+rotator/telegram:
+  rotation_mechanism: manual
+  rotation_interval: 365d
+  rotation_activate: none
+
+rotator/youtrack:
+  rotation_mechanism: youtrack-token
+  rotation_interval: 365d
+  rotation_activate: none
+
+# Marker leaves for the AppRole secret_ids OpenBao does not keep in KV (R11).
+rotator/approle/backup:
+  marker: secret_id
+  rotation_mechanism: approle
+  rotation_args: '{"role":"backup","delivery":"playbook"}'
+  rotation_interval: 14d
+  rotation_activate: none
+
+rotator/approle/eso:
+  marker: secret_id
+  rotation_mechanism: approle
+  rotation_args: '{"role":"eso","delivery":"k8s_secret=external-secrets-prd/openbao-eso-approle"}'
+  rotation_interval: 14d
+  rotation_activate: k8s-rollout:external-secrets-prd/deployment/external-secrets-prd
+
+rotator/approle/eso-dev:
+  marker: secret_id
+  rotation_mechanism: approle
+  rotation_args: '{"role":"eso-dev","delivery":"k8s_secret=external-secrets/openbao-eso-approle"}'
+  rotation_interval: never
+  rotation_activate: none
+  notes: "its Secret is on the dev cluster (off by default), which the rotator's prd ServiceAccount does not reach"
+
+rotator/approle/iac-agent:
+  marker: secret_id
+  rotation_mechanism: approle
+  rotation_args: '{"role":"iac-agent","delivery":"manual=Paste it as OPENBAO_SECRET_ID in srviac /etc/iac/secrets.yaml"}'
+  rotation_interval: 90d
+  rotation_activate: none
+
+rotator/approle/jenkins:
+  marker: secret_id
+  rotation_mechanism: approle
+  rotation_args: '{"role":"jenkins","delivery":"jenkins_credential=jenkins-vault-approle"}'
+  rotation_interval: 14d
+  rotation_activate: none
+
+rotator/approle/openbao-admin:
+  marker: secret_id
+  rotation_mechanism: approle
+  rotation_args: '{"role":"openbao-admin","delivery":"manual=Re-vault it as openbao_admin_secret_id in Ansible inventories/prd/group_vars/openbao.yml and commit"}'
+  rotation_interval: 90d
+  rotation_activate: none
+
+# Marker leaves for the bootstrap tier, rotated by hand at its source; the credential never
+# enters OpenBao.
+rotator/bootstrap/age-private-key:
+  marker: age-private-key
+  rotation_mechanism: manual
+  rotation_interval: never
+  rotation_activate: none
+  notes: "the bootstrap tier, rotated by hand at its source"
+
+rotator/bootstrap/ansible-vault-passphrase:
+  marker: ansible-vault-passphrase
+  rotation_mechanism: manual
+  rotation_interval: never
+  rotation_activate: none
+  notes: "the bootstrap tier, rotated by hand at its source"
+
+rotator/bootstrap/git-api-token:
+  marker: git-api-token
+  rotation_mechanism: manual
+  rotation_interval: never
+  rotation_activate: none
+  notes: "the bootstrap tier, rotated by hand at its source"
+
+rotator/bootstrap/jenkins-agent-secret:
+  marker: jenkins-agent-secret
+  rotation_mechanism: manual
+  rotation_interval: never
+  rotation_activate: none
+  notes: "the bootstrap tier, rotated by hand at its source"
+
+rotator/bootstrap/jwk-provisioner-password:
+  marker: jwk-provisioner-password
+  rotation_mechanism: manual
+  rotation_interval: never
+  rotation_activate: none
+  notes: "the bootstrap tier, rotated by hand at its source"
+
+rotator/bootstrap/seal-key:
+  marker: seal-key
+  rotation_mechanism: manual
+  rotation_interval: never
+  rotation_activate: none
+  notes: "the bootstrap tier, rotated by hand at its source"

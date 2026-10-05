@@ -1,0 +1,15 @@
+# Curated entry points for SecretRotator. Python 3.13 and poetry live in the `iac` toolchain
+# sidecar (the dev container has no poetry), so the verbs carry their `cexec` prefix here and
+# only here. The gates run offline: the tests drive fakes of OpenBao, never a live system.
+
+projects:
+  root:
+    description: >-
+      The OpenBao rotation platform: the `secret-rotator` command that checks every
+      leaf of the kv mount against its rotation annotations and rotates what is due,
+      run nightly on srviac from the iac image.
+    setup: cexec iac poetry install --no-interaction
+    lint:
+      - cexec iac poetry run ruff check .
+      - cexec iac poetry run ruff format --check .
+    test: cexec iac poetry run pytest -q

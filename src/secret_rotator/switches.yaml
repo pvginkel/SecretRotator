@@ -1,0 +1,19 @@
+# The rotator's switches (design §8), changed by commit to main. The copy installed in the iac
+# image is the one a run reads; the immediate stop is disabling IaC/Scheduled Secret Rotation.
+
+# Executes no mutating step; plans every due leaf and still posts the card and the digest.
+dry_run: true
+
+# The kill switch: a run stops before it does anything.
+paused: false
+
+# The kinds whose plans a run executes, enabled one at a time.
+kinds_enabled: [random]
+
+max_rotations_per_run: 10
+
+# The tag of the standing YouTrack card.
+card_tag: Secret Rotator
+
+# The Homelab Alerts group; null: not committed yet.
+telegram_chat_id: null

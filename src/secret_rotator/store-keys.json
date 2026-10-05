@@ -1,0 +1,450 @@
+{
+  "eso/dev/electronics-inventory/dev/oidc": [
+    "client_id",
+    "client_secret"
+  ],
+  "eso/dev/iac-provisioner/api/token": [
+    "token"
+  ],
+  "eso/dev/postgres-pas/pgadmin-admin": [
+    "password",
+    "username"
+  ],
+  "eso/dev/postgres-pas/terraform-admin": [
+    "password",
+    "username"
+  ],
+  "eso/prd/argocd-hooks/git": [
+    "token"
+  ],
+  "eso/prd/argocd/prd/git": [
+    "token"
+  ],
+  "eso/prd/argocd/prd/oidc": [
+    "client_secret"
+  ],
+  "eso/prd/argocd/prd/webhook": [
+    "github_secret"
+  ],
+  "eso/prd/calendar-support/prd/google-service-account": [
+    "key_json"
+  ],
+  "eso/prd/dnsmasq/prd/dhcp-app": [
+    "secret_key"
+  ],
+  "eso/prd/dnsmasq/prd/management-api": [
+    "auth_token"
+  ],
+  "eso/prd/dnsmasq/prd/oidc": [
+    "client_id",
+    "client_secret"
+  ],
+  "eso/prd/elasticsearch/prd/elastic": [
+    "password"
+  ],
+  "eso/prd/elasticsearch/prd/filebeat-reader": [
+    "password"
+  ],
+  "eso/prd/elasticsearch/prd/kibana-encryption-key": [
+    "key"
+  ],
+  "eso/prd/elasticsearch/prd/kibana-system": [
+    "password"
+  ],
+  "eso/prd/electronics-inventory/prd/app": [
+    "secret_key"
+  ],
+  "eso/prd/electronics-inventory/prd/drain-auth": [
+    "key"
+  ],
+  "eso/prd/electronics-inventory/prd/mouser": [
+    "search_api_key"
+  ],
+  "eso/prd/electronics-inventory/prd/oidc": [
+    "client_id",
+    "client_secret"
+  ],
+  "eso/prd/electronics-inventory/prd/openai": [
+    "api_key"
+  ],
+  "eso/prd/fieldnotes/prd/client-token-mcp": [
+    "token"
+  ],
+  "eso/prd/fieldnotes/prd/client-token-skills": [
+    "token"
+  ],
+  "eso/prd/fieldnotes/prd/github-webhook-secret": [
+    "secret"
+  ],
+  "eso/prd/fieldnotes/prd/kubecoder-controller": [
+    "token"
+  ],
+  "eso/prd/fieldnotes/prd/mcp-token": [
+    "token"
+  ],
+  "eso/prd/fieldnotes/prd/oidc": [
+    "client_id",
+    "client_secret"
+  ],
+  "eso/prd/fieldnotes/prd/store-token": [
+    "token"
+  ],
+  "eso/prd/fieldnotes/prd/youtrack-token": [
+    "token"
+  ],
+  "eso/prd/fieldnotes/prd/youtrack-webhook-token": [
+    "token"
+  ],
+  "eso/prd/filebeat/prd/elastic-credentials": [
+    "password",
+    "username"
+  ],
+  "eso/prd/git-sync/prd/github": [
+    "token"
+  ],
+  "eso/prd/grafana/prd/admin": [
+    "admin-password",
+    "admin-user"
+  ],
+  "eso/prd/grafana/prd/oidc": [
+    "client_id",
+    "client_secret"
+  ],
+  "eso/prd/homeapps/extension-signing": [
+    "private-key"
+  ],
+  "eso/prd/homeassistant-mcp/prd/homeassistant": [
+    "token"
+  ],
+  "eso/prd/iac-provisioner/api/token": [
+    "token"
+  ],
+  "eso/prd/intercom/prd/mqtt": [
+    "password"
+  ],
+  "eso/prd/intercom/prd/openai": [
+    "api_key"
+  ],
+  "eso/prd/iot/prd/app": [
+    "secret_key"
+  ],
+  "eso/prd/iot/prd/architecture-pipeline": [
+    "trigger_url"
+  ],
+  "eso/prd/iot/prd/elastic-credentials": [
+    "password",
+    "username"
+  ],
+  "eso/prd/iot/prd/keycloak-admin": [
+    "client_id",
+    "client_secret"
+  ],
+  "eso/prd/iot/prd/mqtt": [
+    "password",
+    "username"
+  ],
+  "eso/prd/iot/prd/mqtt-cronjob": [
+    "password",
+    "username"
+  ],
+  "eso/prd/iot/prd/oidc": [
+    "client_id",
+    "client_secret"
+  ],
+  "eso/prd/jenkins-mcp/prd/config": [
+    "authorization",
+    "bearer-token"
+  ],
+  "eso/prd/jenkins-telegram-bot/prd/config": [
+    "jenkins-token",
+    "telegram-bot-token",
+    "telegram-chat-id"
+  ],
+  "eso/prd/kubecoder/dev/bot-token": [
+    "token"
+  ],
+  "eso/prd/kubecoder/dev/catalog": [
+    "github-rw",
+    "iotsupport-keycloak-admin-client-id",
+    "iotsupport-keycloak-admin-client-secret",
+    "jenkins-user",
+    "kubeconfig",
+    "kubeconfig-dev-write",
+    "kubeconfig-prd-write",
+    "openai-api-key",
+    "tf-backend-age-public-key",
+    "tf-backend-age-secret-key"
+  ],
+  "eso/prd/kubecoder/dev/client-token-bot": [
+    "token"
+  ],
+  "eso/prd/kubecoder/dev/client-token-mcp": [
+    "token"
+  ],
+  "eso/prd/kubecoder/dev/github-token": [
+    "token"
+  ],
+  "eso/prd/kubecoder/dev/mcp-auth-token": [
+    "token"
+  ],
+  "eso/prd/kubecoder/dev/step-ca-provisioner-password": [
+    "password"
+  ],
+  "eso/prd/kubecoder/prd/bot-token": [
+    "token"
+  ],
+  "eso/prd/kubecoder/prd/catalog": [
+    "ansible-vault-password",
+    "argocd-token",
+    "backup-server-token",
+    "dns-reservation-token",
+    "elastic-password",
+    "fieldnotes-mcp-token",
+    "fieldnotes-skills-token",
+    "github-rw",
+    "grafana-api-key",
+    "iotsupport-keycloak-admin-client-id",
+    "iotsupport-keycloak-admin-client-secret",
+    "jenkins-mcp-token",
+    "jenkins-token",
+    "jenkins-user",
+    "kubeconfig",
+    "kubeconfig-dev-write",
+    "kubeconfig-prd-write",
+    "openai-api-key",
+    "proxmox-password",
+    "ssh-key-ansible",
+    "ssh-key-pve",
+    "tf-backend-age-public-key",
+    "tf-backend-age-secret-key",
+    "trello-api-key",
+    "trello-bearer-token",
+    "trello-token",
+    "youtrack-api-key",
+    "youtrack-mcp-token"
+  ],
+  "eso/prd/kubecoder/prd/client-token-bot": [
+    "token"
+  ],
+  "eso/prd/kubecoder/prd/client-token-mcp": [
+    "token"
+  ],
+  "eso/prd/kubecoder/prd/github-token": [
+    "token"
+  ],
+  "eso/prd/kubecoder/prd/mcp-auth-token": [
+    "token"
+  ],
+  "eso/prd/kubecoder/prd/step-ca-provisioner-password": [
+    "password"
+  ],
+  "eso/prd/media/prd/gluetun-wg": [
+    "config"
+  ],
+  "eso/prd/media/prd/mydownloads-firebase": [
+    "firebase-service-account.json"
+  ],
+  "eso/prd/media/prd/mydownloads-tvdb": [
+    "tvdb-api-key"
+  ],
+  "eso/prd/media/prd/mydownloads-user": [
+    "password",
+    "username"
+  ],
+  "eso/prd/media/prd/mydownloads-users": [
+    "users.yml"
+  ],
+  "eso/prd/newsfilter/prd/openai": [
+    "api_key"
+  ],
+  "eso/prd/newsfilter/prd/telegram": [
+    "bot-token",
+    "chat-ids"
+  ],
+  "eso/prd/pgadmin/prd/oidc": [
+    "client_id",
+    "client_secret"
+  ],
+  "eso/prd/postgres-pas/pgadmin-admin": [
+    "password",
+    "username"
+  ],
+  "eso/prd/postgres-pas/terraform-admin": [
+    "password",
+    "username"
+  ],
+  "eso/prd/prometheus/prd/healthchecks": [
+    "ping_url"
+  ],
+  "eso/prd/prometheus/prd/telegram": [
+    "bot_token",
+    "chat_id"
+  ],
+  "eso/prd/registry/prd/http-signing": [
+    "secret"
+  ],
+  "eso/prd/storage/prd/backup-server": [
+    "management_token"
+  ],
+  "eso/prd/storage/prd/s3-mirror": [
+    "password",
+    "salt"
+  ],
+  "eso/prd/telegram-mcp/prd/telegram": [
+    "bot-token",
+    "chat-ids"
+  ],
+  "eso/prd/trello-mcp/prd/trello": [
+    "api-key",
+    "bearer-token",
+    "token"
+  ],
+  "eso/prd/version-poller/prd/jenkins": [
+    "token",
+    "user"
+  ],
+  "eso/prd/youtrack/prd/backup": [
+    "token"
+  ],
+  "eso/prd/youtrack/prd/mcp": [
+    "bearer-token",
+    "youtrack-api-key"
+  ],
+  "eso/prd/youtrack/prd/webhook-token": [
+    "token"
+  ],
+  "eso/prd/zigbee2mqtt/prd/app": [
+    "secret_key"
+  ],
+  "eso/prd/zigbee2mqtt/prd/oidc": [
+    "client_id",
+    "client_secret"
+  ],
+  "iac/ansible-ssh-key": [
+    "private"
+  ],
+  "iac/backup-server": [
+    "token"
+  ],
+  "iac/dns-reservation": [
+    "token"
+  ],
+  "iac/proxmox": [
+    "password"
+  ],
+  "iac/rotator-approle": [
+    "role_id",
+    "secret_id"
+  ],
+  "iac/rotator-k8s-token": [
+    "token"
+  ],
+  "iac/tf-backend": [
+    "age_public_key",
+    "age_secret_key",
+    "github_token"
+  ],
+  "jenkins/home-automation-fleet": [
+    "ha_token"
+  ],
+  "jenkins/iot-mqtt": [
+    "password"
+  ],
+  "jenkins/iotsupport-pipeline-oidc": [
+    "client_id",
+    "client_secret"
+  ],
+  "jenkins/keycloak-da-admin": [
+    "client_id",
+    "client_secret"
+  ],
+  "jenkins/keycloak-iotsupport-admin": [
+    "client_id",
+    "client_secret"
+  ],
+  "jenkins/mydownloads-android-keystore": [
+    "password"
+  ],
+  "jenkins/openai-ci-cd": [
+    "api_key"
+  ],
+  "jenkins/scantopdf-android-keystore": [
+    "password"
+  ],
+  "jenkins/youtrack": [
+    "admin-token",
+    "webhook-token"
+  ],
+  "rotator/approle/backup": [
+    "secret_id"
+  ],
+  "rotator/approle/eso": [
+    "secret_id"
+  ],
+  "rotator/approle/eso-dev": [
+    "secret_id"
+  ],
+  "rotator/approle/iac-agent": [
+    "secret_id"
+  ],
+  "rotator/approle/jenkins": [
+    "secret_id"
+  ],
+  "rotator/approle/openbao-admin": [
+    "secret_id"
+  ],
+  "rotator/bootstrap/age-private-key": [
+    "age-private-key"
+  ],
+  "rotator/bootstrap/ansible-vault-passphrase": [
+    "ansible-vault-passphrase"
+  ],
+  "rotator/bootstrap/git-api-token": [
+    "git-api-token"
+  ],
+  "rotator/bootstrap/jenkins-agent-secret": [
+    "jenkins-agent-secret"
+  ],
+  "rotator/bootstrap/jwk-provisioner-password": [
+    "jwk-provisioner-password"
+  ],
+  "rotator/bootstrap/seal-key": [
+    "seal-key"
+  ],
+  "rotator/jenkins": [
+    "token",
+    "user"
+  ],
+  "rotator/telegram": [
+    "token"
+  ],
+  "rotator/youtrack": [
+    "token"
+  ],
+  "shared/dev/ceph-csi": [
+    "user_id",
+    "user_key"
+  ],
+  "shared/dev/ceph-rgw/s3": [
+    "access_key_id",
+    "secret_access_key"
+  ],
+  "shared/jenkins/admin-password": [
+    "password"
+  ],
+  "shared/prd/ceph-csi": [
+    "user_id",
+    "user_key"
+  ],
+  "shared/prd/ceph-rgw/s3": [
+    "access_key_id",
+    "secret_access_key"
+  ],
+  "shared/samba/users": [
+    "mvdbovenkamp",
+    "pvginkel"
+  ],
+  "shared/wifi-iot": [
+    "password"
+  ]
+}
