@@ -7,7 +7,7 @@ import pytest
 from fake_openbao import ROLE_ID, SECRET_ID, TOKEN, FakeOpenBao
 from fixtures import COMPLIANT, data_of
 
-from secret_rotator.openbao import ADDR, OpenBao, OpenBaoError, Version
+from secret_rotator.openbao import ADDR, RELOGIN_MARGIN, OpenBao, OpenBaoError, Version
 
 
 def fake():
@@ -177,3 +177,62 @@ def test_a_transport_failure_is_named_and_has_no_status(error):
         client(bao).metadata("shared/wifi")
     assert e.value.status is None
     assert str(e.value).startswith("GET kv/metadata/shared/wifi: transport error: ")
+
+
+class TestLoggingInAgain:
+    """The rotator's token lives 1 h from login and cannot renew itself: a client logs in again
+    before its lease ends, from credentials read with the token still valid."""
+
+    def logged_in(self, bao, now):
+        c = OpenBao(opener=bao, clock=lambda: now[0])
+        c.login_approle(ROLE_ID, SECRET_ID)
+        reads = []
+
+        def credentials():
+            reads.append(c.read("iac/rotator-approle"))
+            return ROLE_ID, SECRET_ID
+
+        c.credentials = credentials
+        return c, reads
+
+    def logins(self, bao):
+        return [r for r in bao.requests if r[1] == "auth/approle/login"]
+
+    def test_within_its_lease_less_the_margin_it_does_not(self):
+        bao, now = fake(), [0.0]
+        c, reads = self.logged_in(bao, now)
+        now[0] = 3600 - RELOGIN_MARGIN - 1
+        c.metadata("shared/wifi")
+        assert len(self.logins(bao)) == 1 and reads == []
+
+    def test_near_the_end_of_its_lease_it_logs_in_first_and_once(self):
+        bao, now = fake(), [0.0]
+        bao.leaves["iac/rotator-approle"] = {"data": {"secret_id": "SECRET-x"}, "meta": {}}
+        c, reads = self.logged_in(bao, now)
+        now[0] = 3600 - RELOGIN_MARGIN
+        c.metadata("shared/wifi")
+        c.metadata("shared/wifi")
+        assert len(self.logins(bao)) == 2 and len(reads) == 1
+        assert [r[:2] for r in bao.requests[-4:]] == [
+            ("GET", "kv/data/iac/rotator-approle"),
+            ("POST", "auth/approle/login"),
+            ("GET", "kv/metadata/shared/wifi"),
+            ("GET", "kv/metadata/shared/wifi"),
+        ]
+        assert c.expires == now[0] + 3600
+
+    def test_a_client_without_credentials_never_does(self):
+        bao, now = fake(), [0.0]
+        c = OpenBao(opener=bao, clock=lambda: now[0])
+        c.login_approle(ROLE_ID, SECRET_ID)
+        now[0] = 7200
+        c.metadata("shared/wifi")
+        assert len(self.logins(bao)) == 1
+
+
+def test_value_reads_one_key_and_refuses_a_missing_one():
+    c = client(fake())
+    assert c.value("shared/wifi", "password") == "SECRET-shared/wifi-password"
+    with pytest.raises(OpenBaoError, match="shared/wifi#nope cannot be read") as e:
+        c.value("shared/wifi", "nope")
+    assert e.value.status == 404

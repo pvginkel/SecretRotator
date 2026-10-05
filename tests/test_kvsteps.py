@@ -174,6 +174,13 @@ class TestKvStamp:
         assert meta["rotator_status"] == "ok" and "rotator_step" not in meta
         assert meta["rotator_last_run"] == "2026-10-05T04:30:00+00:00"
 
+    def test_it_clears_the_nightly_run_s_backoff(self):
+        bao = fake()
+        bao.meta(TRELLO).update({"rotator_failed_nights": "3", "rotator_held_by": "ANS-9"})
+        KvStamp(TRELLO, ("bearer-token",)).run(Ctx(bao))
+        assert "rotator_failed_nights" not in bao.meta(TRELLO)
+        assert "rotator_held_by" not in bao.meta(TRELLO)
+
     def test_the_audit_accepts_its_stamps(self):
         bao = fake()
         KvStamp(TRELLO, ("bearer-token",)).run(Ctx(bao))

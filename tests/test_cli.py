@@ -11,14 +11,24 @@ from pathlib import Path
 import pytest
 import yaml
 from fake_cluster import TOKEN, FakeCluster
-from fake_openbao import ROLE_ID, SECRET_ID, FakeOpenBao
+from fake_openbao import ROLE_ID, SECRET_ID, FakeOpenBao, approle
+from fake_openbao import TOKEN as BAO_TOKEN
+from fake_telegram import CHAT, FakeTelegram
+from fake_telegram import TOKEN as BOT
+from fake_youtrack import TAG, FakeYouTrack
 from fixtures import COMPLIANT
-from plans import fake_of
+from plans import LEAF, fake_of
 from test_kinds import ACTIVATE_NONE, WIFI, store_of
+from test_nightly import TRELLO, WEBHOOK
+from test_nightly import world as nightly_world
 
 from secret_rotator import cli
 from secret_rotator.console import Console
 from secret_rotator.contract import LOCK_LEAF
+from secret_rotator.openbao import OpenBao
+from secret_rotator.switches import Switches, SwitchesError
+from secret_rotator.telegram import Telegram
+from secret_rotator.youtrack import YouTrack
 
 
 def usage(*argv, env=None):
@@ -49,7 +59,8 @@ def test_the_live_audit_takes_no_seed():
 
 
 @pytest.mark.parametrize(
-    "argv", [["audit"], ["annotate"], ["annotate", "--apply"], ["plan", "x/y"], ["run", "x/y"]]
+    "argv",
+    [["audit"], ["annotate"], ["annotate", "--apply"], ["plan", "x/y"], ["run", "x/y"], ["run"]],
 )
 def test_a_live_command_without_the_rotators_approle_is_a_usage_error(argv):
     code, err = usage(*argv)
@@ -57,7 +68,7 @@ def test_a_live_command_without_the_rotators_approle_is_a_usage_error(argv):
     assert "SECRET_ROTATOR_ROLE_ID and SECRET_ROTATOR_SECRET_ID are not set" in err
 
 
-@pytest.mark.parametrize("argv", [["audit"], ["plan", "x/y"], ["run", "x/y"]])
+@pytest.mark.parametrize("argv", [["audit"], ["plan", "x/y"], ["run", "x/y"], ["run"]])
 def test_a_live_command_that_reads_the_cluster_without_its_token_is_a_usage_error(argv):
     env = {"SECRET_ROTATOR_ROLE_ID": "r", "SECRET_ROTATOR_SECRET_ID": "s"}
     code, err = usage(*argv, env=env)
@@ -96,6 +107,122 @@ def test_run_takes_a_leaf_and_runs_its_plan_in_the_terminal():
     assert bao.data(WIFI) == {"password": "SECRET-psk"}
     assert "SECRET" not in con.stdout.getvalue()
     assert bao.data(LOCK_LEAF) == {} and bao.version(LOCK_LEAF) == 2
+
+
+ENV = {
+    cli.ROLE_ID_ENV: ROLE_ID,
+    cli.SECRET_ID_ENV: SECRET_ID,
+    cli.K8S_TOKEN_ENV: TOKEN,
+}
+
+
+def switches(**changes):
+    settings = {
+        "dry_run": False,
+        "paused": False,
+        "kinds_enabled": frozenset({"random"}),
+        "max_rotations_per_run": 10,
+        "card_tag": TAG,
+        "telegram_chat_id": CHAT,
+    }
+    return lambda: Switches(**(settings | changes))
+
+
+class TestTheNightlyRun:
+    def test_paused_stops_it_before_it_does_anything(self):
+        lines = []
+        code = cli.main(
+            ["run"],
+            opener=lambda req: pytest.fail("a request"),
+            out=lines.append,
+            environ=ENV,
+            kube=lambda token: pytest.fail("a cluster client"),
+            switches=switches(paused=True),
+        )
+        assert code == 0
+        assert lines == ["paused: the switches stop the nightly run before it does anything"]
+
+    def test_run_without_a_path_is_the_nightly_run(self):
+        bao = nightly_world(due=(LEAF,))
+        for leaf, key in ((TRELLO, "bearer-token"), (WEBHOOK, "token")):
+            bao.meta(leaf)[f"rotated_at_{key}"] = "2999-01-01"  # not due on any real date
+        youtrack, telegram, lines = FakeYouTrack(), FakeTelegram(), []
+        code = cli.main(
+            ["run"],
+            opener=bao,
+            out=lines.append,
+            environ=ENV,
+            kube=FakeCluster().kube,
+            switches=switches(),
+            youtrack=lambda token: YouTrack(token, opener=youtrack),
+            telegram=lambda token, chat: Telegram(token, chat, opener=telegram),
+        )
+        assert code == 0, lines
+        assert "rotated_at_token" in bao.meta(LEAF)
+        taken = [
+            r for r in bao.requests if r[:2] == ("POST", f"kv/data/{LOCK_LEAF}") and r[3]["data"]
+        ]
+        assert taken[0][3]["data"]["holder"].startswith("run on ")
+        assert "Rotated 1:" in telegram.messages[-1]
+
+    def test_switches_that_do_not_load_are_an_error(self):
+        def broken():
+            raise SwitchesError("dry_run: missing")
+
+        lines = []
+        code = cli.main(
+            ["run"], opener=FakeOpenBao(), out=lines.append, environ=ENV, switches=broken
+        )
+        assert code == 1 and lines == ["error: dry_run: missing"]
+
+
+class TestRunPathTellsTelegram:
+    def test_not_until_a_chat_id_is_committed(self):
+        con = Console(io.StringIO(), io.StringIO())
+        assert (
+            cli.notifier(OpenBao(opener=FakeOpenBao(), token=BAO_TOKEN), None, Telegram, con)
+            is None
+        )
+
+    def test_with_the_bot_s_token_and_a_failed_message_is_said_not_raised(self):
+        bao = FakeOpenBao({"rotator/telegram": {"data": {"token": BOT}, "meta": {}}})
+        telegram = FakeTelegram()
+        con = Console(io.StringIO(), io.StringIO())
+        notify = cli.notifier(
+            OpenBao(opener=bao, token=BAO_TOKEN),
+            CHAT,
+            lambda token, chat: Telegram(token, chat, opener=telegram),
+            con,
+        )
+        notify("The random plan of x failed")
+        assert telegram.messages == ["The random plan of x failed"]
+        telegram.down = True
+        notify("again")
+        assert "The Telegram message about it is not sent: sendMessage: HTTP 502" in (
+            con.stdout.getvalue()
+        )
+
+
+def test_after_its_own_rotation_a_run_logs_in_again_with_the_secret_id_the_leaf_holds():
+    bao = FakeOpenBao(
+        {
+            cli.OWN_LEAF: {"data": {"role_id": ROLE_ID, "secret_id": SECRET_ID}, "meta": {}},
+            "shared/x": {"data": {"k": "v"}, "meta": {}},
+        },
+        approles={"rotator": approle(ROLE_ID)},
+    )
+    now = [0.0]
+    c = cli.connect(ENV, bao, lambda: now[0])
+    # The approle kind's kv delivery rewrote the leaf; the environment's secret_id is destroyed.
+    bao.leaves[cli.OWN_LEAF]["data"]["secret_id"] = "SECRET-rotator-new-1"
+    bao.approles["rotator"]["secret_ids"]["SECRET-rotator-new-1"] = {"accessor": "a1", "ttl": 0}
+    now[0] = 3600.0
+    c.metadata("shared/x")
+    logins = [r[3] for r in bao.requests if r[1] == "auth/approle/login"]
+    assert logins == [
+        {"role_id": ROLE_ID, "secret_id": SECRET_ID},
+        {"role_id": ROLE_ID, "secret_id": "SECRET-rotator-new-1"},
+    ]
 
 
 def test_a_missing_seed_is_an_error_not_a_trace():

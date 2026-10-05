@@ -4,6 +4,7 @@ import functools
 import http.client
 import json
 import ssl
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -16,6 +17,9 @@ from secret_rotator.contract import MOUNT, is_working_leaf
 # on as 127.0.0.1, which the rotator AppRole's secret_id_bound_cidrs refuses.
 ADDR = "https://secrets.home:8200"
 TIMEOUT = 30
+# A client logged in by AppRole logs in again this many seconds before its token's lease ends: the
+# rotator's token lives 1 h from login and cannot renew itself (its policy has no token paths).
+RELOGIN_MARGIN = 300
 
 
 class OpenBaoError(Exception):
@@ -35,12 +39,24 @@ class Version:
 
 
 class OpenBao:
-    def __init__(self, addr: str = ADDR, token: str | None = None, opener: Callable | None = None):
+    def __init__(
+        self,
+        addr: str = ADDR,
+        token: str | None = None,
+        opener: Callable | None = None,
+        clock: Callable[[], float] = time.monotonic,
+    ):
         self.addr = addr.rstrip("/")
         self.token = token
         self.open = opener or functools.partial(
             urllib.request.urlopen, context=ssl.create_default_context(), timeout=TIMEOUT
         )
+        self.clock = clock
+        # Where the client takes the role_id and secret_id it logs in with again before its
+        # token's lease ends, read when it does; None: it never logs in again.
+        self.credentials: Callable[[], tuple[str, str]] | None = None
+        self.expires: float | None = None  # when the token's lease ends, by clock
+        self._relogging = False
 
     def call(
         self,
@@ -51,6 +67,7 @@ class OpenBao:
         content_type: str = "application/json",
     ) -> tuple[int, dict | None]:
         """The status and the JSON answer; a 404 is returned, any other status >= 400 raised."""
+        self._fresh()
         url = f"{self.addr}/v1/{urllib.parse.quote(path)}"
         if query:
             url += "?" + urllib.parse.urlencode(query)
@@ -84,11 +101,29 @@ class OpenBao:
             )
         return status, doc
 
+    def _fresh(self) -> None:
+        """Logs in again when the token's lease is about to end. The credentials are read with the
+        token still valid, and the requests that read them do not log in again themselves."""
+        if (
+            self.credentials is None
+            or self.expires is None
+            or self._relogging
+            or self.clock() < self.expires - RELOGIN_MARGIN
+        ):
+            return
+        self._relogging = True
+        try:
+            self.login_approle(*self.credentials())
+        finally:
+            self._relogging = False
+
     def login_approle(self, role_id: str, secret_id: str) -> None:
         _, doc = self.call(
             "POST", "auth/approle/login", {"role_id": role_id, "secret_id": secret_id}
         )
         self.token = doc["auth"]["client_token"]
+        lease = doc["auth"].get("lease_duration") or 0
+        self.expires = self.clock() + lease if lease else None
 
     def leaves(self, prefix: str = "") -> list[str]:
         """Every leaf under the prefix, but the rotator's working leaves."""
@@ -162,6 +197,16 @@ class OpenBao:
         if status == 404:
             raise OpenBaoError(f"PATCH {path}: HTTP 404: no leaf {leaf}", status)
         return doc["data"]["version"]
+
+    def value(self, leaf: str, key: str) -> str:
+        """One key of the leaf's current version; refused as a 404 when there is none."""
+        version = self.read(leaf)
+        if version is None or not version.data.get(key):
+            raise OpenBaoError(
+                f"{leaf}#{key} cannot be read: no such leaf, or no such key in its current version",
+                404,
+            )
+        return version.data[key]
 
     def destroy(self, leaf: str) -> None:
         """Deletes the leaf with every version and its metadata."""

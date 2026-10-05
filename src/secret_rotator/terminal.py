@@ -25,6 +25,7 @@ from secret_rotator.model import Action, Actor, Event, Finished, Progress, Skipp
 from secret_rotator.openbao import OpenBao, OpenBaoError
 from secret_rotator.opsteps import ConfirmRequest, CredentialRequest, Field, ShowRequest
 from secret_rotator.plan import Kind, LeafPlan, Plan, PlanError, make, of_leaf
+from secret_rotator.telegram import failed
 
 Choice = tuple[str, str]  # the letter that answers it, and the word it is in
 ABORT: Choice = ("a", "abort")
@@ -86,13 +87,13 @@ def print_leaf(
     return 1 if any(p.plan is None for p in plans) else 0
 
 
-def _took(seconds: float) -> str:
+def took(seconds: float) -> str:
     if seconds < 60:
         return f"{seconds:.1f}s"
     return f"{int(seconds // 60)}m {int(seconds % 60):02d}s"
 
 
-def _label(step: Step, action: Action) -> str:
+def label(step: Step, action: Action) -> str:
     return {Action.RUN: "", Action.UNDO: "undo: ", Action.RERUN: "again: "}[action] + step.title
 
 
@@ -159,24 +160,24 @@ class TerminalRenderer:
                 c.line("Rolling back")
             if step.actor is Actor.OPERATOR:
                 c.line()
-                c.line(f"── {_label(step, event.action)}")
+                c.line(f"── {label(step, event.action)}")
             elif not step.silent:
-                c.live(f"◐ {_label(step, event.action)}")
+                c.live(f"◐ {label(step, event.action)}")
         elif isinstance(event, Progress):
             if not step.silent:
-                c.live(f"◐ {_label(step, event.action)} · {event.detail}")
+                c.live(f"◐ {label(step, event.action)} · {event.detail}")
         elif isinstance(event, Finished):
             began = self.began.pop((step.id, event.action), None)
-            took = "" if began is None else f"  {_took(self.clock() - began)}"
+            spent = "" if began is None else f"  {took(self.clock() - began)}"
             if not event.ok:
                 self.failure = event
-                c.line(f"✗ {_label(step, event.action)}{took}")
+                c.line(f"✗ {label(step, event.action)}{spent}")
                 c.line(f"    {event.error}")
             elif step.actor is Actor.OPERATOR:
-                c.line(f"✓ {_label(step, event.action)}")
+                c.line(f"✓ {label(step, event.action)}")
             elif not step.silent:
                 detail = f" · {event.detail}" if event.detail else ""
-                c.line(f"✓ {_label(step, event.action)}{detail}{took}")
+                c.line(f"✓ {label(step, event.action)}{detail}{spent}")
         elif isinstance(event, Skipped):
             c.line(f"- {step.title}: {event.reason}")
 
@@ -294,13 +295,21 @@ def choose(
 
 class Driver:
     """Runs one plan to an end: Retry, Abort and Details after a failure, the rollback's Retry,
-    and the offer to break a dead holder's lock."""
+    and the offer to break a dead holder's lock. notify: where each failure, of the plan or of
+    its rollback, is told in Telegram too (design R66)."""
 
-    def __init__(self, console: Console, executor: Executor, renderer: TerminalRenderer):
+    def __init__(
+        self,
+        console: Console,
+        executor: Executor,
+        renderer: TerminalRenderer,
+        notify: Callable[[str], None] | None = None,
+    ):
         self.console = console
         self.executor = executor
         self.renderer = renderer
         self.leaf = executor.leaf
+        self.notify = notify
 
     def go(self, stand: Stand, meta: Mapping[str, str]) -> int:
         e, c = self.executor, self.console
@@ -382,10 +391,11 @@ class Driver:
         e, c = self.executor, self.console
         while True:
             try:
-                return action()
+                outcome = action()
             except LockHeld as held:
                 if not self.break_lock(held.holder):
                     return None
+                continue
             except KeyboardInterrupt:
                 c.line()
                 c.line(
@@ -396,6 +406,19 @@ class Driver:
             except (AbortRefused, PlanMismatch, OpenBaoError, LockError) as err:
                 c.line(f"error: {err}")
                 return None
+            if self.notify is not None and outcome in (Outcome.FAILED, Outcome.ROLLBACK_FAILED):
+                failure, plan = self.renderer.failure, e.plan
+                self.notify(
+                    f"In `secret-rotator run {self.leaf}`: "
+                    + failed(
+                        plan.name,
+                        plan.target.keys,
+                        label(failure.step, failure.action),
+                        failure.error,
+                        rollback=outcome is Outcome.ROLLBACK_FAILED,
+                    )
+                )
+            return outcome
 
     def break_lock(self, holder: Holder) -> bool:
         c = self.console
@@ -424,9 +447,11 @@ def run_leaf(
     today: datetime.date,
     cluster: Cluster | None = None,
     clock: Callable[[], float] = time.monotonic,
+    notify: Callable[[str], None] | None = None,
 ) -> int:
     """`run <path>`: the leaf's plan in flight, else the plan the operator picks, run to an end. 1
-    when it did not end with the plan done, rolled back, cancelled or left by the operator."""
+    when it did not end with the plan done, rolled back, cancelled or left by the operator.
+    notify: where each failure is told in Telegram too."""
     store = live_store(bao)
     if leaf not in store:
         console.line(f"error: no leaf {leaf}")
@@ -452,7 +477,7 @@ def run_leaf(
         executor = Executor(bao, plan, renderer, Lock(bao, holder), dry_run=False)
         renderer.executor = executor
         stand = Stand.FRESH if flight is None else executor.load()
-        return Driver(console, executor, renderer).go(stand, meta)
+        return Driver(console, executor, renderer, notify).go(stand, meta)
     except (PlanMismatch, OpenBaoError, KubeError) as e:
         console.line(f"error: {e}")
         return 1

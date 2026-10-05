@@ -8,6 +8,8 @@ from collections.abc import Mapping
 
 from secret_rotator.contract import (
     CONSUMERS,
+    FAILED_NIGHTS,
+    HELD_BY,
     LAST_RUN,
     MARKER_VALUE,
     STATUS,
@@ -153,9 +155,9 @@ class KvCopy(KvPatch):
 
 class KvStamp(Step):
     """Records the rotation once it took effect, in one metadata patch: the rotated keys' stamps,
-    rotator_status ok, rotator_step cleared, and rotator_consumers: what the plan's activation
-    read from the cluster (design §3.4), removed when it read nothing. The core appends it to
-    every plan (design R20)."""
+    rotator_status ok, rotator_step and the nightly run's backoff cleared, and rotator_consumers:
+    what the plan's activation read from the cluster (design §3.4), removed when it read nothing.
+    The core appends it to every plan (design R20)."""
 
     type = "kv.stamp"
     silent = True
@@ -172,6 +174,8 @@ class KvStamp(Step):
         state = {
             STATUS: "ok",
             STEP: None,
+            FAILED_NIGHTS: None,
+            HELD_BY: None,
             LAST_RUN: ctx.now.isoformat(timespec="seconds"),
             CONSUMERS: consumers_text(list(self.consumers)) if self.consumers else None,
         }

@@ -24,6 +24,10 @@ LAST_ERROR = "rotator_last_error"
 LAST_RUN = "rotator_last_run"
 CONSUMERS = "rotator_consumers"
 EXPIRES_AT = "rotator_expires_at"  # the ISO date a minted credential expires
+# The nightly run's backoff: how many nights in a row a plan of the leaf failed, and the standing
+# card the leaf waits on once that reached three, not retried until that card is closed.
+FAILED_NIGHTS = "rotator_failed_nights"
+HELD_BY = "rotator_held_by"
 
 # KV v2 custom_metadata limits (Vault's; not verified for OpenBao 2.5.4).
 MAX_KEYS = 64

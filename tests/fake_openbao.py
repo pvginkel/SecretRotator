@@ -82,7 +82,7 @@ class FakeOpenBao:
                     and body["secret_id"] in role["secret_ids"]
                     and name not in self.refused_logins
                 ):
-                    token = f"token-of-{name}"
+                    token = TOKEN if role["role_id"] == ROLE_ID else f"token-of-{name}"
                     return self.answer(
                         200, {"auth": {"client_token": token, "lease_duration": 3600}}
                     )

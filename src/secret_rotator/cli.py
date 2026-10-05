@@ -3,20 +3,28 @@
 import argparse
 import functools
 import os
+import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from secret_rotator import annotate as ann
 from secret_rotator import audit as aud
-from secret_rotator import registry, terminal
+from secret_rotator import nightly, registry, terminal
 from secret_rotator.cluster import Cluster
 from secret_rotator.console import Console
 from secret_rotator.kube import Kube, KubeError
 from secret_rotator.lock import holder_name, utcnow
 from secret_rotator.openbao import OpenBao, OpenBaoError
+from secret_rotator.switches import Switches, SwitchesError
+from secret_rotator.switches import load as load_switches
+from secret_rotator.telegram import TOKEN as BOT_TOKEN
+from secret_rotator.telegram import Telegram, TelegramError
+from secret_rotator.youtrack import YouTrack
 
 # The rotator's AppRole, kv/iac/rotator-approle, which iac-impl puts in the iac container's
-# environment.
+# environment. A run logs in again from the leaf itself: once the rotator has rotated it, the
+# environment's secret_id is destroyed.
+OWN_LEAF = "iac/rotator-approle"
 ROLE_ID_ENV = "SECRET_ROTATOR_ROLE_ID"
 SECRET_ID_ENV = "SECRET_ROTATOR_SECRET_ID"
 # The secret-rotator ServiceAccount's token, kv/iac/rotator-k8s-token, put there the same way.
@@ -79,19 +87,49 @@ def parser() -> argparse.ArgumentParser:
     plan.add_argument("--seed", type=Path, help="with --keys: the seed (default: the packaged one)")
     run = commands.add_parser(
         "run",
-        help="run a plan of a leaf in the terminal, its operator steps as prompts",
-        description="Takes up the leaf's plan in flight, else runs the plan picked from its plans. "
-        "A value is entered at a hidden prompt, never on the command line.",
+        help="without a path, the nightly run; with one, run a plan of that leaf in the terminal",
+        description="Without a path, the nightly run: compliance on the standing card, every due "
+        "plan with no operator step run under the switches, a failed one rolled back, the digest "
+        "and every failure in Telegram. With a path, takes up the leaf's plan in flight, else runs "
+        "the plan picked from its plans, its operator steps as prompts. A value is entered at a "
+        "hidden prompt, never on the command line.",
     )
-    run.add_argument("path", help="the leaf, a path of the kv mount")
+    run.add_argument("path", nargs="?", help="the leaf, a path of the kv mount")
     run.set_defaults(keys=None, seed=None)
     return p
 
 
-def connect(environ: Mapping[str, str], opener: Callable | None) -> OpenBao:
-    bao = OpenBao(opener=opener)
+def connect(
+    environ: Mapping[str, str], opener: Callable | None, clock: Callable[[], float]
+) -> OpenBao:
+    bao = OpenBao(opener=opener, clock=clock)
     bao.login_approle(environ[ROLE_ID_ENV], environ[SECRET_ID_ENV])
+    bao.credentials = functools.partial(own_credentials, bao)
     return bao
+
+
+def own_credentials(bao: OpenBao) -> tuple[str, str]:
+    """The rotator's AppRole as the store holds it now."""
+    return bao.value(OWN_LEAF, "role_id"), bao.value(OWN_LEAF, "secret_id")
+
+
+def notifier(
+    bao: OpenBao,
+    chat: int | None,
+    telegram: Callable[[str, int], Telegram],
+    console: Console,
+) -> Callable[[str], None] | None:
+    """What tells `run <path>`'s failures in Telegram; None until a chat id is committed."""
+    if chat is None:
+        return None
+
+    def notify(text: str) -> None:
+        try:
+            telegram(bao.value(*BOT_TOKEN), chat).send(text)
+        except (OpenBaoError, TelegramError) as e:
+            console.line(f"The Telegram message about it is not sent: {e}")
+
+    return notify
 
 
 def main(
@@ -102,6 +140,10 @@ def main(
     environ: Mapping[str, str] = os.environ,
     console: Callable[[], Console] = Console,
     kube: Callable[[str], Kube] = Kube,
+    switches: Callable[[], Switches] = load_switches,
+    youtrack: Callable[[str], YouTrack] = YouTrack,
+    telegram: Callable[[str, int], Telegram] = Telegram,
+    clock: Callable[[], float] = time.monotonic,
 ) -> int:
     p = parser()
     args = p.parse_args(argv)
@@ -122,6 +164,8 @@ def main(
     seed_path = args.seed or ann.DEFAULT_SEED
     today = utcnow().date()
     try:
+        if args.command == "run" and args.path is None:
+            return run_nightly(environ, opener, out, kube, switches(), youtrack, telegram, clock)
         kinds = registry.load() if args.command in ("plan", "run") else {}
         if offline:
             store = ann.offline_store(args.keys, ann.load_seed(seed_path), out)
@@ -129,20 +173,62 @@ def main(
                 return terminal.print_leaf(out, args.path, store, aud.audit(store), kinds, today)
             return aud.report(aud.audit(store), store, out)
         seed = ann.load_seed(seed_path) if args.command == "annotate" else None
-        bao = connect(environ, opener)
+        bao = connect(environ, opener, clock)
         if seed is not None:
             return ann.run_apply(bao, seed, args.apply, out)
         cluster = Cluster(kube(environ[K8S_TOKEN_ENV]))
         if args.command == "run":
-            holder = holder_name(f"run {args.path}")
+            con = console()
             return terminal.run_leaf(
-                bao, args.path, kinds, console(), holder=holder, today=today, cluster=cluster
+                bao,
+                args.path,
+                kinds,
+                con,
+                holder=holder_name(f"run {args.path}"),
+                today=today,
+                cluster=cluster,
+                notify=notifier(bao, switches().telegram_chat_id, telegram, con),
             )
         store = aud.live_store(bao)
         result = aud.audit(store, cluster.referenced())
         if args.command == "plan":
             return terminal.print_leaf(out, args.path, store, result, kinds, today, cluster)
         return aud.report(result, store, out)
-    except (ann.SeedError, registry.RegistryError, OpenBaoError, KubeError, OSError) as e:
+    except (
+        ann.SeedError,
+        registry.RegistryError,
+        SwitchesError,
+        OpenBaoError,
+        KubeError,
+        OSError,
+    ) as e:
         out(f"error: {e}")
         return 1
+
+
+def run_nightly(
+    environ: Mapping[str, str],
+    opener: Callable | None,
+    out: Callable[[str], None],
+    kube: Callable[[str], Kube],
+    switches: Switches,
+    youtrack: Callable[[str], YouTrack],
+    telegram: Callable[[str, int], Telegram],
+    clock: Callable[[], float],
+) -> int:
+    """`run` without a path. paused stops it before it does anything (design §8)."""
+    if switches.paused:
+        out("paused: the switches stop the nightly run before it does anything")
+        return 0
+    bao = connect(environ, opener, clock)
+    return nightly.run(
+        bao,
+        Cluster(kube(environ[K8S_TOKEN_ENV])),
+        registry.load(),
+        switches,
+        youtrack=youtrack,
+        telegram=telegram,
+        out=out,
+        holder=holder_name("run"),
+        clock=clock,
+    )

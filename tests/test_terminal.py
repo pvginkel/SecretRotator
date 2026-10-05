@@ -308,6 +308,24 @@ class TestFailure:
         assert "Rolled back" in out and bao.data(LEAF)["token"] == f"SECRET-{LEAF}-token"
 
 
+class TestTelegram:
+    def test_each_failure_of_the_plan_and_of_its_rollback_is_told_and_nothing_else(self):
+        bao = fake_of(store_of(**ACTIVATE_NONE))
+        kinds = kinds_with(Wrapped(Flaky(undo_fail=1)))
+        told = []
+        con = console("y", "a", "y", "r")
+        code = terminal.run_leaf(
+            client(bao), LEAF, kinds, con, holder="run test", today=TODAY, notify=told.append
+        )
+        assert code == 0
+        assert told == [
+            f"In `secret-rotator run {LEAF}`: The random plan of {LEAF} (token) failed at do the "
+            "flaky thing: the flaky thing failed",
+            f"In `secret-rotator run {LEAF}`: The rollback of the random plan of {LEAF} (token) "
+            "failed at undo: do the flaky thing: the undo of the flaky thing failed",
+        ]
+
+
 class TestHandActivation:
     """A manual: activation the operator confirmed is part of the rollback, which asks for it
     again once the old value is back."""
