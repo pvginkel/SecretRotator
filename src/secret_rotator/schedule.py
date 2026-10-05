@@ -5,12 +5,12 @@ import datetime
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from secret_rotator.contract import is_scheduled, parse_date, parse_interval
+from secret_rotator.contract import EXPIRES_AT, is_scheduled, parse_date, parse_interval
 
 DEFAULT_INTERVAL = "14d"
 EXPIRY_LEAD = datetime.timedelta(days=7)
 STAMP_PREFIX = "rotated_at_"
-EXPIRIES = ("rotation_expires_at", "rotator_expires_at")
+EXPIRIES = ("rotation_expires_at", EXPIRES_AT)
 
 
 def stamp_key(key: str) -> str:

@@ -3,6 +3,7 @@
 import pytest
 import yaml
 
+from secret_rotator import registry
 from secret_rotator import switches as sw
 
 VALID = {
@@ -35,6 +36,11 @@ def test_the_packaged_switches_ship_inside_the_package_and_start_in_dry_run():
     )
 
 
+def test_kinds_enabled_may_name_every_kind_the_install_has_a_plugin_for():
+    text = yaml.safe_dump({**VALID, "kinds_enabled": ["random", "manual", "approle"]})
+    assert sw.parse(text, registry.load()).kinds_enabled == {"random", "manual", "approle"}
+
+
 def test_a_valid_file_parses():
     assert parse().telegram_chat_id == -1001234567890
     assert parse(kinds_enabled=["random", "manual"]).kinds_enabled == {"random", "manual"}
@@ -51,7 +57,7 @@ def test_a_valid_file_parses():
             {"kinds_enabled": ["keycloak-client"]},
             "kinds_enabled: 'keycloak-client' is not an implemented kind",
         ),
-        ({"kinds_enabled": ["approle"]}, "kinds_enabled: 'approle' is not an implemented kind"),
+        ({"kinds_enabled": ["cephx"]}, "kinds_enabled: 'cephx' is not an implemented kind"),
         ({"kinds_enabled": ["none"]}, "kinds_enabled: 'none' is not an implemented kind"),
         ({"max_rotations_per_run": 0}, "max_rotations_per_run: not a whole number from 1"),
         ({"max_rotations_per_run": True}, "max_rotations_per_run: not a whole number from 1"),

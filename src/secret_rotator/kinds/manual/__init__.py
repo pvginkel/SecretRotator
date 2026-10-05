@@ -6,8 +6,7 @@ OpenBao."""
 
 from collections.abc import Mapping
 
-from secret_rotator.contract import MARKER_VALUE
-from secret_rotator.model import Context, Step, StepFailed, value_name
+from secret_rotator.model import Step
 from secret_rotator.opsteps import starts_with
 from secret_rotator.plan import PlanContext, Target, tool_part
 
@@ -16,32 +15,6 @@ MARKERS = "rotator/bootstrap/"
 # rotation_args, each optional and describing every manual key of the leaf: the credential in
 # words (`GitHub PAT`), where to mint it and with which scopes, and the prefix its values have.
 ARGS = ("what", "mint", "prefix")
-
-
-class Marker(Step):
-    """Stages the marker key's new text for the kv.write: the marker text and when it rotated, so
-    each rotation is a KV version. A key that does not hold the marker text is a credential the
-    write would overwrite: the step fails there."""
-
-    type = "manual.marker"
-    silent = True
-
-    def __init__(self, leaf: str, key: str):
-        super().__init__(f"manual.marker:{key}", f"the new marker text of {key}")
-        self.leaf = leaf
-        self.key = key
-
-    def run(self, ctx: Context) -> str:
-        name = value_name(self.key)
-        if ctx.staged(name) is None:
-            current = ctx.bao.read(self.leaf)
-            held = None if current is None else current.data.get(self.key)
-            if held is None or not held.startswith(MARKER_VALUE):
-                raise StepFailed(
-                    f"{self.leaf}#{self.key} does not hold the marker text: it is no marker leaf"
-                )
-            ctx.stage(name, f"{MARKER_VALUE}; rotated {ctx.now.isoformat(timespec='seconds')}")
-        return "staged"
 
 
 def _marker(leaf: Target) -> bool:
@@ -79,7 +52,7 @@ class Manual:
         notes = leaf.meta.get("notes", "")
         if _marker(leaf):
             return [
-                *(Marker(leaf.leaf, key) for key in leaf.keys),
+                *ctx.steps.marker(),
                 *ctx.steps.confirm(
                     "source",
                     f"Rotate {_what(leaf)} at its source",

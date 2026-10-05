@@ -13,6 +13,7 @@ from secret_rotator import registry
 from secret_rotator.audit import Leaf, audit
 from secret_rotator.contract import MARKER_VALUE
 from secret_rotator.executor import Abandon, AbortRefused, Executor, Outcome
+from secret_rotator.kinds.approle import AppRole
 from secret_rotator.kinds.manual import Manual
 from secret_rotator.kinds.random import Random
 from secret_rotator.model import StepFailed, value_name
@@ -67,8 +68,9 @@ def run(store, plan, *answers, data=None):
 
 class TestTheRegistry:
     def test_it_finds_the_kinds_this_distribution_ships_through_their_entry_points(self):
-        assert set(KINDS) == {"random", "manual"}
+        assert set(KINDS) == {"random", "manual", "approle"}
         assert isinstance(KINDS["random"], Random) and isinstance(KINDS["manual"], Manual)
+        assert isinstance(KINDS["approle"], AppRole)
 
     @pytest.mark.parametrize(
         ("found", "problem"),

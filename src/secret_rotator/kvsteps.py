@@ -1,11 +1,19 @@
 """The generic steps every rotation through KV uses (design §4.2): random.generate, kv.write,
-kv.copy and kv.stamp. No detail or error they report carries a value."""
+kv.copy and kv.stamp; and the marker text a kind with marker leaves rewrites. No detail or error
+they report carries a value."""
 
 import secrets
 import string
 from collections.abc import Mapping
 
-from secret_rotator.contract import CONSUMERS, LAST_RUN, STATUS, STEP, consumers_text
+from secret_rotator.contract import (
+    CONSUMERS,
+    LAST_RUN,
+    MARKER_VALUE,
+    STATUS,
+    STEP,
+    consumers_text,
+)
 from secret_rotator.model import Context, Step, StepFailed, value_name
 from secret_rotator.openbao import Version
 from secret_rotator.schedule import stamp_key
@@ -37,6 +45,33 @@ class RandomGenerate(Step):
         if ctx.staged(name) is None:
             ctx.stage(name, "".join(secrets.choice(self.charset) for _ in range(self.length)))
         return f"{self.length} characters"
+
+
+class Marker(Step):
+    """Stages a marker key's new text for the kv.write: the marker text and when it rotated, so
+    each rotation is a KV version. A key that does not hold the marker text is a credential the
+    write would overwrite: the step fails there. Its type is its kind's (manual.marker,
+    approle.marker), a step of that kind's plans."""
+
+    silent = True
+
+    def __init__(self, kind: str, leaf: str, key: str):
+        self.type = f"{kind}.marker"
+        super().__init__(f"{self.type}:{key}", f"the new marker text of {key}")
+        self.leaf = leaf
+        self.key = key
+
+    def run(self, ctx: Context) -> str:
+        name = value_name(self.key)
+        if ctx.staged(name) is None:
+            current = ctx.bao.read(self.leaf)
+            held = None if current is None else current.data.get(self.key)
+            if held is None or not held.startswith(MARKER_VALUE):
+                raise StepFailed(
+                    f"{self.leaf}#{self.key} does not hold the marker text: it is no marker leaf"
+                )
+            ctx.stage(name, f"{MARKER_VALUE}; rotated {ctx.now.isoformat(timespec='seconds')}")
+        return "staged"
 
 
 def _current(ctx: Context, leaf: str) -> Version:

@@ -1,9 +1,12 @@
 """OpenBao over HTTP, as an opener for secret_rotator.openbao.OpenBao: AppRole login and the kv
-mount (KV v2 data with its versions, metadata and subkeys)."""
+mount (KV v2 data with its versions, metadata and subkeys); and the AppRoles' secret_ids as the
+approle kind uses them, answering as OpenBao 2.5.4 does."""
 
 import copy
+import datetime
 import io
 import json
+import re
 import urllib.error
 import urllib.parse
 
@@ -13,6 +16,31 @@ ROLE_ID = "role-id-of-the-rotator"
 SECRET_ID = "SECRET-secret-id-of-the-rotator"
 TOKEN = "token-of-the-rotator"
 
+APPROLE = re.compile(
+    r"auth/approle/role/(?P<role>[^/]+)/(?P<what>role-id|secret-id|secret-id/lookup"
+    r"|secret-id-accessor/lookup|secret-id-accessor/destroy)"
+)
+MINTED_AT = datetime.datetime(2026, 10, 5, 4, 30, tzinfo=datetime.UTC)  # plans.NOW
+MAX_TTL = 8640 * 3600  # the approle mount's max_lease_ttl, as the openbao role tunes it
+# OpenBao reports times in its host's zone, to the nanosecond; in this one the date is not UTC's.
+ZONE = datetime.timezone(datetime.timedelta(hours=-5))
+
+
+def approle(role_id, **secret_ids):
+    """An AppRole whose live secret_ids are secret_id -> accessor, minted never to expire."""
+    return {
+        "role_id": role_id,
+        "secret_ids": {s: {"accessor": a, "ttl": 0} for s, a in secret_ids.items()},
+    }
+
+
+def reported(when):
+    if when is None:
+        return "0001-01-01T00:00:00Z"
+    local = when.astimezone(ZONE)
+    offset = local.strftime("%z")
+    return f"{local:%Y-%m-%dT%H:%M:%S}.61674539{offset[:3]}:{offset[3:]}"
+
 
 class FakeResponse(io.BytesIO):
     def __init__(self, status, body):
@@ -21,7 +49,7 @@ class FakeResponse(io.BytesIO):
 
 
 class FakeOpenBao:
-    def __init__(self, leaves=None):
+    def __init__(self, leaves=None, approles=None):
         # path -> {"data": dict | None, "meta": dict}, and once written "version" (the current
         # version's number, else 1) and "history" (version number -> that version's data)
         self.leaves = copy.deepcopy(leaves or {})
@@ -29,6 +57,10 @@ class FakeOpenBao:
         self.refuse = {}  # (method, request path) -> the HTTP status it answers
         # request path, or (method, request path) -> the OSError it raises (a transport failure)
         self.broken = {}
+        # role -> {"role_id", "secret_ids": {secret_id: {"accessor", "ttl" (seconds; 0: never)}}}
+        self.approles = copy.deepcopy(approles or {})
+        self.minted = 0
+        self.refused_logins = set()  # roles whose logins it refuses, as a bound CIDR does
 
     def __call__(self, req):
         url = urllib.parse.urlsplit(req.full_url)
@@ -44,12 +76,24 @@ class FakeOpenBao:
         if path == "auth/approle/login":
             if body == {"role_id": ROLE_ID, "secret_id": SECRET_ID}:
                 return self.answer(200, {"auth": {"client_token": TOKEN, "lease_duration": 3600}})
+            for name, role in self.approles.items():
+                if (
+                    body["role_id"] == role["role_id"]
+                    and body["secret_id"] in role["secret_ids"]
+                    and name not in self.refused_logins
+                ):
+                    token = f"token-of-{name}"
+                    return self.answer(
+                        200, {"auth": {"client_token": token, "lease_duration": 3600}}
+                    )
             return self.answer(400, {"errors": ["invalid role or secret ID"]})
         if req.get_header("X-vault-token") != TOKEN:
             return self.answer(403, {"errors": ["permission denied"]})
         if (method, path) in self.refuse:
             errors = ["1 error occurred:\n\t* permission denied\n\n"]
             return self.answer(self.refuse[method, path], {"errors": errors})
+        if found := APPROLE.fullmatch(path):
+            return self.approle(method, found["role"], found["what"], body)
         mount, area, leaf = path.split("/", 2)
         assert mount == "kv" and area in ("metadata", "data", "subkeys"), path
         handler = getattr(self, f"{method.lower()}_{area}", None)
@@ -143,6 +187,66 @@ class FakeOpenBao:
             else:
                 meta[key] = value
         return self.answer(204, None)
+
+    def approle(self, method, name, what, body):
+        role = self.approles.get(name)
+        if role is None:
+            return self.answer(404, {"errors": [f'role "{name}" does not exist']})
+        ids = role["secret_ids"]
+        if (method, what) == ("GET", "role-id"):
+            return self.answer(200, {"data": {"role_id": role["role_id"]}})
+        if (method, what) == ("POST", "secret-id"):
+            hours = re.fullmatch(r"([0-9]+)h", body["ttl"])
+            ttl = min(int(hours[1]) * 3600, MAX_TTL)
+            self.minted += 1
+            secret_id = f"SECRET-{name}-new-{self.minted}"
+            accessor = f"accessor-{name}-new-{self.minted}"
+            ids[secret_id] = {"accessor": accessor, "ttl": ttl}
+            data = {
+                "secret_id": secret_id,
+                "secret_id_accessor": accessor,
+                "secret_id_num_uses": 0,
+                "secret_id_ttl": ttl,
+            }
+            return self.answer(200, {"data": data})
+        if (method, what) == ("LIST", "secret-id"):
+            if not ids:
+                return self.answer(404, {"errors": []})
+            return self.answer(200, {"data": {"keys": sorted(e["accessor"] for e in ids.values())}})
+        assert method == "POST", (method, what)
+        if what == "secret-id/lookup":
+            entry = ids.get(body["secret_id"])
+            return self.answer(204, None) if entry is None else self.described(entry)
+        by_accessor = {e["accessor"]: s for s, e in ids.items()}
+        secret_id = by_accessor.get(body["secret_id_accessor"])
+        missing = (
+            f'failed to find accessor entry for secret_id_accessor: "{body["secret_id_accessor"]}"'
+        )
+        if what == "secret-id-accessor/lookup":
+            if secret_id is None:
+                return self.answer(404, {"data": {"error": missing}})
+            return self.described(ids[secret_id])
+        if secret_id is None:
+            return self.answer(500, {"errors": [f"1 error occurred:\n\t* {missing}\n\n"]})
+        del ids[secret_id]
+        return self.answer(204, None)
+
+    def described(self, entry):
+        ttl = entry["ttl"]
+        expires = MINTED_AT + datetime.timedelta(seconds=ttl) if ttl else None
+        data = {
+            "secret_id_accessor": entry["accessor"],
+            "secret_id_ttl": ttl,
+            "secret_id_num_uses": 0,
+            "creation_time": reported(MINTED_AT),
+            "expiration_time": reported(expires),
+            "metadata": {},
+        }
+        return self.answer(200, {"data": data})
+
+    def live(self, role):
+        """The role's live secret_ids: secret_id -> accessor."""
+        return {s: e["accessor"] for s, e in self.approles[role]["secret_ids"].items()}
 
     @staticmethod
     def answer(status, doc):

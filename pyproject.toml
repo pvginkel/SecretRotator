@@ -14,6 +14,7 @@ secret-rotator = "secret_rotator.cli:main"
 [project.entry-points."secret_rotator.kinds"]
 random = "secret_rotator.kinds.random:Random"
 manual = "secret_rotator.kinds.manual:Manual"
+approle = "secret_rotator.kinds.approle:AppRole"
 
 [tool.poetry]
 packages = [{ include = "secret_rotator", from = "src" }]

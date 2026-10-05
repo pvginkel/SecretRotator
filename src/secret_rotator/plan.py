@@ -21,7 +21,15 @@ from secret_rotator.contract import (
 from secret_rotator.jenkins import Jenkins
 from secret_rotator.jenkinssteps import JenkinsCredential, JenkinsJob, parse_job
 from secret_rotator.k8ssteps import EsoSync, K8sRollout
-from secret_rotator.kvsteps import DEFAULT_LENGTH, URLSAFE, KvCopy, KvStamp, KvWrite, RandomGenerate
+from secret_rotator.kvsteps import (
+    DEFAULT_LENGTH,
+    URLSAFE,
+    KvCopy,
+    KvStamp,
+    KvWrite,
+    Marker,
+    RandomGenerate,
+)
 from secret_rotator.model import Actor, Step
 from secret_rotator.opsteps import OperatorConfirm, OperatorCredential, OperatorShow, Shape
 from secret_rotator.schedule import schedule
@@ -113,13 +121,21 @@ class StepFactory:
         t = self.target
         return [KvWrite(t.leaf, t.keys), *(KvCopy(c.leaf, c.key, c.of) for c in t.copies)]
 
+    def marker(self) -> list[Step]:
+        """On a marker leaf, the new marker text of each of the plan's keys, for write()."""
+        t = self.target
+        return [Marker(t.kind, t.leaf, key) for key in t.keys]
+
     def credential(self, title: str, instruction: str, shape: Shape | None = None) -> list[Step]:
         """The operator mints the plan's keys elsewhere and enters them, one masked input each."""
         return [OperatorCredential(self.target.keys, title, instruction, shape)]
 
-    def show(self, name: str, title: str, instruction: str) -> list[Step]:
-        """The operator puts the value staged as `name` where only a human can."""
-        return [OperatorShow(name, title, instruction)]
+    def show(
+        self, name: str, title: str, instruction: str, *, irreversible: str = ""
+    ) -> list[Step]:
+        """The operator puts the value staged as `name` where only a human can; irreversible: why
+        it cannot be taken back once there."""
+        return [OperatorShow(name, title, instruction, irreversible=irreversible)]
 
     def confirm(
         self, id: str, title: str, instruction: str = "", *, irreversible: str = ""

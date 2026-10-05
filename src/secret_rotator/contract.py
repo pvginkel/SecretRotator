@@ -23,6 +23,7 @@ STEP = "rotator_step"
 LAST_ERROR = "rotator_last_error"
 LAST_RUN = "rotator_last_run"
 CONSUMERS = "rotator_consumers"
+EXPIRES_AT = "rotator_expires_at"  # the ISO date a minted credential expires
 
 # KV v2 custom_metadata limits (Vault's; not verified for OpenBao 2.5.4).
 MAX_KEYS = 64

@@ -83,15 +83,20 @@ class OperatorCredential(Step):
 
 class OperatorShow(Step):
     """The operator takes a value the tool produced, staged as `name`, and puts it where only a
-    human can (RoboForm, srviac's secrets.yaml)."""
+    human can (RoboForm, srviac's secrets.yaml). One whose value cannot be taken back once put in
+    place (a secret_id whose predecessor the tool does not know) is irreversible: it mutates and
+    has no undo, so it disables Abort once done."""
 
     type = "operator.show"
     actor = Actor.OPERATOR
 
-    def __init__(self, name: str, title: str, instruction: str):
+    def __init__(self, name: str, title: str, instruction: str, *, irreversible: str = ""):
         super().__init__(f"operator.show:{name}", title)
         self.name = name
         self.instruction = instruction
+        if irreversible:
+            self.mutates = True
+            self.no_undo = irreversible
 
     def run(self, ctx: Context) -> str:
         value = ctx.staged(self.name)

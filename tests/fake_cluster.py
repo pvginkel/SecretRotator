@@ -1,5 +1,6 @@
 """The prd apiserver as an opener for secret_rotator.kube.Kube: ExternalSecrets, the three workload
-kinds, Argo CD Applications, and objects the rotator must never ask for (a CronJob, bare pods).
+kinds, Argo CD Applications, Secrets, and objects the rotator must never ask for (a CronJob, bare
+pods).
 Its ESO syncs a force-synced ExternalSecret and its controllers roll a restarted workload out, each
 once the fake clock, which the client's sleep advances, has passed their lag.
 
@@ -8,6 +9,7 @@ eso/prd/yt/prd/webhook, whose copy in jenkins/youtrack is its consumer, and hold
 pattern: an ExternalSecret that extracts its leaf whole by dataFrom alone, a controller Deployment
 and bare environment pods that read its Secret."""
 
+import base64
 import copy
 import io
 import json
@@ -59,6 +61,15 @@ def externalsecret(ns, name, *, data=(), extract=(), target=None):
             "syncedResourceVersion": "1-0",
             "conditions": [{"type": "Ready", "status": "True", "message": "secret synced"}],
         },
+    }
+
+
+def secret(ns, name, **data):
+    """A Secret holding each value base64-encoded under its key."""
+    return {
+        "metadata": {"namespace": ns, "name": name},
+        "type": "Opaque",
+        "data": {k: base64.b64encode(v.encode()).decode() for k, v in data.items()},
     }
 
 
@@ -317,6 +328,8 @@ class FakeCluster:
         if req.get_header("Authorization") != f"Bearer {TOKEN}":
             return self.answer(401, {"kind": "Status", "message": "Unauthorized"})
         parts = path.strip("/").split("/")
+        if parts[0] == "api":  # the core group: /api/<version>/...
+            parts.insert(1, "")
         # /apis/<group>/<version>/<resource>, or .../namespaces/<ns>/<resource>/<name>
         if len(parts) == 4 and method == "GET":
             items = [o for (r, _, _), o in sorted(self.objects.items()) if r == parts[3]]
