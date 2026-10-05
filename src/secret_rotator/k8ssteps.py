@@ -1,10 +1,8 @@
 """The generic Kubernetes steps of design §4.2, eso.sync and k8s.rollout: activators with one target
 each, whose undo is to run again after a rollback's undos (design §4.5)."""
 
-from collections.abc import Callable
-
 from secret_rotator.cluster import Cluster, Ref, Workload, condition, owning_app
-from secret_rotator.model import Context, Step, StepFailed
+from secret_rotator.model import Context, Step, StepFailed, wait
 
 FORCE_SYNC = "force-sync"
 RESTARTED_AT = "kubectl.kubernetes.io/restartedAt"
@@ -17,16 +15,6 @@ def _mark(ctx: Context) -> str:
     ExternalSecret's metadata and a controller rolls out on a change of the pod template, so two
     runs of a step, a retry or a rollback's re-run, must write different values: microseconds."""
     return ctx.now.isoformat(timespec="microseconds")
-
-
-def _wait(cluster: Cluster, ctx: Context, bound: int, poll: int, why_not: Callable, what: str):
-    """Polls why_not() until it answers None; StepFailed once the bound has passed."""
-    deadline = cluster.kube.clock() + bound
-    while (why := why_not()) is not None:
-        if cluster.kube.clock() >= deadline:
-            raise StepFailed(f"{what} within {bound // 60} min: {why}")
-        ctx.progress(why)
-        cluster.kube.sleep(poll)
 
 
 class EsoSync(Step):
@@ -63,7 +51,7 @@ class EsoSync(Step):
                 return ready.get("message") or "not Ready"
             return "waiting for ESO to sync it"
 
-        _wait(self.cluster, ctx, SYNC_BOUND, SYNC_POLL, why_not, f"{self.es} did not sync")
+        wait(self.cluster.kube, ctx, SYNC_BOUND, SYNC_POLL, why_not, f"{self.es} did not sync")
         return "synced, Ready"
 
 
@@ -87,6 +75,13 @@ class K8sRollout(Step):
         def why_not() -> str | None:
             return self.cluster.health(self.workload)
 
-        _wait(self.cluster, ctx, ROLLOUT_BOUND, ROLLOUT_POLL, why_not, f"{self.workload} not Ready")
+        wait(
+            self.cluster.kube,
+            ctx,
+            ROLLOUT_BOUND,
+            ROLLOUT_POLL,
+            why_not,
+            f"{self.workload} not Ready",
+        )
         app = owning_app(patched)
         return "Ready" + (f", Application {app} Healthy" if app else "")

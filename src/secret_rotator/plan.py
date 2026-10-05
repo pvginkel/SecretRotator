@@ -7,6 +7,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
+from secret_rotator.ansiblesteps import Ansible, AnsibleRun, Playbook
 from secret_rotator.audit import Audit, Leaf
 from secret_rotator.cluster import Cluster, Workload
 from secret_rotator.contract import (
@@ -17,6 +18,8 @@ from secret_rotator.contract import (
     parse_activate,
     parse_args,
 )
+from secret_rotator.jenkins import Jenkins
+from secret_rotator.jenkinssteps import JenkinsCredential, JenkinsJob, parse_job
 from secret_rotator.k8ssteps import EsoSync, K8sRollout
 from secret_rotator.kvsteps import DEFAULT_LENGTH, URLSAFE, KvCopy, KvStamp, KvWrite, RandomGenerate
 from secret_rotator.model import Actor, Step
@@ -80,11 +83,21 @@ KUBERNETES = ("eso", "k8s-rollout")
 
 class StepFactory:
     """The patterns a plan is built from, named by what they do (design §4.3). Without a cluster,
-    as offline, it builds no Kubernetes step."""
+    as offline, it builds no Kubernetes step. Jenkins and Ansible are reached only when a step
+    runs: by default the real ones."""
 
-    def __init__(self, target: Target, cluster: Cluster | None = None):
+    def __init__(
+        self,
+        target: Target,
+        cluster: Cluster | None = None,
+        *,
+        jenkins: Jenkins | None = None,
+        ansible: Ansible | None = None,
+    ):
         self.target = target
         self.cluster = cluster
+        self.jenkins = jenkins or Jenkins()
+        self.ansible = ansible or Ansible()
         # What the activation read from the cluster, for rotator_consumers: the ExternalSecrets it
         # syncs and the workloads it derived; a named target is in rotation_activate already.
         self.consumers: list[str] = []
@@ -114,6 +127,26 @@ class StepFactory:
         """The operator does something and confirms it; irreversible: why it cannot be undone."""
         return [OperatorConfirm(id, title, instruction, irreversible=irreversible)]
 
+    def jenkins_job(self, job: str, params: Mapping[str, str]) -> list[Step]:
+        """A build of the job by its full name, with its parameters, that must succeed."""
+        return [JenkinsJob(self.jenkins, job, params)]
+
+    def jenkins_credential(self, credential: str, staged: str) -> list[Step]:
+        """The value staged under that name into a Jenkins credential, by its id; no undo."""
+        return [JenkinsCredential(self.jenkins, credential, staged=staged)]
+
+    def playbook(
+        self,
+        name: str,
+        title: str,
+        book: Playbook,
+        counter: Playbook | None = None,
+        *,
+        no_undo: str = "",
+    ) -> list[Step]:
+        """A playbook run, its id ansible.run:<name>; counter: the run that undoes it."""
+        return [AnsibleRun(self.ansible, name, title, book, counter, no_undo=no_undo)]
+
     def eso_sync_and_rollout(
         self, targets: Iterable[Workload], leaves: Iterable[str] | None = None
     ) -> list[Step]:
@@ -128,7 +161,8 @@ class StepFactory:
         """The activation of the primary's leaf, then of each copy's leaf: every spec of its
         rotation_activate as its steps. The Kubernetes specs of all those leaves are one
         eso_sync_and_rollout, at the first one's place, since a workload may read the Secrets
-        of several of them. A spec no step is built for refuses the plan."""
+        of several of them; a job two leaves name runs once. A spec no step is built for
+        refuses the plan."""
         steps: list[Step] = []
         kubernetes = False
         for activation in self.target.activations:
@@ -137,6 +171,15 @@ class StepFactory:
                     if not kubernetes:
                         steps += self._kubernetes()
                         kubernetes = True
+                elif spec.name == "jenkins-job":
+                    job = JenkinsJob(self.jenkins, *parse_job(spec.arg))
+                    if job.id not in {step.id for step in steps}:
+                        steps.append(job)
+                elif spec.name == "jenkins-credential":
+                    key = self._one_key(activation.leaf, spec)
+                    steps.append(
+                        JenkinsCredential(self.jenkins, spec.arg, kv=(activation.leaf, key))
+                    )
                 elif spec.name == "manual":
                     steps.append(
                         OperatorConfirm(
@@ -149,6 +192,22 @@ class StepFactory:
                 else:
                     raise self._refused(activation.leaf, spec, "no step is built for it yet")
         return steps
+
+    def _one_key(self, leaf: str, spec: Activator) -> str:
+        """The one key the plan writes to the leaf, whose value a credential takes."""
+        t = self.target
+        written = [
+            *(t.keys if leaf == t.leaf else ()),
+            *(c.key for c in t.copies if c.leaf == leaf),
+        ]
+        if len(written) != 1:
+            raise self._refused(
+                leaf,
+                spec,
+                f"the plan writes {', '.join(written)} to {leaf}, and the spec does not say "
+                f"which one the credential takes",
+            )
+        return written[0]
 
     def _refused(self, leaf: str, spec: Activator, why: str) -> PlanError:
         whose = "" if leaf == self.target.leaf else f"{leaf}'s "
@@ -282,10 +341,17 @@ def target(
     )
 
 
-def build(kind: Kind, leaf: Target, cluster: Cluster | None = None) -> Plan:
+def build(
+    kind: Kind,
+    leaf: Target,
+    cluster: Cluster | None = None,
+    *,
+    jenkins: Jenkins | None = None,
+    ansible: Ansible | None = None,
+) -> Plan:
     if problems := kind.args_problems(leaf.args):
         raise PlanError(f"{leaf.leaf}: rotation_args: {'; '.join(problems)}")
-    factory = StepFactory(leaf, cluster)
+    factory = StepFactory(leaf, cluster, jenkins=jenkins, ansible=ansible)
     planned = kind.plan(leaf, PlanContext(factory))
     steps = [*planned, KvStamp(leaf.leaf, leaf.keys, tuple(factory.consumers))]
     ids = [step.id for step in steps]
@@ -302,11 +368,15 @@ def make(
     store: Mapping[str, Leaf],
     audit: Audit,
     cluster: Cluster | None = None,
+    *,
+    jenkins: Jenkins | None = None,
+    ansible: Ansible | None = None,
 ) -> Plan:
     """The plan of rotating these keys of the leaf, built by the kind's plugin."""
     if kind not in kinds:
         raise PlanError(f"{leaf}: {kind} is not a kind this install has a plugin for")
-    return build(kinds[kind], target(leaf, kind, keys, store, audit), cluster)
+    built = target(leaf, kind, keys, store, audit)
+    return build(kinds[kind], built, cluster, jenkins=jenkins, ansible=ansible)
 
 
 def split(kind: Kind, keys: Iterable[str]) -> list[tuple[str, ...]]:

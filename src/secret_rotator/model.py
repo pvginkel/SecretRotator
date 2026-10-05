@@ -24,6 +24,15 @@ class Action(StrEnum):
     RERUN = "rerun"
 
 
+class Pace(Protocol):
+    """The clock a step that waits reads and the sleep it waits by: a client's, so a test's fake
+    paces both."""
+
+    def clock(self) -> float: ...
+
+    def sleep(self, seconds: float) -> None: ...
+
+
 class StepFailed(Exception):
     """A step's own failure: error is one sentence, technical the detail behind it."""
 
@@ -51,6 +60,24 @@ class Context(Protocol):
     def ask(self, request: object) -> dict[str, str]:
         """The operator's answer to an operator step's request, from the renderer. When the
         operator aborts or exits instead, the step is left there and the executor takes over."""
+
+
+def wait(
+    pace: Pace,
+    ctx: Context,
+    bound: int,
+    poll: int,
+    why_not: Callable[[], str | None],
+    what: str,
+) -> None:
+    """Polls why_not() until it answers None, each answer a progress detail; StepFailed once the
+    bound (seconds) has passed: `<what> within <n> min: <its last answer>`."""
+    deadline = pace.clock() + bound
+    while (why := why_not()) is not None:
+        if pace.clock() >= deadline:
+            raise StepFailed(f"{what} within {bound // 60} min: {why}")
+        ctx.progress(why)
+        pace.sleep(poll)
 
 
 def value_name(key: str) -> str:

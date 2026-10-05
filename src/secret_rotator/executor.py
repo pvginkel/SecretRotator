@@ -18,6 +18,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from secret_rotator.contract import LAST_ERROR, LAST_RUN, MAX_VALUE_BYTES, STATUS, STEP
+from secret_rotator.jenkins import JenkinsError
 from secret_rotator.kube import KubeError
 from secret_rotator.lock import Lock, utcnow
 from secret_rotator.model import (
@@ -112,12 +113,12 @@ def _clip(text: str) -> str:
 
 
 def _failure(e: Exception) -> tuple[str, str]:
-    """A failure's one sentence and its technical detail. An OpenBaoError or a KubeError names its
-    request, and a transport error as such."""
+    """A failure's one sentence and its technical detail. An OpenBaoError, a KubeError or a
+    JenkinsError names its request, and a transport error as such."""
     technical = "".join(traceback.format_exception(e))
     if isinstance(e, StepFailed):
         return e.error, e.technical or technical
-    if isinstance(e, OpenBaoError | KubeError):
+    if isinstance(e, OpenBaoError | KubeError | JenkinsError):
         return str(e), technical
     return f"{type(e).__name__}: {e}", technical
 

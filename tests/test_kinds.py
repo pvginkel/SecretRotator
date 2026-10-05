@@ -256,8 +256,8 @@ class TestActivation:
         ("activate", "problem"),
         [
             (
-                {"eso__prd__app__prd__token": "none", "iac__copy": "jenkins-job:YouTrack/X"},
-                f"{LEAF}: {COPY}'s rotation_activate jenkins-job:YouTrack/X: no step",
+                {"eso__prd__app__prd__token": "none", "iac__copy": "github-webhook:pvginkel/X/7"},
+                f"{LEAF}: {COPY}'s rotation_activate github-webhook:pvginkel/X/7: no step",
             ),
             (
                 {"eso__prd__app__prd__token": "argocd-sync:app-prd"},
