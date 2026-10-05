@@ -4,13 +4,15 @@ touches, and no value is read or printed."""
 import datetime
 import json
 
+from fake_cluster import TOKEN, FakeCluster
 from fake_openbao import ROLE_ID, SECRET_ID, FakeOpenBao
 from fixtures import COMPLIANT, FOREIGN, compliant_store, data_of, found, messages
 
 from secret_rotator import cli
-from secret_rotator.audit import audit, due_keys
+from secret_rotator.audit import Leaf, audit, due_keys
+from secret_rotator.cluster import Cluster
 
-ENV = {cli.ROLE_ID_ENV: ROLE_ID, cli.SECRET_ID_ENV: SECRET_ID}
+ENV = {cli.ROLE_ID_ENV: ROLE_ID, cli.SECRET_ID_ENV: SECRET_ID, cli.K8S_TOKEN_ENV: TOKEN}
 
 
 class TestContract:
@@ -315,14 +317,21 @@ class TestNeverAndDue:
 
 
 class Run:
-    """The command line against a fake OpenBao."""
+    """The command line against a fake OpenBao and a fake cluster."""
 
-    def __init__(self, bao, env=ENV):
+    def __init__(self, bao, env=ENV, cluster=None):
         self.bao, self.env = bao, env
+        self.cluster = cluster or FakeCluster()
 
     def __call__(self, *argv):
         self.lines = []
-        code = cli.main(list(argv), opener=self.bao, out=self.lines.append, environ=self.env)
+        code = cli.main(
+            list(argv),
+            opener=self.bao,
+            out=self.lines.append,
+            environ=self.env,
+            kube=self.cluster.kube,
+        )
         self.text = "\n".join(self.lines)
         return code
 
@@ -392,3 +401,101 @@ class TestLiveAudit:
         run = Run(bao)
         assert run("audit") == 0, run.text
         assert not [p for _, p, *_ in bao.requests if "rotator/lock" in p or "staging" in p]
+
+
+class TestOrphans:
+    """The orphan check (design §3.3): an eso/prd/ leaf nothing references, following copies
+    (045's RV2), by the one match of ruling B1."""
+
+    def referenced(self, fake=None):
+        return Cluster((fake or FakeCluster()).kube()).referenced()
+
+    def orphans(self, store, fake=None):
+        result = audit(store, self.referenced(fake))
+        return [str(f) for f in result.findings], result
+
+    def without(self, *names):
+        fake = FakeCluster()
+        for ns, name in names:
+            del fake.objects["externalsecrets", ns, name]
+        return fake
+
+    def test_the_compliant_store_on_the_compliant_cluster_has_none(self):
+        assert self.orphans(compliant_store())[0] == []
+
+    def test_an_eso_prd_leaf_nothing_references_is_an_orphan_and_blocked(self):
+        findings, result = self.orphans(compliant_store(), self.without(("trello-prd", "trello")))
+        assert findings == [
+            "eso/prd/trello/prd/trello: (consumers): an orphan: no ExternalSecret references it "
+            "or a leaf it is copied into"
+        ]
+        assert "eso/prd/trello/prd/trello" in result.blocked_leaves
+
+    def test_the_catalog_extracted_by_data_from_alone_is_no_orphan(self):
+        assert "eso/prd/kc/prd/catalog" in self.referenced()
+
+    def test_a_primary_counts_as_consumed_through_a_consumed_copy(self):
+        # eso/prd/app/prd/oidc's keys are copied into the catalog, which is referenced.
+        fake = self.without(("app-prd", "app-oidc"))
+        assert self.orphans(compliant_store(), fake)[0] == []
+
+    def test_an_orphaned_copy_leaf_orphans_its_primary_and_blocks_what_is_copied_into_it(self):
+        fake = self.without(("app-prd", "app-oidc"), ("kubecoder-prd", "kubecoder-secret-catalog"))
+        findings, result = self.orphans(compliant_store(), fake)
+        assert [f.split(":")[0] for f in findings] == [
+            "eso/prd/app/prd/oidc",
+            "eso/prd/kc/prd/catalog",
+        ]
+        assert result.blocked("eso/prd/app/prd/oidc", "client_secret")
+
+    def test_a_copy_outside_eso_prd_counts_as_consumed(self):
+        # eso/prd/yt/prd/webhook: no ExternalSecret; its copy is in jenkins/youtrack.
+        assert "eso/prd/yt/prd/webhook" not in self.referenced()
+        store = compliant_store()
+        assert self.orphans(store)[0] == []
+        del store["jenkins/youtrack"]
+        assert self.orphans(store)[0] == [
+            "eso/prd/yt/prd/webhook: (consumers): an orphan: no ExternalSecret references it or "
+            "a leaf it is copied into"
+        ]
+
+    def test_eso_dev_and_other_leaves_are_not_checked(self):
+        store = compliant_store()
+        store["eso/dev/app/dev/token"] = Leaf(
+            "eso/dev/app/dev/token",
+            {"token"},
+            {
+                "rotation_mechanism": "random",
+                "rotation_interval": "14d",
+                "rotation_activate": "none",
+            },
+        )
+        findings, _ = self.orphans(store, FakeCluster([]))
+        # Nothing on the cluster: every eso/prd/ leaf is an orphan but the two whose copy is
+        # outside eso/prd/ (eso/prd/app/prd/token in iac/copy, eso/prd/yt/prd/webhook in
+        # jenkins/youtrack); eso/dev/ and the rest of the mount are not checked.
+        assert [f.split(":")[0] for f in findings] == [
+            "eso/prd/app/prd/oidc",
+            "eso/prd/bot/prd/config",
+            "eso/prd/es/prd/creds",
+            "eso/prd/kc/prd/catalog",
+            "eso/prd/trello/prd/trello",
+        ]
+
+    def test_without_the_cluster_there_is_no_orphan_check(self):
+        store = compliant_store()
+        store["eso/prd/nothing/reads/it"] = Leaf(
+            "eso/prd/nothing/reads/it",
+            {"token"},
+            {
+                "rotation_mechanism": "random",
+                "rotation_interval": "14d",
+                "rotation_activate": "auto",
+            },
+        )
+        assert audit(store).findings == []
+
+    def test_the_live_audit_reports_an_orphan(self):
+        run = Run(annotated_bao(), cluster=self.without(("trello-prd", "trello")))
+        assert run("audit") == 1
+        assert run.lines[0].startswith("eso/prd/trello/prd/trello: (consumers): an orphan")

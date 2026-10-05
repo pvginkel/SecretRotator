@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from fake_cluster import TOKEN, FakeCluster
 from fake_openbao import ROLE_ID, SECRET_ID, FakeOpenBao
 from fixtures import COMPLIANT
 from plans import fake_of
@@ -56,6 +57,23 @@ def test_a_live_command_without_the_rotators_approle_is_a_usage_error(argv):
     assert "SECRET_ROTATOR_ROLE_ID and SECRET_ROTATOR_SECRET_ID are not set" in err
 
 
+@pytest.mark.parametrize("argv", [["audit"], ["plan", "x/y"], ["run", "x/y"]])
+def test_a_live_command_that_reads_the_cluster_without_its_token_is_a_usage_error(argv):
+    env = {"SECRET_ROTATOR_ROLE_ID": "r", "SECRET_ROTATOR_SECRET_ID": "s"}
+    code, err = usage(*argv, env=env)
+    assert code == 2
+    assert "SECRET_ROTATOR_K8S_TOKEN is not set: the secret-rotator ServiceAccount's token" in err
+
+
+def test_annotate_reads_no_cluster():
+    env = {"SECRET_ROTATOR_ROLE_ID": ROLE_ID, "SECRET_ROTATOR_SECRET_ID": SECRET_ID}
+    kube = lambda token: pytest.fail("annotate built a cluster client")  # noqa: E731
+    assert (
+        cli.main(["annotate"], opener=FakeOpenBao(), out=lambda line: None, environ=env, kube=kube)
+        == 0
+    )
+
+
 def test_the_live_plan_takes_no_seed():
     env = {"SECRET_ROTATOR_ROLE_ID": "r", "SECRET_ROTATOR_SECRET_ID": "s"}
     code, err = usage("plan", "x/y", "--seed=s.yaml", env=env)
@@ -66,8 +84,15 @@ def test_run_takes_a_leaf_and_runs_its_plan_in_the_terminal():
     store = store_of(**ACTIVATE_NONE)
     bao = fake_of(store)
     con = Console(io.StringIO("y\nSECRET-psk\nc\n"), io.StringIO())
-    env = {"SECRET_ROTATOR_ROLE_ID": ROLE_ID, "SECRET_ROTATOR_SECRET_ID": SECRET_ID}
-    assert cli.main(["run", WIFI], opener=bao, environ=env, console=lambda: con) == 0
+    env = {
+        "SECRET_ROTATOR_ROLE_ID": ROLE_ID,
+        "SECRET_ROTATOR_SECRET_ID": SECRET_ID,
+        "SECRET_ROTATOR_K8S_TOKEN": TOKEN,
+    }
+    code = cli.main(
+        ["run", WIFI], opener=bao, environ=env, console=lambda: con, kube=FakeCluster().kube
+    )
+    assert code == 0
     assert bao.data(WIFI) == {"password": "SECRET-psk"}
     assert "SECRET" not in con.stdout.getvalue()
     assert bao.data(LOCK_LEAF) == {} and bao.version(LOCK_LEAF) == 2
@@ -164,9 +189,12 @@ class TestOffline:
         ]
         assert "      1  you   operator.credential   Mint a new password and enter it" in self.lines
 
-    def test_plan_of_a_leaf_whose_activation_is_not_built_fails(self):
+    def test_plan_of_a_leaf_activated_through_the_cluster_fails_offline(self):
         assert self.plan("eso/prd/app/prd/token") == 1
-        assert "rotation_activate eso: no step is built for it yet" in self.lines[2]
+        assert (
+            "eso/prd/app/prd/token: its activation is read from the cluster, which an offline "
+            "plan does not reach" in self.lines[2]
+        )
 
     def test_a_key_file_that_is_not_leaf_to_key_names(self):
         self.names = {"iac/x": "token"}

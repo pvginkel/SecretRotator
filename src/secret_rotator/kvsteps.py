@@ -5,7 +5,7 @@ import secrets
 import string
 from collections.abc import Mapping
 
-from secret_rotator.contract import LAST_RUN, STATUS, STEP
+from secret_rotator.contract import CONSUMERS, LAST_RUN, STATUS, STEP, consumers_text
 from secret_rotator.model import Context, Step, StepFailed, value_name
 from secret_rotator.openbao import Version
 from secret_rotator.schedule import stamp_key
@@ -118,19 +118,27 @@ class KvCopy(KvPatch):
 
 class KvStamp(Step):
     """Records the rotation once it took effect, in one metadata patch: the rotated keys' stamps,
-    rotator_status ok, rotator_step cleared. The core appends it to every plan (design R20)."""
+    rotator_status ok, rotator_step cleared, and rotator_consumers: what the plan's activation
+    read from the cluster (design §3.4), removed when it read nothing. The core appends it to
+    every plan (design R20)."""
 
     type = "kv.stamp"
     silent = True
 
-    def __init__(self, leaf: str, keys: tuple[str, ...]):
+    def __init__(self, leaf: str, keys: tuple[str, ...], consumers: tuple[str, ...] = ()):
         super().__init__("kv.stamp", f"stamp {', '.join(keys)}")
         self.leaf = leaf
         self.keys = keys
+        self.consumers = consumers
 
     def run(self, ctx: Context) -> str:
         today = ctx.now.date().isoformat()
         stamps: dict[str, str | None] = {stamp_key(key): today for key in self.keys}
-        state = {STATUS: "ok", STEP: None, LAST_RUN: ctx.now.isoformat(timespec="seconds")}
+        state = {
+            STATUS: "ok",
+            STEP: None,
+            LAST_RUN: ctx.now.isoformat(timespec="seconds"),
+            CONSUMERS: consumers_text(list(self.consumers)) if self.consumers else None,
+        }
         ctx.bao.patch_metadata(self.leaf, stamps | state)
         return f"{', '.join(stamps)} = {today}"

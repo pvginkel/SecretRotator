@@ -6,13 +6,14 @@ from pathlib import Path
 
 import pytest
 import yaml
+from fake_cluster import TOKEN, FakeCluster
 from fake_openbao import ROLE_ID, SECRET_ID, FakeOpenBao
 from fixtures import COMPLIANT, data_of
 
 from secret_rotator import annotate as ann
 from secret_rotator import cli
 
-ENV = {cli.ROLE_ID_ENV: ROLE_ID, cli.SECRET_ID_ENV: SECRET_ID}
+ENV = {cli.ROLE_ID_ENV: ROLE_ID, cli.SECRET_ID_ENV: SECRET_ID, cli.K8S_TOKEN_ENV: TOKEN}
 N = len(COMPLIANT)
 
 # What the store holds before the apply: the sweep's annotations.
@@ -74,7 +75,13 @@ class Run:
 
     def __call__(self, *argv, env=ENV):
         self.lines = []
-        code = cli.main(list(argv), opener=self.bao, out=self.lines.append, environ=env)
+        code = cli.main(
+            list(argv),
+            opener=self.bao,
+            out=self.lines.append,
+            environ=env,
+            kube=FakeCluster().kube,
+        )
         self.text = "\n".join(self.lines)
         return code
 

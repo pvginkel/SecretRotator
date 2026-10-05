@@ -255,14 +255,13 @@ class TestActivation:
     @pytest.mark.parametrize(
         ("activate", "problem"),
         [
-            ({"eso__prd__app__prd__token": "auto"}, f"{LEAF}: rotation_activate eso: no step"),
             (
                 {"eso__prd__app__prd__token": "none", "iac__copy": "jenkins-job:YouTrack/X"},
                 f"{LEAF}: {COPY}'s rotation_activate jenkins-job:YouTrack/X: no step",
             ),
             (
-                {"eso__prd__app__prd__token": "k8s-rollout:app-prd/deployment/app"},
-                "rotation_activate k8s-rollout:app-prd/deployment/app: no step",
+                {"eso__prd__app__prd__token": "argocd-sync:app-prd"},
+                f"{LEAF}: rotation_activate argocd-sync:app-prd: no step",
             ),
         ],
     )
@@ -361,4 +360,5 @@ class TestTheLeafsPlans:
             (("api-key",), None),
             (("token",), None),
         ]
-        assert all(p.plan is None and "rotation_activate eso: no step" in p.error for p in plans)
+        offline = "its activation is read from the cluster, which an offline plan does not reach"
+        assert all(p.plan is None and offline in p.error for p in plans)

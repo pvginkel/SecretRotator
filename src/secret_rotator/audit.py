@@ -5,6 +5,7 @@ blocks the leaf and every primary key copied into it, since that primary's plan 
 activate the blocked leaf."""
 
 import datetime
+from collections import defaultdict
 from dataclasses import dataclass, field
 
 from secret_rotator.contract import (
@@ -20,6 +21,10 @@ from secret_rotator.contract import (
 )
 from secret_rotator.openbao import OpenBao
 from secret_rotator.schedule import STAMP_PREFIX, KeySchedule, interval_of, schedule
+
+# The leaves the prd cluster's ESO reads: the orphan check's, since the rotator reads no other
+# cluster. eso/dev/ is the dev cluster's.
+ESO_PRD = "eso/prd/"
 
 
 @dataclass
@@ -154,17 +159,55 @@ def check_leaf(leaf: Leaf, store: dict[str, Leaf], kinds_of: dict) -> list[Findi
     return findings
 
 
+def orphans(
+    store: dict[str, Leaf], kinds_of: dict, referenced: set[str]
+) -> dict[str, list[Finding]]:
+    """The orphan check (design §3.3): an eso/prd/ leaf no ExternalSecret references, nor any
+    leaf a key of it is copied into. Copies count as consumers (045's RV2): one in an eso/prd/
+    leaf an ExternalSecret references, or in a leaf outside eso/prd/, which the check does not
+    reach. An orphan blocks the leaf: its activation has nothing to activate."""
+    copied_into = defaultdict(set)
+    for path, kinds in kinds_of.items():
+        for kind in kinds.values():
+            if target := copy_target(kind):
+                copied_into[target[0]].add(path)
+
+    def consumed(path: str) -> bool:
+        return path in referenced or not path.startswith(ESO_PRD)
+
+    return {
+        path: [
+            Finding(
+                path,
+                "(consumers)",
+                "an orphan: no ExternalSecret references it or a leaf it is copied into",
+            )
+        ]
+        for path in store
+        if path.startswith(ESO_PRD)
+        and path not in referenced
+        and not any(consumed(c) for c in copied_into[path])
+    }
+
+
 def copies_in(meta: dict[str, str]) -> set[tuple[str, str]]:
     """Every primary key the leaf's annotations copy."""
     values = [v for k, v in meta.items() if k == "rotation_mechanism" or k.startswith("key_")]
     return {target for v in values if (target := copy_target(v))}
 
 
-def audit(store: dict[str, Leaf]) -> Audit:
+def audit(store: dict[str, Leaf], referenced: set[str] | None = None) -> Audit:
+    """The compliance check of the store; with referenced, the leaves the prd cluster's
+    ExternalSecrets reference, the orphan check too."""
     kinds = {
         path: resolve(leaf.meta, leaf.keys) for path, leaf in store.items() if leaf.keys is not None
     }
-    findings = [f for path in sorted(store) for f in check_leaf(store[path], store, kinds)]
+    orphaned = {} if referenced is None else orphans(store, kinds, referenced)
+    findings = [
+        f
+        for path in sorted(store)
+        for f in [*check_leaf(store[path], store, kinds), *orphaned.get(path, [])]
+    ]
     result = Audit(findings, kinds)
     result.blocked_leaves = {f.leaf for f in findings if f.blocks is None}
     result.blocked_keys = {(f.leaf, f.blocks) for f in findings if f.blocks is not None}

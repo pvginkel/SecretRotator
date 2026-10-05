@@ -9,7 +9,9 @@ from pathlib import Path
 from secret_rotator import annotate as ann
 from secret_rotator import audit as aud
 from secret_rotator import registry, terminal
+from secret_rotator.cluster import Cluster
 from secret_rotator.console import Console
+from secret_rotator.kube import Kube, KubeError
 from secret_rotator.lock import holder_name, utcnow
 from secret_rotator.openbao import OpenBao, OpenBaoError
 
@@ -17,14 +19,17 @@ from secret_rotator.openbao import OpenBao, OpenBaoError
 # environment.
 ROLE_ID_ENV = "SECRET_ROTATOR_ROLE_ID"
 SECRET_ID_ENV = "SECRET_ROTATOR_SECRET_ID"
+# The secret-rotator ServiceAccount's token, kv/iac/rotator-k8s-token, put there the same way.
+K8S_TOKEN_ENV = "SECRET_ROTATOR_K8S_TOKEN"
 
 PRINT = functools.partial(print, flush=True)
 
 DESCRIPTION = """\
 Rotates the secrets of OpenBao's kv mount by their annotations (AnsibleSpecs
 secret-rotation/design.md). Live commands log in with the rotator's AppRole from
-SECRET_ROTATOR_ROLE_ID and SECRET_ROTATOR_SECRET_ID. No output carries a secret value.
-Exit status: 0 on success, 1 on a finding or a failure, 2 on a usage error."""
+SECRET_ROTATOR_ROLE_ID and SECRET_ROTATOR_SECRET_ID; but annotate, they read the prd
+cluster with the ServiceAccount token in SECRET_ROTATOR_K8S_TOKEN. No output carries a
+secret value. Exit status: 0 on success, 1 on a finding or a failure, 2 on a usage error."""
 
 
 def parser() -> argparse.ArgumentParser:
@@ -96,6 +101,7 @@ def main(
     out: Callable[[str], None] = PRINT,
     environ: Mapping[str, str] = os.environ,
     console: Callable[[], Console] = Console,
+    kube: Callable[[str], Kube] = Kube,
 ) -> int:
     p = parser()
     args = p.parse_args(argv)
@@ -106,6 +112,12 @@ def main(
         p.error(
             f"{ROLE_ID_ENV} and {SECRET_ID_ENV} are not set: the rotator's AppRole, "
             f"kv/iac/rotator-approle"
+        )
+    reads_cluster = not offline and args.command != "annotate"
+    if reads_cluster and not environ.get(K8S_TOKEN_ENV):
+        p.error(
+            f"{K8S_TOKEN_ENV} is not set: the secret-rotator ServiceAccount's token, "
+            f"kv/iac/rotator-k8s-token"
         )
     seed_path = args.seed or ann.DEFAULT_SEED
     today = utcnow().date()
@@ -118,16 +130,19 @@ def main(
             return aud.report(aud.audit(store), store, out)
         seed = ann.load_seed(seed_path) if args.command == "annotate" else None
         bao = connect(environ, opener)
+        if seed is not None:
+            return ann.run_apply(bao, seed, args.apply, out)
+        cluster = Cluster(kube(environ[K8S_TOKEN_ENV]))
         if args.command == "run":
             holder = holder_name(f"run {args.path}")
-            return terminal.run_leaf(bao, args.path, kinds, console(), holder=holder, today=today)
-        if seed is None:
-            store = aud.live_store(bao)
-            result = aud.audit(store)
-            if args.command == "plan":
-                return terminal.print_leaf(out, args.path, store, result, kinds, today)
-            return aud.report(result, store, out)
-        return ann.run_apply(bao, seed, args.apply, out)
-    except (ann.SeedError, registry.RegistryError, OpenBaoError, OSError) as e:
+            return terminal.run_leaf(
+                bao, args.path, kinds, console(), holder=holder, today=today, cluster=cluster
+            )
+        store = aud.live_store(bao)
+        result = aud.audit(store, cluster.referenced())
+        if args.command == "plan":
+            return terminal.print_leaf(out, args.path, store, result, kinds, today, cluster)
+        return aud.report(result, store, out)
+    except (ann.SeedError, registry.RegistryError, OpenBaoError, KubeError, OSError) as e:
         out(f"error: {e}")
         return 1

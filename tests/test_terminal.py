@@ -126,8 +126,8 @@ class TestPlanCommand:
         lines = []
         assert terminal.print_leaf(lines.append, LEAF, store, audit(store), KINDS, TODAY) == 1
         assert (
-            lines[2] == f"      cannot be built: {LEAF}: rotation_activate eso: no step is "
-            "built for it yet"
+            lines[2] == f"      cannot be built: {LEAF}: its activation is read from the cluster, "
+            "which an offline plan does not reach"
         )
 
     def test_the_plan_in_flight_and_the_keys_without_a_plan_are_named(self):

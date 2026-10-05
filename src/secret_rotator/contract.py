@@ -22,11 +22,23 @@ STATUS = "rotator_status"
 STEP = "rotator_step"
 LAST_ERROR = "rotator_last_error"
 LAST_RUN = "rotator_last_run"
+CONSUMERS = "rotator_consumers"
 
 # KV v2 custom_metadata limits (Vault's; not verified for OpenBao 2.5.4).
 MAX_KEYS = 64
 MAX_KEY_BYTES = 128
 MAX_VALUE_BYTES = 512
+
+
+def consumers_text(items: list[str]) -> str:
+    """rotator_consumers' value: the items comma-separated, as many as fit in a metadata value,
+    then ` +<n>` for the n that do not (design §9)."""
+    text, shown = ",".join(items), len(items)
+    while len(text.encode()) > MAX_VALUE_BYTES:
+        shown -= 1
+        text = f"{','.join(items[:shown])} +{len(items) - shown}".strip()
+    return text
+
 
 NONE = "none"
 COPY = re.compile(r"copy:([^#\s]+)#(.+)")

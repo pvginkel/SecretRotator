@@ -1,0 +1,32 @@
+# The rotator's identity on the prd cluster (AnsibleSpecs secret-rotation/design.md §8): the
+# secret-rotator ServiceAccount, bound to cluster-admin, and its long-lived token. Nothing
+# reconciles it: the operator applies it to prd by hand, once, and copies the token the token
+# controller fills into kv/iac/rotator-k8s-token, key token, which iac-impl puts in srviac's iac
+# container as SECRET_ROTATOR_K8S_TOKEN. A token Secret of this type never expires on its own.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: secret-rotator
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: secret-rotator-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: secret-rotator
+    namespace: kube-system
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: secret-rotator-token
+  namespace: kube-system
+  annotations:
+    kubernetes.io/service-account.name: secret-rotator
+type: kubernetes.io/service-account-token

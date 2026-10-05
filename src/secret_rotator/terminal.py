@@ -7,6 +7,7 @@ import time
 from collections.abc import Callable, Mapping
 
 from secret_rotator.audit import Audit, Leaf, audit, live_store
+from secret_rotator.cluster import Cluster
 from secret_rotator.console import Console
 from secret_rotator.contract import LAST_ERROR, LAST_RUN
 from secret_rotator.executor import (
@@ -18,6 +19,7 @@ from secret_rotator.executor import (
     Stand,
     in_flight,
 )
+from secret_rotator.kube import KubeError
 from secret_rotator.lock import Holder, Lock, LockError, LockHeld
 from secret_rotator.model import Action, Actor, Event, Finished, Progress, Skipped, Started, Step
 from secret_rotator.openbao import OpenBao, OpenBaoError
@@ -58,13 +60,14 @@ def print_leaf(
     result: Audit,
     kinds: Mapping[str, Kind],
     today: datetime.date,
+    cluster: Cluster | None = None,
 ) -> int:
     """`plan <path>`: every plan of the leaf with its steps, and why each other key has none. 1 when
     the leaf does not exist or a plan of it cannot be built."""
     if leaf not in store:
         out(f"error: no leaf {leaf}")
         return 1
-    plans, unplanned = of_leaf(leaf, store, result, kinds)
+    plans, unplanned = of_leaf(leaf, store, result, kinds, cluster)
     out(leaf)
     if leaf not in result.kinds:
         out("  its keys cannot be read: its current version is deleted or destroyed")
@@ -419,6 +422,7 @@ def run_leaf(
     *,
     holder: str,
     today: datetime.date,
+    cluster: Cluster | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> int:
     """`run <path>`: the leaf's plan in flight, else the plan the operator picks, run to an end. 1
@@ -427,8 +431,8 @@ def run_leaf(
     if leaf not in store:
         console.line(f"error: no leaf {leaf}")
         return 1
-    result = audit(store)
-    plans, unplanned = of_leaf(leaf, store, result, kinds)
+    result = audit(store, None if cluster is None else cluster.referenced())
+    plans, unplanned = of_leaf(leaf, store, result, kinds, cluster)
     meta = store[leaf].meta
     try:
         if (flight := in_flight(meta)) is None:
@@ -437,7 +441,7 @@ def run_leaf(
                 return 0 if any(p.plan for p in plans) else 1
         else:
             try:
-                plan = make(kinds, leaf, flight.kind, list(flight.keys), store, result)
+                plan = make(kinds, leaf, flight.kind, list(flight.keys), store, result, cluster)
             except PlanError as e:
                 console.line(f"error: its plan in flight cannot be built again: {e}")
                 return 1
@@ -449,7 +453,7 @@ def run_leaf(
         renderer.executor = executor
         stand = Stand.FRESH if flight is None else executor.load()
         return Driver(console, executor, renderer).go(stand, meta)
-    except (PlanMismatch, OpenBaoError) as e:
+    except (PlanMismatch, OpenBaoError, KubeError) as e:
         console.line(f"error: {e}")
         return 1
     except (EOFError, KeyboardInterrupt):

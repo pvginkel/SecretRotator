@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from secret_rotator.audit import Audit, Leaf
+from secret_rotator.cluster import Cluster, Workload
 from secret_rotator.contract import (
     NONE,
     Activator,
@@ -16,6 +17,7 @@ from secret_rotator.contract import (
     parse_activate,
     parse_args,
 )
+from secret_rotator.k8ssteps import EsoSync, K8sRollout
 from secret_rotator.kvsteps import DEFAULT_LENGTH, URLSAFE, KvCopy, KvStamp, KvWrite, RandomGenerate
 from secret_rotator.model import Actor, Step
 from secret_rotator.opsteps import OperatorConfirm, OperatorCredential, OperatorShow, Shape
@@ -73,11 +75,19 @@ def tool_part(leaf: Target) -> str:
     return f"writes it to the leaf{copies}{activates}"
 
 
-class StepFactory:
-    """The patterns a plan is built from, named by what they do (design §4.3)."""
+KUBERNETES = ("eso", "k8s-rollout")
 
-    def __init__(self, target: Target):
+
+class StepFactory:
+    """The patterns a plan is built from, named by what they do (design §4.3). Without a cluster,
+    as offline, it builds no Kubernetes step."""
+
+    def __init__(self, target: Target, cluster: Cluster | None = None):
         self.target = target
+        self.cluster = cluster
+        # What the activation read from the cluster, for rotator_consumers: the ExternalSecrets it
+        # syncs and the workloads it derived; a named target is in rotation_activate already.
+        self.consumers: list[str] = []
 
     def generate(
         self, key: str, *, length: int = DEFAULT_LENGTH, charset: str = URLSAFE
@@ -104,24 +114,82 @@ class StepFactory:
         """The operator does something and confirms it; irreversible: why it cannot be undone."""
         return [OperatorConfirm(id, title, instruction, irreversible=irreversible)]
 
+    def eso_sync_and_rollout(
+        self, targets: Iterable[Workload], leaves: Iterable[str] | None = None
+    ) -> list[Step]:
+        """An eso.sync of every ExternalSecret that references the leaves (the plan's leaf by
+        default), then a k8s.rollout of each target: every sync before every rollout."""
+        leaves = (self.target.leaf,) if leaves is None else tuple(leaves)
+        found = [es for leaf in leaves for es in self._cluster().external_secrets(leaf)]
+        syncs = [EsoSync(self.cluster, es) for es in dict.fromkeys(found)]
+        return [*syncs, *(K8sRollout(self.cluster, w) for w in dict.fromkeys(targets))]
+
     def activate(self) -> list[Step]:
         """The activation of the primary's leaf, then of each copy's leaf: every spec of its
-        rotation_activate as its steps. A spec no step is built for refuses the plan."""
+        rotation_activate as its steps. The Kubernetes specs of all those leaves are one
+        eso_sync_and_rollout, at the first one's place, since a workload may read the Secrets
+        of several of them. A spec no step is built for refuses the plan."""
         steps: list[Step] = []
+        kubernetes = False
         for activation in self.target.activations:
             for n, spec in enumerate(activation.specs, 1):
-                if spec.name != "manual":
-                    whose = "" if activation.leaf == self.target.leaf else f"{activation.leaf}'s "
-                    raise PlanError(
-                        f"{self.target.leaf}: {whose}rotation_activate {spec}: no step is built "
-                        f"for it yet"
+                if spec.name in KUBERNETES:
+                    if not kubernetes:
+                        steps += self._kubernetes()
+                        kubernetes = True
+                elif spec.name == "manual":
+                    steps.append(
+                        OperatorConfirm(
+                            f"{activation.leaf}:{n}",
+                            spec.arg,
+                            f"for {activation.leaf}",
+                            activator=True,
+                        )
                     )
-                steps.append(
-                    OperatorConfirm(
-                        f"{activation.leaf}:{n}", spec.arg, f"for {activation.leaf}", activator=True
-                    )
-                )
+                else:
+                    raise self._refused(activation.leaf, spec, "no step is built for it yet")
         return steps
+
+    def _refused(self, leaf: str, spec: Activator, why: str) -> PlanError:
+        whose = "" if leaf == self.target.leaf else f"{leaf}'s "
+        return PlanError(f"{self.target.leaf}: {whose}rotation_activate {spec}: {why}")
+
+    def _cluster(self) -> Cluster:
+        if self.cluster is None:
+            raise PlanError(
+                f"{self.target.leaf}: its activation is read from the cluster, which an offline "
+                f"plan does not reach"
+            )
+        return self.cluster
+
+    def _kubernetes(self) -> list[Step]:
+        """The eso_sync_and_rollout of every written leaf's eso and k8s-rollout specs. eso and a
+        k8s-rollout without targets (auto is both) need an ExternalSecret that references the
+        leaf; a named rollout does not."""
+        leaves: list[str] = []
+        targets: list[Workload] = []
+        for activation in self.target.activations:
+            specs = [s for s in activation.specs if s.name in KUBERNETES]
+            if not specs:
+                continue
+            leaf = activation.leaf
+            found = self._cluster().external_secrets(leaf)
+            leaves.append(leaf)
+            self._consumed(f"{es.namespace}/externalsecret/{es.name}" for es in found)
+            for spec in specs:
+                if spec.targets:
+                    targets += [Workload.parse(t) for t in spec.targets]
+                    continue
+                if not found:
+                    raise self._refused(leaf, spec, f"no ExternalSecret references {leaf}")
+                if spec.name == "k8s-rollout":
+                    derived = self._cluster().consumers(leaf)
+                    targets += derived
+                    self._consumed(str(w) for w in derived)
+        return self.eso_sync_and_rollout(targets, leaves)
+
+    def _consumed(self, items: Iterable[str]) -> None:
+        self.consumers += [item for item in items if item not in self.consumers]
 
 
 @dataclass(frozen=True)
@@ -214,10 +282,12 @@ def target(
     )
 
 
-def build(kind: Kind, leaf: Target) -> Plan:
+def build(kind: Kind, leaf: Target, cluster: Cluster | None = None) -> Plan:
     if problems := kind.args_problems(leaf.args):
         raise PlanError(f"{leaf.leaf}: rotation_args: {'; '.join(problems)}")
-    steps = [*kind.plan(leaf, PlanContext(StepFactory(leaf))), KvStamp(leaf.leaf, leaf.keys)]
+    factory = StepFactory(leaf, cluster)
+    planned = kind.plan(leaf, PlanContext(factory))
+    steps = [*planned, KvStamp(leaf.leaf, leaf.keys, tuple(factory.consumers))]
     ids = [step.id for step in steps]
     if dupes := sorted({i for i in ids if ids.count(i) > 1}):
         raise PlanError(f"{leaf.leaf}: the {kind.name} plan repeats step id(s) {', '.join(dupes)}")
@@ -231,11 +301,12 @@ def make(
     keys: list[str],
     store: Mapping[str, Leaf],
     audit: Audit,
+    cluster: Cluster | None = None,
 ) -> Plan:
     """The plan of rotating these keys of the leaf, built by the kind's plugin."""
     if kind not in kinds:
         raise PlanError(f"{leaf}: {kind} is not a kind this install has a plugin for")
-    return build(kinds[kind], target(leaf, kind, keys, store, audit))
+    return build(kinds[kind], target(leaf, kind, keys, store, audit), cluster)
 
 
 def split(kind: Kind, keys: Iterable[str]) -> list[tuple[str, ...]]:
@@ -263,7 +334,11 @@ def _blocked_by(audit: Audit, leaf: str, key: str) -> str:
 
 
 def of_leaf(
-    leaf: str, store: Mapping[str, Leaf], audit: Audit, kinds: Mapping[str, Kind]
+    leaf: str,
+    store: Mapping[str, Leaf],
+    audit: Audit,
+    kinds: Mapping[str, Kind],
+    cluster: Cluster | None = None,
 ) -> tuple[list[LeafPlan], dict[str, str]]:
     """The leaf's plans by hand, the soonest due first: each covers every key of its kind on the
     leaf, per key for a per-key kind; and each other key with why it has none."""
@@ -290,7 +365,8 @@ def of_leaf(
         for subset in split(kinds[kind], keys):
             dates = [due[key] for key in subset if due[key] is not None]
             try:
-                built, error = make(kinds, leaf, kind, list(subset), store, audit), ""
+                built = make(kinds, leaf, kind, list(subset), store, audit, cluster)
+                error = ""
             except PlanError as e:
                 built, error = None, str(e)
             plans.append(LeafPlan(kind, subset, min(dates, default=None), built, error))
