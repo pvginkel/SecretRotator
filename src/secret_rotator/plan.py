@@ -116,7 +116,11 @@ class StepFactory:
                         f"{self.target.leaf}: {whose}rotation_activate {spec}: no step is built "
                         f"for it yet"
                     )
-                steps += self.confirm(f"{activation.leaf}:{n}", spec.arg, f"for {activation.leaf}")
+                steps.append(
+                    OperatorConfirm(
+                        f"{activation.leaf}:{n}", spec.arg, f"for {activation.leaf}", activator=True
+                    )
+                )
         return steps
 
 

@@ -104,17 +104,28 @@ class OperatorShow(Step):
 class OperatorConfirm(Step):
     """The operator does something and confirms it. One whose action cannot be taken back (a token
     revoked at its vendor) is irreversible: it mutates and has no undo, so it disables Abort once
-    done (design §4.5)."""
+    done (design §4.5). A hand activation (a manual: activator) is an activator: it mutates, and a
+    rollback asks for it again after the undos."""
 
     type = "operator.confirm"
     actor = Actor.OPERATOR
 
-    def __init__(self, id: str, title: str, instruction: str = "", *, irreversible: str = ""):
+    def __init__(
+        self,
+        id: str,
+        title: str,
+        instruction: str = "",
+        *,
+        irreversible: str = "",
+        activator: bool = False,
+    ):
         super().__init__(f"operator.confirm:{id}", title)
         self.instruction = instruction
         if irreversible:
             self.mutates = True
             self.no_undo = irreversible
+        if activator:
+            self.mutates = self.activator = True
 
     def run(self, ctx: Context) -> str:
         ctx.ask(ConfirmRequest(self.title, self.instruction))

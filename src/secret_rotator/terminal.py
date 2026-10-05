@@ -156,7 +156,7 @@ class TerminalRenderer:
                 c.line("Rolling back")
             if step.actor is Actor.OPERATOR:
                 c.line()
-                c.line(f"── {step.title}")
+                c.line(f"── {_label(step, event.action)}")
             elif not step.silent:
                 c.live(f"◐ {_label(step, event.action)}")
         elif isinstance(event, Progress):
@@ -170,7 +170,7 @@ class TerminalRenderer:
                 c.line(f"✗ {_label(step, event.action)}{took}")
                 c.line(f"    {event.error}")
             elif step.actor is Actor.OPERATOR:
-                c.line(f"✓ {step.title}")
+                c.line(f"✓ {_label(step, event.action)}")
             elif not step.silent:
                 detail = f" · {event.detail}" if event.detail else ""
                 c.line(f"✓ {_label(step, event.action)}{detail}{took}")
@@ -196,6 +196,10 @@ class TerminalRenderer:
             return Abandon.EXIT
         return Abandon.ABORT if guard(self.console, self.executor) else None
 
+    def _endings(self) -> list[Choice]:
+        """A rollback is an Abort under way: its prompts offer exit only."""
+        return [EXIT] if self.rolling_back else endings(self.console, self.executor)
+
     def _instruct(self, text: str) -> None:
         for line in text.splitlines():
             self.console.line(line)
@@ -210,7 +214,7 @@ class TerminalRenderer:
     def _credential(self, request: CredentialRequest) -> dict[str, str] | Abandon:
         c = self.console
         self._instruct(request.instruction)
-        ending = endings(self.console, self.executor)
+        ending = self._endings()
         values = self._enter(request.fields)
         while True:
             letter = menu(c, [("c", "continue"), ("e", "enter again"), *ending])
@@ -232,7 +236,7 @@ class TerminalRenderer:
 
     def _show(self, request: ShowRequest) -> dict[str, str] | Abandon:
         self._instruct(request.instruction)
-        ending = endings(self.console, self.executor)
+        ending = self._endings()
         while True:
             letter = menu(self.console, [("r", "reveal"), ("d", "done"), *ending])
             if letter == "r":
@@ -244,7 +248,7 @@ class TerminalRenderer:
 
     def _confirm(self, request: ConfirmRequest) -> dict[str, str] | Abandon:
         self._instruct(request.instruction)
-        ending = endings(self.console, self.executor)
+        ending = self._endings()
         while True:
             letter = menu(self.console, [("d", "done"), *ending])
             if letter == "d":

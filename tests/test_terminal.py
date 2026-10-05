@@ -308,6 +308,42 @@ class TestFailure:
         assert "Rolled back" in out and bao.data(LEAF)["token"] == f"SECRET-{LEAF}-token"
 
 
+class TestHandActivation:
+    """A manual: activation the operator confirmed is part of the rollback, which asks for it
+    again once the old value is back."""
+
+    def started(self, *answers):
+        store = store_of(
+            eso__prd__app__prd__token="manual:restart the app by hand",
+            iac__copy="manual:tell the copy's reader",
+        )
+        bao = fake_of(store)
+        return bao, *run(bao, LEAF, "y", "d", "a", "y", *answers)
+
+    def test_abort_after_it_is_confirmed_asks_for_it_again_after_the_undos(self):
+        bao, code, out = self.started("d")
+        assert code == 0
+        assert "Abort and roll back 3 steps? [y/N]" in out
+        rollback = out[out.index("Rolling back") :]
+        assert rollback.index(f"✓ undo: write {LEAF}") < rollback.index(
+            "── again: restart the app by hand"
+        )
+        assert "[d]one or e[x]it? " in rollback and "[a]bort" not in rollback
+        assert "tell the copy's reader" not in rollback
+        assert bao.data(LEAF)["token"] == f"SECRET-{LEAF}-token"
+        assert "Rolled back: the rotation of token is undone." in out
+
+    def test_exit_there_leaves_the_rollback_for_run_to_continue(self):
+        bao, code, out = self.started("x")
+        assert code == 0 and "Rolled back:" not in out and "Left in flight" in out
+        assert in_flight(bao.meta(LEAF)) is not None
+        code, out = run(bao, LEAF, "r", "d")
+        assert code == 0
+        assert "── again: restart the app by hand" in out
+        assert "Rolled back: the rotation of token is undone." in out
+        assert in_flight(bao.meta(LEAF)) is None
+
+
 class Interrupted(Step):
     type = "test.interrupted"
 

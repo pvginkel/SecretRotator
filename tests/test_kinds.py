@@ -250,7 +250,7 @@ class TestActivation:
         ]
         assert [s.type for s in plan.steps][-3:] == ["operator.confirm"] * 2 + ["kv.stamp"]
         assert plan.ask == "restart the app by hand; tell the copy's reader"
-        assert not any(s.mutates for s in confirms)
+        assert all(s.mutates and s.activator and s.undo is None for s in confirms)
 
     @pytest.mark.parametrize(
         ("activate", "problem"),
