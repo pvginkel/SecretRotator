@@ -308,6 +308,26 @@ class TestFailure:
         assert "Rolled back" in out and bao.data(LEAF)["token"] == f"SECRET-{LEAF}-token"
 
 
+class Interrupted(Step):
+    type = "test.interrupted"
+
+    def __init__(self):
+        super().__init__("test.interrupted", "wait for the cluster")
+
+    def run(self, ctx):
+        raise KeyboardInterrupt
+
+
+def test_ctrl_c_in_a_tool_step_leaves_the_plan_in_flight_there():
+    store = store_of(**ACTIVATE_NONE)
+    bao = fake_of(store)
+    code, out = run(bao, LEAF, "y", kinds=kinds_with(Wrapped(Interrupted())))
+    assert code == 1
+    assert "Interrupted at: wait for the cluster. It is left in flight there" in out
+    assert in_flight(bao.meta(LEAF)).step == "test.interrupted"
+    assert bao.data(LOCK_LEAF) == {}
+
+
 class TestTheLock:
     def test_a_dead_holder_s_lock_is_broken_on_yes_and_the_plan_runs(self):
         store = store_of(**ACTIVATE_NONE)
