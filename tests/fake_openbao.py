@@ -1,5 +1,5 @@
 """OpenBao over HTTP, as an opener for secret_rotator.openbao.OpenBao: AppRole login and the kv
-mount (KV v2 data, metadata and subkeys)."""
+mount (KV v2 data with its versions, metadata and subkeys)."""
 
 import copy
 import io
@@ -22,10 +22,13 @@ class FakeResponse(io.BytesIO):
 
 class FakeOpenBao:
     def __init__(self, leaves=None):
-        self.leaves = copy.deepcopy(leaves or {})  # path -> {"data": dict | None, "meta": dict}
+        # path -> {"data": dict | None, "meta": dict}, and once written "version" (the current
+        # version's number, else 1) and "history" (version number -> that version's data)
+        self.leaves = copy.deepcopy(leaves or {})
         self.requests = []  # (method, path, query, body, content type)
         self.refuse = {}  # (method, request path) -> the HTTP status it answers
-        self.broken = {}  # request path -> the OSError it raises (a transport failure)
+        # request path, or (method, request path) -> the OSError it raises (a transport failure)
+        self.broken = {}
 
     def __call__(self, req):
         url = urllib.parse.urlsplit(req.full_url)
@@ -35,8 +38,9 @@ class FakeOpenBao:
         method = req.get_method()
         body = json.loads(req.data) if req.data else None
         self.requests.append((method, path, query, body, req.get_header("Content-type")))
-        if path in self.broken:
-            raise self.broken[path]
+        for key in ((method, path), path):
+            if key in self.broken:
+                raise self.broken[key]
         if path == "auth/approle/login":
             if body == {"role_id": ROLE_ID, "secret_id": SECRET_ID}:
                 return self.answer(200, {"auth": {"client_token": TOKEN, "lease_duration": 3600}})
@@ -67,7 +71,9 @@ class FakeOpenBao:
         if leaf not in self.leaves:
             return self.answer(404, {"errors": []})
         meta = self.leaves[leaf]["meta"]
-        return self.answer(200, {"data": {"custom_metadata": meta or None, "current_version": 1}})
+        return self.answer(
+            200, {"data": {"custom_metadata": meta or None, "current_version": self.version(leaf)}}
+        )
 
     def get_subkeys(self, leaf, body, query, req):
         assert query == {"depth": "1"}, query
@@ -79,19 +85,51 @@ class FakeOpenBao:
         return self.answer(200, {"data": {"subkeys": dict.fromkeys(data), "metadata": {}}})
 
     def get_data(self, leaf, body, query, req):
-        data = self.leaves.get(leaf, {}).get("data")
+        entry = self.leaves.get(leaf)
+        current = self.version(leaf)
+        number = int(query.get("version", current))
+        if entry is None:
+            return self.answer(404, {"errors": []})
+        data = entry["data"] if number == current else entry.get("history", {}).get(number)
         if data is None:
-            return self.answer(404, {"data": {"data": None, "metadata": {}}})
-        return self.answer(200, {"data": {"data": data, "metadata": {"version": 1}}})
+            return self.answer(404, {"data": {"data": None, "metadata": {"version": number}}})
+        return self.answer(200, {"data": {"data": data, "metadata": {"version": number}}})
 
-    def post_data(self, leaf, body, query, req):
+    def check_cas(self, leaf, body):
         cas = body.get("options", {}).get("cas")
-        if cas == 0 and leaf in self.leaves:
+        if cas is not None and cas != self.version(leaf):
             errors = ["check-and-set parameter did not match the current version"]
             return self.answer(400, {"errors": errors})
+        return None
+
+    def new_version(self, leaf, data):
+        number = self.version(leaf)
         entry = self.leaves.setdefault(leaf, {"data": None, "meta": {}})
-        entry["data"] = dict(body["data"])
-        return self.answer(200, {"data": {"version": 1}})
+        if entry["data"] is not None:
+            entry.setdefault("history", {})[number] = entry["data"]
+        entry["version"] = number + 1
+        entry["data"] = data
+        return self.answer(200, {"data": {"version": number + 1}})
+
+    def post_data(self, leaf, body, query, req):
+        return self.check_cas(leaf, body) or self.new_version(leaf, dict(body["data"]))
+
+    def patch_data(self, leaf, body, query, req):
+        if req.get_header("Content-type") != "application/merge-patch+json":
+            return self.answer(415, {"errors": ["unsupported content type"]})
+        if self.leaves.get(leaf, {}).get("data") is None:
+            return self.answer(404, {"errors": []})
+        data = dict(self.leaves[leaf]["data"])
+        for key, value in body["data"].items():
+            if value is None:
+                data.pop(key, None)
+            else:
+                data[key] = value
+        return self.check_cas(leaf, body) or self.new_version(leaf, data)
+
+    def delete_metadata(self, leaf, body, query, req):
+        self.leaves.pop(leaf, None)
+        return self.answer(204, None)
 
     def patch_metadata(self, leaf, body, query, req):
         if req.get_header("Content-type") != "application/merge-patch+json":
@@ -120,3 +158,11 @@ class FakeOpenBao:
 
     def meta(self, leaf):
         return self.leaves[leaf]["meta"]
+
+    def data(self, leaf):
+        return self.leaves[leaf]["data"]
+
+    def version(self, leaf):
+        """The current version's number; 0 for no leaf."""
+        entry = self.leaves.get(leaf)
+        return 0 if entry is None else entry.get("version", 1)

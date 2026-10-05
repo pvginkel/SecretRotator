@@ -7,7 +7,7 @@ import pytest
 from fake_openbao import ROLE_ID, SECRET_ID, TOKEN, FakeOpenBao
 from fixtures import COMPLIANT, data_of
 
-from secret_rotator.openbao import ADDR, OpenBao, OpenBaoError
+from secret_rotator.openbao import ADDR, OpenBao, OpenBaoError, Version
 
 
 def fake():
@@ -89,6 +89,65 @@ def test_create_writes_the_first_version_only():
     with pytest.raises(OpenBaoError) as e:
         c.create("rotator/approle/eso", {"secret_id": "marker"})
     assert e.value.status == 400
+
+
+def test_a_metadata_patch_of_a_leaf_that_is_gone_is_refused():
+    with pytest.raises(OpenBaoError) as e:
+        client(fake()).patch_metadata("no/such/leaf", {"notes": "n"})
+    assert e.value.status == 404
+    assert str(e.value) == "PATCH kv/metadata/no/such/leaf: HTTP 404: no leaf no/such/leaf"
+
+
+def test_read_gives_a_version_s_number_and_data_or_none():
+    bao = fake()
+    c = client(bao)
+    assert c.read("shared/wifi") == Version(1, data_of("shared/wifi"))
+    c.write("shared/wifi", {"password": "SECRET-new"})
+    assert c.read("shared/wifi") == Version(2, {"password": "SECRET-new"})
+    assert c.read("shared/wifi", version=1) == Version(1, data_of("shared/wifi"))
+    assert c.read("shared/wifi", version=5) is None
+    assert c.read("no/such/leaf") is None
+    assert bao.requests[-2][2] == {"version": "5"}
+
+
+def test_write_puts_the_whole_data_with_an_optional_check_and_set():
+    bao = fake()
+    c = client(bao)
+    assert c.write("shared/wifi", {"a": "1"}) == 2
+    assert bao.requests[-1][3] == {"data": {"a": "1"}}
+    assert c.write("shared/wifi", {"b": "2"}, cas=2) == 3
+    assert bao.requests[-1][3] == {"data": {"b": "2"}, "options": {"cas": 2}}
+    with pytest.raises(OpenBaoError, match="check-and-set") as e:
+        c.write("shared/wifi", {"c": "3"}, cas=2)
+    assert e.value.status == 400
+
+
+def test_patch_merges_into_the_data_under_check_and_set():
+    bao = fake()
+    c = client(bao)
+    assert c.patch("eso/prd/app/prd/oidc", {"client_secret": "SECRET-new"}, cas=1) == 2
+    method, path, _, body, ctype = bao.requests[-1]
+    assert (method, path, ctype) == (
+        "PATCH",
+        "kv/data/eso/prd/app/prd/oidc",
+        "application/merge-patch+json",
+    )
+    assert body == {"data": {"client_secret": "SECRET-new"}, "options": {"cas": 1}}
+    assert bao.data("eso/prd/app/prd/oidc") == data_of("eso/prd/app/prd/oidc") | {
+        "client_secret": "SECRET-new"
+    }
+    with pytest.raises(OpenBaoError) as e:
+        c.patch("eso/prd/app/prd/oidc", {"client_secret": "x"}, cas=1)
+    assert e.value.status == 400
+    with pytest.raises(OpenBaoError, match="HTTP 404: no leaf"):
+        c.patch("no/such/leaf", {"k": "v"}, cas=1)
+
+
+def test_destroy_deletes_the_metadata_with_every_version():
+    bao = fake()
+    client(bao).destroy("shared/wifi")
+    assert bao.requests[-1][:2] == ("DELETE", "kv/metadata/shared/wifi")
+    assert "shared/wifi" not in bao.leaves
 
 
 def test_a_refusal_carries_its_status():

@@ -13,6 +13,12 @@ MOUNT = "kv"
 STAGING_PREFIX = "rotator/staging/"
 LOCK_LEAF = "rotator/lock"
 
+# The rotator's run state on a leaf (design §3.4), written by metadata patch.
+STATUS = "rotator_status"
+STEP = "rotator_step"
+LAST_ERROR = "rotator_last_error"
+LAST_RUN = "rotator_last_run"
+
 # KV v2 custom_metadata limits (Vault's; not verified for OpenBao 2.5.4).
 MAX_KEYS = 64
 MAX_KEY_BYTES = 128

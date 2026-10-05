@@ -8,6 +8,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
+from dataclasses import dataclass
 
 from secret_rotator.contract import MOUNT, is_working_leaf
 
@@ -23,6 +24,14 @@ class OpenBaoError(Exception):
     def __init__(self, message: str, status: int | None = None):
         super().__init__(message)
         self.status = status
+
+
+@dataclass(frozen=True)
+class Version:
+    """One version of a leaf's data."""
+
+    number: int
+    data: dict[str, str]
 
 
 class OpenBao:
@@ -108,15 +117,52 @@ class OpenBao:
         subkeys = None if status == 404 else doc["data"]["subkeys"]
         return None if subkeys is None else set(subkeys)
 
-    def patch_metadata(self, leaf: str, custom: dict[str, str]) -> None:
-        """A merge patch of custom_metadata: keys it does not name are kept (never a put)."""
-        self.call(
-            "PATCH",
-            f"{MOUNT}/metadata/{leaf}",
-            {"custom_metadata": custom},
-            content_type="application/merge-patch+json",
+    def patch_metadata(self, leaf: str, custom: dict[str, str | None]) -> None:
+        """A merge patch of custom_metadata: keys it does not name are kept (never a put), a None
+        value removes its key. Refused when the store has no such leaf."""
+        path = f"{MOUNT}/metadata/{leaf}"
+        status, _ = self.call(
+            "PATCH", path, {"custom_metadata": custom}, content_type="application/merge-patch+json"
         )
+        if status == 404:
+            raise OpenBaoError(f"PATCH {path}: HTTP 404: no leaf {leaf}", status)
+
+    def read(self, leaf: str, version: int | None = None) -> Version | None:
+        """A version of the leaf's data, the current one by default; None when the leaf does not
+        exist or that version is deleted or destroyed."""
+        query = None if version is None else {"version": str(version)}
+        status, doc = self.call("GET", f"{MOUNT}/data/{leaf}", query=query)
+        if status == 404:
+            return None
+        return Version(doc["data"]["metadata"]["version"], doc["data"]["data"])
+
+    def write(self, leaf: str, data: dict[str, str], cas: int | None = None) -> int:
+        """Writes the leaf's whole data as a new version, whose number it returns. With cas, only
+        while the current version is cas (0: the leaf does not exist yet)."""
+        body: dict = {"data": data}
+        if cas is not None:
+            body["options"] = {"cas": cas}
+        _, doc = self.call("POST", f"{MOUNT}/data/{leaf}", body)
+        return doc["data"]["version"]
 
     def create(self, leaf: str, data: dict[str, str]) -> None:
         """Writes the first version of a leaf; refused when the leaf already exists."""
-        self.call("POST", f"{MOUNT}/data/{leaf}", {"options": {"cas": 0}, "data": data})
+        self.write(leaf, data, cas=0)
+
+    def patch(self, leaf: str, data: dict[str, str | None], cas: int) -> int:
+        """A KV v2 merge patch of the leaf's data, only while its current version is cas: keys it
+        does not name are kept, a None value removes its key. Returns the new version's number."""
+        path = f"{MOUNT}/data/{leaf}"
+        status, doc = self.call(
+            "PATCH",
+            path,
+            {"data": data, "options": {"cas": cas}},
+            content_type="application/merge-patch+json",
+        )
+        if status == 404:
+            raise OpenBaoError(f"PATCH {path}: HTTP 404: no leaf {leaf}", status)
+        return doc["data"]["version"]
+
+    def destroy(self, leaf: str) -> None:
+        """Deletes the leaf with every version and its metadata."""
+        self.call("DELETE", f"{MOUNT}/metadata/{leaf}")
