@@ -24,9 +24,11 @@ from secret_rotator.executor import (
     Abandon,
     AbortRefused,
     Executor,
+    InFlight,
     Outcome,
     PlanMismatch,
     Stand,
+    in_flight,
 )
 from secret_rotator.kvsteps import URLSAFE
 from secret_rotator.lock import Lock, LockHeld
@@ -35,6 +37,9 @@ from secret_rotator.staging import staging_leaf
 
 STAGING = staging_leaf("random", LEAF)
 OLD = data_of(LEAF)["token"]
+TRELLO = "eso/prd/trello/prd/trello"  # manual api-key and token, random bearer-token
+TRELLO_MANUAL = {"leaf": TRELLO, "of": "manual", "keys": ("api-key",)}
+TRELLO_STAGING = staging_leaf("manual", TRELLO)
 
 
 def executor(bao, plan, renderer, *, dry_run=False):
@@ -91,7 +96,7 @@ class TestARun:
             if (m, p) == ("PATCH", f"kv/metadata/{LEAF}")
         ]
         steps = ["random.generate:token", "kv.write", "kv.copy:iac/copy#token", "kv.stamp"]
-        assert marks == [*(f"random/{step}" for step in steps), None]
+        assert marks == [*(f"random/token/{step}" for step in steps), None]
 
     def test_no_event_state_or_lock_carries_a_value(self):
         bao = fake()
@@ -137,7 +142,7 @@ class TestAFailure:
         assert outcome is Outcome.FAILED
         meta = bao.meta(LEAF)
         assert meta["rotator_status"] == "failed"
-        assert meta["rotator_step"] == "random/kv.copy:iac/copy#token"
+        assert meta["rotator_step"] == "random/token/kv.copy:iac/copy#token"
         assert "HTTP 403" in meta["rotator_last_error"]
         assert "rotated_at_token" not in meta
         (failure,) = r.failures()
@@ -182,18 +187,66 @@ class TestAFailure:
 
     def test_a_plan_whose_step_is_gone_from_its_rebuild_is_refused(self):
         bao = fake()
-        bao.meta(LEAF)["rotator_step"] = "random/no.such:step"
+        bao.meta(LEAF)["rotator_step"] = "random/token/no.such:step"
         with pytest.raises(PlanMismatch, match="no.such:step"):
             run(bao, plan_of())
         assert bao.data(LEAF)["token"] == OLD and bao.data(LOCK_LEAF) == {}
 
     def test_another_kind_s_plan_in_flight_on_the_leaf_is_not_resumed_as_this_one(self):
         bao = fake()
-        bao.meta(LEAF)["rotator_step"] = "manual/kv.write"
-        with pytest.raises(PlanMismatch, match="in flight in its manual plan, at kv.write"):
+        bao.meta(LEAF)["rotator_step"] = "manual/token/kv.write"
+        with pytest.raises(
+            PlanMismatch, match="in flight in its manual plan of token, at kv.write"
+        ):
             run(bao, plan_of())
         assert bao.data(LEAF)["token"] == OLD
-        assert bao.meta(LEAF)["rotator_step"] == "manual/kv.write"
+        assert bao.meta(LEAF)["rotator_step"] == "manual/token/kv.write"
+
+
+class TestTheLeafsPlanInFlight:
+    """A leaf has one plan in flight, named by its kind and its keys: a plan of the same kind for
+    other keys is not it (the per-key manual plans; a due set that grew since it stopped)."""
+
+    def test_a_plan_for_another_key_of_the_kind_is_refused_and_touches_nothing(self):
+        bao = fake()
+        api_key = plan_of(Tool("act", Journal(), fail=1, activator=True), **TRELLO_MANUAL)
+        assert run(bao, api_key)[0] is Outcome.FAILED
+        before = (dict(bao.data(TRELLO)), dict(bao.meta(TRELLO)), dict(bao.data(TRELLO_STAGING)))
+        token = plan_of(Tool("act", Journal()), **TRELLO_MANUAL | {"keys": ("token",)})
+        e = executor(bao, token, Recorder())
+        with pytest.raises(PlanMismatch, match="in flight in its manual plan of api-key, at act"):
+            e.run()
+        with pytest.raises(PlanMismatch):
+            e.abort()
+        assert (bao.data(TRELLO), bao.meta(TRELLO), bao.data(TRELLO_STAGING)) == before
+        assert "rotated_at_token" not in bao.meta(TRELLO)
+
+    def test_a_plan_for_a_due_set_that_grew_is_refused(self):
+        store = compliant_store()
+        store[TRELLO].meta["key_token"] = "random"
+        bao = fake()
+        grown = {"leaf": TRELLO, "keys": ("bearer-token", "token"), "store": store}
+        first = plan_of(
+            Tool("eso.sync:x", Journal(), fail=1, activator=True),
+            **grown | {"keys": ("bearer-token",)},
+        )
+        assert run(bao, first)[0] is Outcome.FAILED
+        with pytest.raises(PlanMismatch, match="random plan of bearer-token, at eso.sync:x"):
+            run(bao, plan_of(Tool("eso.sync:x", Journal()), **grown))
+        assert bao.data(TRELLO)["token"] == data_of(TRELLO)["token"]
+        assert "rotated_at_token" not in bao.meta(TRELLO)
+
+    def test_the_plan_rebuilt_from_what_is_in_flight_resumes(self):
+        bao = fake()
+        api_key = plan_of(Tool("act", Journal(), fail=1, activator=True), **TRELLO_MANUAL)
+        run(bao, api_key)
+        flight = in_flight(bao.meta(TRELLO))
+        assert flight == InFlight("manual", ("api-key",), "act")
+        again = plan_of(Tool("act", Journal()), **TRELLO_MANUAL | {"keys": flight.keys})
+        assert run(bao, again)[0] is Outcome.DONE
+        meta = bao.meta(TRELLO)
+        assert meta["rotated_at_api-key"] == "2026-10-05" and "rotated_at_token" not in meta
+        assert in_flight(meta) is None
 
 
 class TestResume:
@@ -202,7 +255,7 @@ class TestResume:
         outcome, r = run(bao, plan_of(Confirm("revoke")), Abandon.EXIT)
         assert outcome is Outcome.EXITED
         assert r.asked == [("revoke", "please revoke")]
-        assert bao.meta(LEAF)["rotator_step"] == "random/revoke"
+        assert bao.meta(LEAF)["rotator_step"] == "random/token/revoke"
         assert bao.data(LOCK_LEAF) == {}
 
     def test_a_new_process_resumes_where_the_plan_stopped_with_its_staged_value(self):
@@ -280,7 +333,7 @@ class TestAbort:
         with pytest.raises(AbortRefused, match="irrev cannot be taken back"):
             e.run()
         assert e.abort_blocker() == "irrev cannot be taken back"
-        assert bao.meta(LEAF)["rotator_step"] == "random/check" and bao.data(LOCK_LEAF) == {}
+        assert bao.meta(LEAF)["rotator_step"] == "random/token/check" and bao.data(LOCK_LEAF) == {}
 
     def test_an_operator_step_that_cannot_be_undone_refuses_it_once_done(self):
         bao = fake()
@@ -299,7 +352,7 @@ class TestAbort:
         assert e.run() is Outcome.FAILED
         with pytest.raises(AbortRefused):
             e.abort()
-        assert bao.meta(LEAF)["rotator_step"] == "random/irrev"
+        assert bao.meta(LEAF)["rotator_step"] == "random/token/irrev"
 
     def test_after_a_failure_it_rolls_back_the_failed_activator_too(self):
         bao = fake()
@@ -324,7 +377,7 @@ class TestAbort:
         meta = bao.meta(LEAF)
         assert meta["rotator_status"] == "failed"
         assert meta["rotator_last_error"].startswith("rollback: the undo of t failed")
-        assert meta["rotator_step"] == "random/check"
+        assert meta["rotator_step"] == "random/token/check"
         e = executor(bao, plan, Recorder())
         assert e.load() is Stand.ROLLING_BACK
         with pytest.raises(AbortRefused, match="Retry"):

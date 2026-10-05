@@ -96,6 +96,8 @@ def target(
     for key in sorted(keys):
         if kinds.get(key) != kind:
             problems.append(f"{key} is not a {kind} key")
+        elif not set(key).isdisjoint(",/"):
+            problems.append(f"{key}: a key name with ',' or '/' cannot be named in rotator_step")
         elif audit.blocked(leaf, key):
             problems.append(f"{key} is blocked by a finding")
     if problems:

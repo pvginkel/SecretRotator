@@ -106,10 +106,11 @@ class ConfirmFirst(RandomLike):
         return [*ctx.steps.generate("token"), Confirm("first"), *ctx.steps.write()]
 
 
-def plan_of(*extra, kind=None, store=None):
+def plan_of(*extra, kind=None, store=None, leaf=LEAF, of="random", keys=("token",)):
+    """The plan of rotating the leaf's keys of kind `of`, built by `kind` (random's shape)."""
     store = store or compliant_store()
     kind = kind or RandomLike(*extra)
-    return build(kind, target(LEAF, "random", ["token"], store, audit(store)))
+    return build(kind, target(leaf, of, list(keys), store, audit(store)))
 
 
 class Recorder:

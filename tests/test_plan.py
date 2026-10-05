@@ -89,3 +89,11 @@ def test_a_key_a_finding_blocks_is_refused():
     store[TRELLO].meta["interval_bearer-token"] = "soon"
     with pytest.raises(PlanError, match="bearer-token is blocked by a finding"):
         target_of(TRELLO, "random", ["bearer-token"], store)
+
+
+@pytest.mark.parametrize("key", ["a,b", "a/b"])
+def test_a_key_rotator_step_cannot_name_is_refused(key):
+    store = compliant_store()
+    store[LEAF].keys.add(key)
+    with pytest.raises(PlanError, match="cannot be named in rotator_step"):
+        target_of(LEAF, "random", [key], store)

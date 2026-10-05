@@ -3,15 +3,17 @@ the leaf's run state (§3.4), so a plan resumes where it stopped, in this proces
 talks to its front end, the nightly log, the terminal or the UI, through a Renderer: events out,
 the operator's answers in.
 
-Where a plan stands lives in OpenBao: rotator_step names the step a plan in flight is at, as
-<kind>/<step id>, written before that step runs, so every step before it finished; rotator_status
-says whether it failed. Step ids repeat across kinds and a leaf may have a plan per kind: the kind
-keeps one kind's plan from resuming at another's step. The plan's staging leaf holds the values
-its steps produced, what their undos need, and, while a rollback runs, how far it got."""
+Where a plan stands lives in OpenBao: rotator_step names the plan a leaf has in flight and the
+step it is at, as <kind>/<keys>/<step id>, written before that step runs, so every step before it
+finished; rotator_status says whether it failed. A leaf has one plan in flight. Step ids repeat
+across plans, and a leaf's plans differ by kind or by keys: only the plan of the kind and keys
+recorded resumes it. The plan's staging leaf holds the values its steps produced, what their undos
+need, and, while a rollback runs, how far it got."""
 
 import datetime
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
@@ -70,6 +72,27 @@ class Renderer(Protocol):
 
 class PlanMismatch(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class InFlight:
+    """The plan a leaf has in flight, by kind and keys, and the step it is at."""
+
+    kind: str
+    keys: tuple[str, ...]
+    step: str
+
+    def __str__(self) -> str:
+        return f"{self.kind}/{','.join(self.keys)}/{self.step}"
+
+
+def in_flight(meta: Mapping[str, str]) -> InFlight | None:
+    """The leaf's plan in flight, read from its rotator_step; None when it has none."""
+    mark = meta.get(STEP)
+    if mark is None:
+        return None
+    kind, keys, step = mark.split("/", 2)
+    return InFlight(kind, tuple(keys.split(",")), step)
 
 
 class AbortRefused(Exception):
@@ -156,16 +179,19 @@ class Executor:
             raise PlanMismatch(f"no leaf {self.leaf}")
         self.recorded = meta.get(STEP)
         self.staging.load()
-        if self.recorded is None:
+        flight = in_flight(meta)
+        if flight is None:
             self.at, self.stand = 0, Stand.FRESH
             return self.stand
-        kind, _, step_id = self.recorded.partition("/")
-        if kind != self.kind:
-            raise PlanMismatch(f"{self.leaf} is in flight in its {kind} plan, at {step_id}")
-        at = self.plan.index(step_id)
+        if (flight.kind, flight.keys) != (self.kind, self.plan.target.keys):
+            raise PlanMismatch(
+                f"{self.leaf} is in flight in its {flight.kind} plan of {', '.join(flight.keys)}, "
+                f"at {flight.step}"
+            )
+        at = self.plan.index(flight.step)
         if at is None:
             raise PlanMismatch(
-                f"{self.leaf} is in flight at step {step_id}, which the {self.plan.name} "
+                f"{self.leaf} is in flight at step {flight.step}, which the {self.plan.name} "
                 f"rebuilt from its annotations does not have: they changed mid-rotation"
             )
         self.at = at
@@ -227,8 +253,11 @@ class Executor:
                 return step.no_undo or f"{step.title}: it cannot be undone"
         return None
 
+    def _mark(self, step: Step) -> str:
+        return str(InFlight(self.kind, self.plan.target.keys, step.id))
+
     def _record(self, step: Step) -> None:
-        mark = f"{self.kind}/{step.id}"
+        mark = self._mark(step)
         self.bao.patch_metadata(self.leaf, {STEP: mark})
         self.recorded = mark
 
@@ -241,7 +270,7 @@ class Executor:
         error, technical = _failure(e)
         state = {
             STATUS: "failed-activation" if step.activator else "failed",
-            STEP: f"{self.kind}/{self.plan.steps[self.at].id}",
+            STEP: self._mark(self.plan.steps[self.at]),
             LAST_ERROR: _clip(error if action is Action.RUN else f"rollback: {error}"),
             LAST_RUN: self.clock().isoformat(timespec="seconds"),
         }
