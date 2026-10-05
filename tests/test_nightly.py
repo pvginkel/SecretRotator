@@ -32,6 +32,7 @@ WEBHOOK = "eso/prd/yt/prd/webhook"  # random, activated by a Jenkins job
 STRAY = "shared/stray"
 DAY = datetime.timedelta(days=1)
 NOT_ANNOTATED = {"rotation_activate": "none", "rotation_interval": "14d"}
+SOURCE = "commit 0394711c7d5e4b0f8a1d2c3b4a5968778695a4b3"
 
 
 def world(*, due=(LEAF, TRELLO)):
@@ -94,6 +95,7 @@ class Night:
             telegram=self.bot,
             out=self.lines.append,
             holder="run on srviac, pid 7",
+            source=SOURCE,
             now=lambda: now + datetime.timedelta(microseconds=next(self.ticks)),
         )
 
@@ -111,6 +113,20 @@ class Night:
     def card(self):
         (issue,) = self.youtrack.open()
         return issue
+
+
+class TestTheFirstLine:
+    def test_names_the_date_the_commit_it_runs_and_the_switches(self):
+        night = Night(world(due=()))
+        assert night() == 0
+        assert night.lines[0] == (
+            f"secret-rotator run, {TODAY}, {SOURCE}: kinds random, at most 10 rotation(s)"
+        )
+
+    def test_a_dry_run_says_so(self):
+        night = Night(world(due=()))
+        night(dry_run=True)
+        assert night.lines[0].startswith(f"secret-rotator run, {TODAY} (dry run), {SOURCE}: ")
 
 
 class TestTheLock:

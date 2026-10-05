@@ -9,7 +9,7 @@ from pathlib import Path
 
 from secret_rotator import annotate as ann
 from secret_rotator import audit as aud
-from secret_rotator import nightly, registry, terminal
+from secret_rotator import nightly, provenance, registry, terminal
 from secret_rotator.cluster import Cluster
 from secret_rotator.console import Console
 from secret_rotator.kube import Kube, KubeError
@@ -139,6 +139,7 @@ def main(
     youtrack: Callable[[str], YouTrack] = YouTrack,
     telegram: Callable[[str, int], Telegram] = Telegram,
     clock: Callable[[], float] = time.monotonic,
+    source: Callable[[], str] = provenance.source,
 ) -> int:
     p = parser()
     args = p.parse_args(argv)
@@ -160,7 +161,9 @@ def main(
     today = utcnow().date()
     try:
         if args.command == "run" and args.path is None:
-            return run_nightly(environ, opener, out, kube, switches(), youtrack, telegram, clock)
+            return run_nightly(
+                environ, opener, out, kube, switches(), youtrack, telegram, clock, source()
+            )
         kinds = registry.load() if args.command in ("plan", "run") else {}
         if offline:
             store = ann.offline_store(args.keys, ann.load_seed(seed_path), out)
@@ -174,6 +177,7 @@ def main(
         cluster = Cluster(kube(environ[K8S_TOKEN_ENV]))
         if args.command == "run":
             con = console()
+            con.line(f"secret-rotator run {args.path}, {source()}")
             return terminal.run_leaf(
                 bao,
                 args.path,
@@ -210,10 +214,12 @@ def run_nightly(
     youtrack: Callable[[str], YouTrack],
     telegram: Callable[[str, int], Telegram],
     clock: Callable[[], float],
+    source: str,
 ) -> int:
-    """`run` without a path. paused stops it before it does anything (design §8)."""
+    """`run` without a path. paused stops it before it does anything (design §8). source: the
+    SecretRotator commit it runs, which its first line names."""
     if switches.paused:
-        out("paused: the switches stop the nightly run before it does anything")
+        out(f"secret-rotator run, {source}, paused: the switches stop it before it does anything")
         return 0
     bao = connect(environ, opener, clock)
     return nightly.run(
@@ -225,5 +231,6 @@ def run_nightly(
         telegram=telegram,
         out=out,
         holder=holder_name("run"),
+        source=source,
         clock=clock,
     )

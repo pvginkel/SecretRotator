@@ -19,7 +19,7 @@ from fake_youtrack import TAG, FakeYouTrack
 from fixtures import COMPLIANT
 from plans import LEAF, fake_of
 from test_kinds import ACTIVATE_NONE, WIFI, store_of
-from test_nightly import TRELLO, WEBHOOK
+from test_nightly import SOURCE, TRELLO, WEBHOOK
 from test_nightly import world as nightly_world
 
 from secret_rotator import cli
@@ -101,9 +101,15 @@ def test_run_takes_a_leaf_and_runs_its_plan_in_the_terminal():
         "SECRET_ROTATOR_K8S_TOKEN": TOKEN,
     }
     code = cli.main(
-        ["run", WIFI], opener=bao, environ=env, console=lambda: con, kube=FakeCluster().kube
+        ["run", WIFI],
+        opener=bao,
+        environ=env,
+        console=lambda: con,
+        kube=FakeCluster().kube,
+        source=lambda: SOURCE,
     )
     assert code == 0
+    assert con.stdout.getvalue().splitlines()[0] == f"secret-rotator run {WIFI}, {SOURCE}"
     assert bao.data(WIFI) == {"password": "SECRET-psk"}
     assert "SECRET" not in con.stdout.getvalue()
     assert bao.data(LOCK_LEAF) == {} and bao.version(LOCK_LEAF) == 2
@@ -138,9 +144,12 @@ class TestTheNightlyRun:
             environ=ENV,
             kube=lambda token: pytest.fail("a cluster client"),
             switches=switches(paused=True),
+            source=lambda: SOURCE,
         )
         assert code == 0
-        assert lines == ["paused: the switches stop the nightly run before it does anything"]
+        assert lines == [
+            f"secret-rotator run, {SOURCE}, paused: the switches stop it before it does anything"
+        ]
 
     def test_run_without_a_path_is_the_nightly_run(self):
         bao = nightly_world(due=(LEAF,))
@@ -156,8 +165,10 @@ class TestTheNightlyRun:
             switches=switches(),
             youtrack=lambda token: YouTrack(token, opener=youtrack),
             telegram=lambda token, chat: Telegram(token, chat, opener=telegram),
+            source=lambda: SOURCE,
         )
         assert code == 0, lines
+        assert lines[0].startswith("secret-rotator run, ") and f", {SOURCE}: " in lines[0]
         assert "rotated_at_token" in bao.meta(LEAF)
         taken = [
             r for r in bao.requests if r[:2] == ("POST", f"kv/data/{LOCK_LEAF}") and r[3]["data"]
