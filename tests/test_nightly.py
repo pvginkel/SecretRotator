@@ -244,6 +244,17 @@ class TestAdmission:
         assert night.telegram.messages == [f"Secret rotation, 2026-10-05\n{line}"]
         assert f"### Manual rotations due\n- {line}" in night.card()["description"]
 
+    @pytest.mark.parametrize("status", ["failed", "failed-activation"])
+    def test_a_manual_due_leaf_keeps_the_failed_status_of_its_other_plan(self, status):
+        bao = world(due=())
+        manual_due_in(bao, 0)
+        bao.meta(BOT_LEAF)[STATUS] = status
+        bao.meta(BOT_LEAF)["rotator_last_error"] = "the job failed"
+        night = Night(bao)
+        assert night(kinds_enabled=frozenset({"random", "manual"})) == 0
+        assert bao.meta(BOT_LEAF)[STATUS] == status
+        assert f"`{BOT_LEAF}`: {status}, rolled back" in night.card()["description"]
+
     @pytest.mark.parametrize("days", [28, 21, 14, 13, 7, 1])
     def test_a_manual_rotation_is_warned_28_21_and_14_days_ahead_then_nightly(self, days):
         bao = world(due=())
