@@ -163,7 +163,10 @@ class TestDryRun:
         assert bao.writes() == [] and night.cluster.patches() == []
         log = night.log()
         assert "── random plan of eso/prd/app/prd/token (token) · due: never rotated" in log
-        assert "kv.write" in log and "k8s.rollout           roll out app-prd/deployment/app" in log
+        assert (
+            "kv.write" in log
+            and "k8s.rollout                   roll out app-prd/deployment/app" in log
+        )
         assert BOT_LEAF not in log  # manual is not in kinds_enabled
         (digest,) = night.telegram.messages
         assert digest.startswith("Dry run. Secret rotation, 2026-10-05\nWould rotate 2:\n")

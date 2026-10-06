@@ -414,7 +414,10 @@ class TestOffline:
             "shared/wifi",
             "  manual plan of password · never due: rotated by hand only · paste a new password",
         ]
-        assert "      1  you   operator.credential   Mint a new password and enter it" in self.lines
+        assert (
+            "      1  you   operator.credential           Mint a new password and enter it"
+            in self.lines
+        )
 
     def test_plan_of_a_leaf_activated_through_the_cluster_fails_offline(self):
         assert self.plan("eso/prd/app/prd/token") == 1

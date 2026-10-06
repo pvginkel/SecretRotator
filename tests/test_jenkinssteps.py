@@ -262,7 +262,9 @@ class TestTheYouTrackWebhookToken:
             YT_ID,
             "kv.stamp",
         ]
-        line = f"  4  tool  jenkins.job           run Jenkins job {YT} with ROTATE_TOKEN=true"
+        line = (
+            f"  4  tool  jenkins.job                   run Jenkins job {YT} with ROTATE_TOKEN=true"
+        )
         assert line in terminal.plan_lines(plan)
 
     def test_it_runs_to_done(self):

@@ -114,11 +114,11 @@ class TestPlanCommand:
             "  random plan of token · due: never rotated · tell the copy's reader",
             "      The tool generates a new 43-character token and writes it to the leaf and its "
             "1 copy and activates what reads it. You confirm what only you can do.",
-            "      1  tool  random.generate       generate a new token  (silent)",
-            f"      2  tool  kv.write              write {LEAF}",
-            f"      3  tool  kv.copy               copy to {COPY}#token",
-            "      4  you   operator.confirm      tell the copy's reader",
-            "      5  tool  kv.stamp              stamp token  (silent)",
+            "      1  tool  random.generate               generate a new token  (silent)",
+            f"      2  tool  kv.write                      write {LEAF}",
+            f"      3  tool  kv.copy                       copy to {COPY}#token",
+            "      4  you   operator.confirm              tell the copy's reader",
+            "      5  tool  kv.stamp                      stamp token  (silent)",
         ]
 
     def test_a_plan_that_cannot_be_built_says_why_and_fails_the_command(self):

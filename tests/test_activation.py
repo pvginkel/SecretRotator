@@ -62,8 +62,13 @@ class TestAuto:
 
     def test_plan_prints_each_activation_step_with_its_target(self):
         lines = terminal.plan_lines(plan_of())
-        assert "  4  tool  eso.sync              sync ExternalSecret app-prd/app-token" in lines
-        assert "  6  tool  k8s.rollout           roll out app-prd/statefulset/app-db" in lines
+        assert (
+            "  4  tool  eso.sync                      sync ExternalSecret app-prd/app-token"
+            in lines
+        )
+        assert (
+            "  6  tool  k8s.rollout                   roll out app-prd/statefulset/app-db" in lines
+        )
 
     def test_no_external_secret_refuses_auto_on_the_leaf_or_a_copy_s_leaf(self):
         fake = FakeCluster()
@@ -256,7 +261,8 @@ class TestCommands:
         )
         assert code == 0, lines
         assert any(
-            "k8s.rollout           roll out app-prd/deployment/app" in line for line in lines
+            "k8s.rollout                   roll out app-prd/deployment/app" in line
+            for line in lines
         )
         assert not [line for line in lines if "SECRET" in line]
 

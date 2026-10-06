@@ -48,7 +48,7 @@ def heading(p: LeafPlan, today: datetime.date) -> str:
 def plan_lines(plan: Plan) -> list[str]:
     """The plan's steps, numbered, each with who does it and its target."""
     return [
-        f"{n:>3}  {'you' if step.actor is Actor.OPERATOR else 'tool':<4}  {step.type:<20}  "
+        f"{n:>3}  {'you' if step.actor is Actor.OPERATOR else 'tool':<4}  {step.type:<28}  "
         f"{step.title}{'  (silent)' if step.silent else ''}"
         for n, step in enumerate(plan.steps, 1)
     ]
