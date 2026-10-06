@@ -171,8 +171,8 @@ class Mint(Step):
 
 class Login(Step):
     """Logs in as the role with the new secret_id, from a client of its own, so the rotator keeps
-    its token. The proving login's token is left to expire: the rotator's policy has no token
-    paths."""
+    its token. The proving login's token is the role's, held only by that client and never
+    stored, and is left to expire at the role's token_ttl."""
 
     type = "approle.login"
     silent = True
