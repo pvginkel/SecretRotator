@@ -366,6 +366,18 @@ class TestAbort:
             e.abort()
         assert bao.meta(LEAF)["rotator_step"] == "random/token/irrev"
 
+    def test_an_activator_without_an_undo_does_not_refuse_it(self):
+        bao = fake()
+        j = Journal()
+        plan = plan_of(Tool("act", j, fail=1, activator=True, undoable=False))
+        assert run(bao, plan)[0] is Outcome.FAILED
+        e = executor(bao, plan, Recorder())
+        e.load()
+        assert e.abort_blocker() is None
+        assert e.abort() is Outcome.ROLLED_BACK
+        assert j == [("run", "act"), ("run", "act")]
+        assert bao.data(LEAF)["token"] == OLD
+
     def test_after_a_failure_it_rolls_back_the_failed_activator_too(self):
         bao = fake()
         j = Journal()

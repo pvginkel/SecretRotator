@@ -85,6 +85,20 @@ class TestKvWrite:
         KvWrite(LEAF, ("token",)).run(ctx)
         assert ctx.values["kv.write:from"] == "1"
 
+    def test_the_version_it_starts_from_is_staged_before_the_patch_request(self):
+        bao = fake()
+        ctx = Ctx(bao, **{value_name("token"): "NEW"})
+        memo_at_patch = []
+        real = bao.patch_data
+
+        def patch_data(leaf, body, *a):
+            memo_at_patch.append(ctx.values.get("kv.write:from"))
+            return real(leaf, body, *a)
+
+        bao.patch_data = patch_data
+        KvWrite(LEAF, ("token",)).run(ctx)
+        assert memo_at_patch == ["1"]
+
     def test_a_write_that_already_landed_is_a_no_op(self):
         bao = fake()
         ctx = Ctx(bao, **{value_name("token"): "NEW"})
