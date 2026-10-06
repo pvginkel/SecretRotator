@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -54,6 +55,27 @@ def step(tmp_path, scenario="ok", counter=None, **kwargs):
 
 def report(tmp_path):
     return json.loads((tmp_path / "report.json").read_text())
+
+
+def gone(pid, within=5.0):
+    """Whether the process has ended within that many seconds; a zombie nobody has reaped yet
+    has."""
+    deadline = time.monotonic() + within
+    while True:
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text()
+        except FileNotFoundError:
+            return True
+        if stat.rsplit(")", 1)[1].split()[0] == "Z":
+            return True
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.05)
+
+
+def child(tmp_path):
+    """The pid of the hanging stand-in's child, which holds the output open as ssh does."""
+    return int((tmp_path / "child.pid").read_text())
 
 
 class TestTheRun:
@@ -119,8 +141,12 @@ class TestTheRun:
 
     def test_a_run_past_its_bound_is_killed_with_what_it_started(self, tmp_path):
         run = AnsibleRun(ansible(tmp_path, "hang", bound=1), "deliver", "deliver", DELIVER)
+        started = time.monotonic()
         with pytest.raises(StepFailed, match="did not finish within 0 min"):
             run.run(Ctx())
+        # The child holds the output for 60 s: only the session's kill ends the run at its bound.
+        assert time.monotonic() - started < 30
+        assert gone(child(tmp_path))
 
     def test_an_interrupted_rotator_takes_the_playbook_down_with_it(self, tmp_path):
         def interrupt(detail):
@@ -131,6 +157,7 @@ class TestTheRun:
             ansible(tmp_path, "hang").run(DELIVER, values, interrupt)
         with pytest.raises(ProcessLookupError):
             os.kill(report(tmp_path)["pid"], 0)
+        assert gone(child(tmp_path))
 
     def test_no_staged_value_fails_before_running(self, tmp_path):
         with pytest.raises(StepFailed, match="no value is staged for openbao_backup_secret_id"):

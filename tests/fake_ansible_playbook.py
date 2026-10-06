@@ -51,6 +51,11 @@ def main():
         "env": {k: os.environ.get(k) for k in ("ANSIBLE_NOCOLOR", "ANSIBLE_FORCE_COLOR")},
     }
     Path("report.json").write_text(json.dumps(report))
+    if scenario == "hang":
+        # A child that holds the output open, as ssh does, started before any output so that the
+        # rotator never reads a task line without it; its pid tells a test whether it was killed.
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        Path("child.pid").write_text(str(child.pid))
     tasks()
     if scenario == "ok":
         recap()
@@ -76,8 +81,6 @@ def main():
         sys.exit(2)
     elif scenario == "hang":
         sys.stdout.flush()
-        # A child that holds the output open, as ssh does.
-        subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
         time.sleep(60)
 
 
