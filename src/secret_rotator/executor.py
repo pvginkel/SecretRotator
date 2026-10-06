@@ -89,11 +89,15 @@ class InFlight:
 
 
 def in_flight(meta: Mapping[str, str]) -> InFlight | None:
-    """The leaf's plan in flight, read from its rotator_step; None when it has none."""
+    """The leaf's plan in flight, read from its rotator_step; None when it has none. PlanMismatch
+    for a rotator_step that is not <kind>/<keys>/<step id>."""
     mark = meta.get(STEP)
     if mark is None:
         return None
-    kind, keys, step = mark.split("/", 2)
+    parts = mark.split("/", 2)
+    if len(parts) != 3:
+        raise PlanMismatch(f"its rotator_step {mark!r} is not <kind>/<keys>/<step id>")
+    kind, keys, step = parts
     return InFlight(kind, tuple(keys.split(",")), step)
 
 

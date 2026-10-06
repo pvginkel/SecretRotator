@@ -192,6 +192,18 @@ class TestAFailure:
             run(bao, plan_of())
         assert bao.data(LEAF)["token"] == OLD and bao.data(LOCK_LEAF) == {}
 
+    @pytest.mark.parametrize("mark", ["random/kv.write", "kv.stamp"])
+    def test_a_rotator_step_not_of_the_plan_form_is_refused(self, mark):
+        bao = fake()
+        bao.meta(LEAF)["rotator_step"] = mark
+        e = executor(bao, plan_of(), Recorder())
+        with pytest.raises(PlanMismatch, match="is not <kind>/<keys>/<step id>"):
+            e.run()
+        with pytest.raises(PlanMismatch, match="is not <kind>/<keys>/<step id>"):
+            e.abort()
+        assert bao.data(LEAF)["token"] == OLD and bao.data(LOCK_LEAF) == {}
+        assert bao.meta(LEAF)["rotator_step"] == mark
+
     def test_another_kind_s_plan_in_flight_on_the_leaf_is_not_resumed_as_this_one(self):
         bao = fake()
         bao.meta(LEAF)["rotator_step"] = "manual/token/kv.write"
