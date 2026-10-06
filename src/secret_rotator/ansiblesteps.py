@@ -182,7 +182,7 @@ class AnsibleRun(Step):
         values = {var: ctx.staged(name) for var, name in book.staged.items()}
         if missing := sorted(var for var, value in values.items() if value is None):
             raise StepFailed(f"no value is staged for {', '.join(missing)}")
-        ran = self.ansible.run(book, values, ctx.progress)
+        ran = self.ansible.run(book, values, lambda task: ctx.progress(redact(task, values)))
         output = redact(ran.output, values)
         tail = "\n".join(output.splitlines()[-TAIL:])
         hosts = recap(output)

@@ -139,6 +139,12 @@ class TestTheRun:
         assert SECRET not in e.value.technical
         assert "refused <redacted> for <redacted>" in e.value.technical
 
+    def test_a_task_line_has_every_staged_value_redacted(self, tmp_path):
+        ctx = Ctx()
+        step(tmp_path, "named").run(ctx)
+        assert ctx.progressed[-1] == "openbao : Write <redacted>"
+        assert not any(SECRET in detail for detail in ctx.progressed)
+
     def test_a_run_past_its_bound_is_killed_with_what_it_started(self, tmp_path):
         run = AnsibleRun(ansible(tmp_path, "hang", bound=1), "deliver", "deliver", DELIVER)
         started = time.monotonic()

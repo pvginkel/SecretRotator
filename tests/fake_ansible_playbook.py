@@ -71,6 +71,11 @@ def main():
         print(f'fatal: [srvvault1]: FAILED! => {{"msg": "refused {secret} for {secret}"}}')
         recap(srvvault1="failed")
         sys.exit(2)
+    elif scenario == "named":
+        # A task named with the staged var: Ansible renders it in the banner.
+        secret = values["openbao_backup_secret_id"]
+        print(f"TASK [openbao : Write {secret}] *******************************************")
+        recap()
     elif scenario == "norecap":
         print("ERROR! the playbook: playbooks/x.yml could not be found", file=sys.stderr)
         sys.exit(1)
