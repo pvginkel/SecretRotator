@@ -92,7 +92,7 @@ def load_seed(path: Path) -> Seed:
         if not isinstance(leaf, str) or not LEAF_PATH.fullmatch(leaf):
             problems.append(f"{leaf!r}: not a leaf path under the {MOUNT} mount")
             continue
-        if not isinstance(entry, dict) or not entry:
+        if not isinstance(entry, dict) or not entry.keys() - {MARKER}:
             problems.append(f"{leaf}: not a mapping of metadata keys")
             continue
         meta = dict(entry)

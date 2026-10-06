@@ -362,6 +362,11 @@ class TestSeed:
         assert seed.markers == {"rotator/approle/eso": "secret_id"}
         assert seed.annotations == {"rotator/approle/eso": {"notes": "n"}}
 
+    def test_an_entry_that_only_declares_a_marker_has_no_metadata(self):
+        assert "rotator/x: not a mapping of metadata keys" in self.problems(
+            "rotator/x:\n  marker: k\n"
+        )
+
     def test_a_marker_lives_under_rotator_and_names_a_key(self):
         for leaf in ("iac/x", "rotator/staging/x", "rotator/lock"):
             assert f"{leaf}: marker: a marker leaf lives under rotator/" in self.problems(
