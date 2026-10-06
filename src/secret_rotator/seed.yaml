@@ -321,8 +321,8 @@ eso/prd/kubecoder/prd/bot-token:
   rotation_interval: 365d
   rotation_activate: auto
 
-# The keys without a key_<name> (ansible-vault-password, argocd-token, grafana-api-key,
-# openai-api-key, ssh-key-pve) are the leaf's manual ones.
+# The keys without a key_<name> are the leaf's manual ones: argocd-token, grafana-api-key,
+# openai-api-key, ssh-key-pve, and ansible-vault-password, the bootstrap tier, which never falls due.
 eso/prd/kubecoder/prd/catalog:
   rotation_mechanism: manual
   key_backup-server-token: copy:eso/prd/storage/prd/backup-server#management_token
@@ -351,7 +351,10 @@ eso/prd/kubecoder/prd/catalog:
   rotation_interval: 365d
   interval_jenkins-token: 14d
   interval_youtrack-api-key: 14d
+  interval_ansible-vault-password: never
   rotation_activate: k8s-rollout:kubecoder-prd/deployment/kubecoder-controller
+  notes: "ansible-vault-password is the bootstrap tier, rotated by hand at its source and never
+    asked for"
 
 eso/prd/kubecoder/prd/client-token-bot:
   rotation_mechanism: random

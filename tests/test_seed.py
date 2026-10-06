@@ -5,6 +5,7 @@ store-keys.json maps each leaf to its data key names (no values): the value-blin
 2026-10-04 after slice 044's cutover, plus the rotator's own leaves and markers (catalog
 § rotator/). A leaf added to the seed is added there with its key names."""
 
+import datetime
 import json
 import tempfile
 from pathlib import Path
@@ -12,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from secret_rotator import annotate as ann
+from secret_rotator import audit as aud
 from secret_rotator import cli
 from secret_rotator.contract import parse_args
 
@@ -91,6 +93,25 @@ def test_the_per_key_cadences_of_ruling_q1(seed):
         assert {k: meta.get(k) for k in keys} == keys, leaf
         assert meta.get("notes", "").strip(), leaf
     assert "cannot be rotated" in seed.annotations["eso/prd/trello-mcp/prd/trello"]["notes"]
+
+
+def test_the_bags_vault_passphrase_is_the_bootstrap_tier_and_never_due(seed):
+    bag = "eso/prd/kubecoder/prd/catalog"
+    meta = seed.annotations[bag]
+    assert meta["interval_ansible-vault-password"] == "never"
+    assert "bootstrap tier" in meta["notes"]
+    store = ann.offline_store(Path(str(ann.DEFAULT_KEYS)), seed, print)
+    result = aud.audit(store)
+    assert result.findings == []
+    assert (bag, "ansible-vault-password") in result.never
+    due = [s for s in aud.due_keys(store, result, datetime.date(2026, 10, 6)) if s.leaf == bag]
+    assert "ansible-vault-password" not in {s.key for s in due}
+    assert {s.key for s in due if s.kind == "manual"} == {
+        "argocd-token",
+        "grafana-api-key",
+        "openai-api-key",
+        "ssh-key-pve",
+    }
 
 
 def test_the_leaves_once_manual_carry_the_kind_the_catalog_gives(seed):
