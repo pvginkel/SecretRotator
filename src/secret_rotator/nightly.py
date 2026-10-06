@@ -147,7 +147,6 @@ class Night:
         telegram: Telegram | None,
         out: Callable[[str], None],
         holder: str,
-        source: str,
         now: Callable[[], datetime.datetime] = utcnow,
         clock: Callable[[], float] = time.monotonic,
     ):
@@ -159,7 +158,6 @@ class Night:
         self.youtrack = youtrack
         self.telegram = telegram
         self.out = out
-        self.source = source
         self.now = now
         self.today = now().date()
         self.clock = clock
@@ -183,8 +181,7 @@ class Night:
     def go(self) -> int:
         enabled_kinds = self.switches.kinds_enabled
         self.out(
-            f"secret-rotator run, {self.today}{cards.DRY_RUN if self.dry_run else ''}, "
-            f"{self.source}: kinds "
+            f"secret-rotator run, {self.today}{cards.DRY_RUN if self.dry_run else ''}: kinds "
             f"{', '.join(sorted(enabled_kinds))}, at most "
             f"{self.switches.max_rotations_per_run} rotation(s)"
         )
@@ -514,12 +511,10 @@ def run(
     telegram: Callable[[str, int], Telegram] = Telegram,
     out: Callable[[str], None],
     holder: str,
-    source: str,
     now: Callable[[], datetime.datetime] = utcnow,
     clock: Callable[[], float] = time.monotonic,
 ) -> int:
-    """The nightly run: Jeeves's token for the card and the bot's for Telegram, from the store.
-    source: the SecretRotator commit it runs, for its first line (provenance.source())."""
+    """The nightly run: Jeeves's token for the card and the bot's for Telegram, from the store."""
     chat = switches.telegram_chat_id
     bot = None if chat is None else telegram(bao.value(*BOT_TOKEN), chat)
     return Night(
@@ -531,7 +526,6 @@ def run(
         telegram=bot,
         out=out,
         holder=holder,
-        source=source,
         now=now,
         clock=clock,
     ).go()

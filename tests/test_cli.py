@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import urllib.error
 from contextlib import redirect_stderr
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from fake_youtrack import TAG, FakeYouTrack
 from fixtures import COMPLIANT
 from plans import LEAF, fake_of
 from test_kinds import ACTIVATE_NONE, WIFI, store_of
-from test_nightly import SOURCE, TRELLO, WEBHOOK
+from test_nightly import TRELLO, WEBHOOK
 from test_nightly import world as nightly_world
 
 from secret_rotator import cli
@@ -29,6 +30,8 @@ from secret_rotator.openbao import OpenBao
 from secret_rotator.switches import Switches, SwitchesError
 from secret_rotator.telegram import Telegram
 from secret_rotator.youtrack import YouTrack
+
+SOURCE = "commit 0394711c7d5e4b0f8a1d2c3b4a5968778695a4b3"
 
 
 def usage(*argv, env=None):
@@ -95,6 +98,7 @@ def test_run_takes_a_leaf_and_runs_its_plan_in_the_terminal():
     store = store_of(**ACTIVATE_NONE)
     bao = fake_of(store)
     con = Console(io.StringIO("y\nSECRET-psk\nc\n"), io.StringIO())
+    lines = []
     env = {
         "SECRET_ROTATOR_ROLE_ID": ROLE_ID,
         "SECRET_ROTATOR_SECRET_ID": SECRET_ID,
@@ -103,13 +107,14 @@ def test_run_takes_a_leaf_and_runs_its_plan_in_the_terminal():
     code = cli.main(
         ["run", WIFI],
         opener=bao,
+        out=lines.append,
         environ=env,
         console=lambda: con,
         kube=FakeCluster().kube,
         source=lambda: SOURCE,
     )
     assert code == 0
-    assert con.stdout.getvalue().splitlines()[0] == f"secret-rotator run {WIFI}, {SOURCE}"
+    assert lines == [f"secret-rotator run {WIFI}, {SOURCE}"]
     assert bao.data(WIFI) == {"password": "SECRET-psk"}
     assert "SECRET" not in con.stdout.getvalue()
     assert bao.data(LOCK_LEAF) == {} and bao.version(LOCK_LEAF) == 2
@@ -148,7 +153,8 @@ class TestTheNightlyRun:
         )
         assert code == 0
         assert lines == [
-            f"secret-rotator run, {SOURCE}, paused: the switches stop it before it does anything"
+            f"secret-rotator run, {SOURCE}",
+            "paused: the switches stop the nightly run before it does anything",
         ]
 
     def test_run_without_a_path_is_the_nightly_run(self):
@@ -168,7 +174,7 @@ class TestTheNightlyRun:
             source=lambda: SOURCE,
         )
         assert code == 0, lines
-        assert lines[0].startswith("secret-rotator run, ") and f", {SOURCE}: " in lines[0]
+        assert lines[0] == f"secret-rotator run, {SOURCE}"
         assert "rotated_at_token" in bao.meta(LEAF)
         taken = [
             r for r in bao.requests if r[:2] == ("POST", f"kv/data/{LOCK_LEAF}") and r[3]["data"]
@@ -176,15 +182,78 @@ class TestTheNightlyRun:
         assert taken[0][3]["data"]["holder"].startswith("run on ")
         assert "Rotated 1:" in telegram.messages[-1]
 
-    def test_switches_that_do_not_load_are_an_error(self):
+
+REFUSED = "error: POST auth/approle/login: transport error: connection refused"
+
+
+def refusing_login():
+    bao = FakeOpenBao()
+    bao.broken["auth/approle/login"] = urllib.error.URLError("connection refused")
+    return bao
+
+
+class TestEveryRunNamesItsCommitFirst:
+    """Before anything that can fail, so a run that fails at its start-up has named it."""
+
+    @pytest.mark.parametrize(
+        ("argv", "first"),
+        [
+            (["run"], f"secret-rotator run, {SOURCE}"),
+            (["run", WIFI], f"secret-rotator run {WIFI}, {SOURCE}"),
+        ],
+    )
+    def test_a_run_whose_login_is_refused(self, argv, first):
+        lines = []
+        code = cli.main(
+            argv,
+            opener=refusing_login(),
+            out=lines.append,
+            environ=ENV,
+            console=lambda: pytest.fail("a console"),
+            switches=switches(),
+            source=lambda: SOURCE,
+        )
+        assert code == 1
+        assert lines == [first, REFUSED]
+
+    def test_a_nightly_run_whose_switches_do_not_load(self):
         def broken():
             raise SwitchesError("dry_run: missing")
 
         lines = []
         code = cli.main(
-            ["run"], opener=FakeOpenBao(), out=lines.append, environ=ENV, switches=broken
+            ["run"],
+            opener=FakeOpenBao(),
+            out=lines.append,
+            environ=ENV,
+            switches=broken,
+            source=lambda: SOURCE,
         )
-        assert code == 1 and lines == ["error: dry_run: missing"]
+        assert code == 1
+        assert lines == [f"secret-rotator run, {SOURCE}", "error: dry_run: missing"]
+
+    @pytest.mark.parametrize("argv", [["run"], ["run", WIFI]])
+    def test_a_run_without_its_credentials(self, argv):
+        lines = []
+        with redirect_stderr(io.StringIO()), pytest.raises(SystemExit):
+            cli.main(argv, out=lines.append, environ={}, source=lambda: SOURCE)
+        assert len(lines) == 1 and lines[0].endswith(f", {SOURCE}")
+
+    def test_a_run_whose_start_up_breaks(self, monkeypatch):
+        def regression():
+            raise RuntimeError("a regression")
+
+        monkeypatch.setattr(cli.registry, "load", regression)
+        lines = []
+        with pytest.raises(RuntimeError):
+            cli.main(
+                ["run", WIFI],
+                opener=FakeOpenBao(),
+                out=lines.append,
+                environ=ENV,
+                source=lambda: SOURCE,
+            )
+        assert lines == [f"secret-rotator run {WIFI}, {SOURCE}"]
 
 
 class TestRunPathTellsTelegram:
