@@ -2,7 +2,10 @@
 
 Automated OpenBao secret rotation for the homelab. The `secret-rotator` command checks every leaf
 of OpenBao's `kv` mount against its rotation annotations, rotates the keys that are due, and rolls
-each new value out to its consumers.
+each new value out to its consumers. A data key's annotations are one custom-metadata entry,
+`rotation_<key>`, a JSON object of its kind, interval, args, activation, `expires_at` and notes.
+The rotator's run state — each key's rotation stamp, each leaf's status — is its own leaf,
+`kv/rotator/state`, never a secret leaf's metadata.
 
 - The design: AnsibleSpecs `secret-rotation/design.md`, and each leaf's kind, interval and
   activation in `secret-rotation/catalog.md`.
@@ -14,17 +17,18 @@ each new value out to its consumers.
 | Command | What it does |
 |---|---|
 | `secret-rotator audit [--keys FILE]` | Checks every leaf against the annotation contract. Offline with `--keys`: the seed over FILE's key names. |
-| `secret-rotator annotate [--apply]` | Writes the seed's annotations by metadata patch and creates the marker leaves it declares. A dry run without `--apply`. |
+| `secret-rotator annotate [--apply]` | Makes each seed leaf's custom metadata exactly its `rotation_<key>` entries by metadata patch: it adds or changes the entries, removes every other key, sets an automatic leaf's `max_versions` to 20, and creates the marker leaves the seed declares. A dry run without `--apply` lists every write. |
 | `secret-rotator plan <path> [--keys FILE]` | Prints the leaf's plans and executes nothing. Offline with `--keys`. |
 | `secret-rotator run <path>` | Runs one plan of the leaf in the terminal, its operator steps as prompts. A plan a failure stopped offers Retry, Abort (roll back) and Details. |
 | `secret-rotator run` | The nightly run. |
+| `secret-rotator stamp <path> <key> [--rotated-at DATE] [--expires-at DATE \| --clear-expires-at]` | Sets the key's rotation stamp in the run state to the date its current value was written, for a value written outside a rotation; sets or clears the `expires_at` in its entry. Takes at least one option. |
 
 Exit status: 0 on success, 1 on a finding or a failure, 2 on a usage error. No output carries a
 secret value.
 
 The live commands log in to OpenBao at `https://secrets.home:8200` with the `rotator` AppRole, from
-`SECRET_ROTATOR_ROLE_ID` and `SECRET_ROTATOR_SECRET_ID`. All but `annotate` also read the prd
-cluster with the ServiceAccount token in `SECRET_ROTATOR_K8S_TOKEN`. The AppRole is bound to
+`SECRET_ROTATOR_ROLE_ID` and `SECRET_ROTATOR_SECRET_ID`. All but `annotate` and `stamp` also read
+the prd cluster with the ServiceAccount token in `SECRET_ROTATOR_K8S_TOKEN`. The AppRole is bound to
 srviac's address, so they run on srviac, in the `iac` container:
 
 ```sh
@@ -40,7 +44,7 @@ ssh -t ansible@srviac "sudo iac -c 'secret-rotator run <leaf>'"
   `prd` as a uv tool with a venv of its own. Every rebuild of the image installs `prd`'s tip, so
   srviac runs the last green commit. `run` names that commit in its first line.
 - **Schedule.** `IaC/Scheduled Secret Rotation` (Ansible
-  `Jenkinsfile.iac-scheduled-secret-rotation`) runs `secret-rotator run` on srviac at 04:30.
+  `Jenkinsfile.iac-scheduled-secret-rotation`) runs `secret-rotator run` on srviac at 05:30.
 - **Switches.** `src/secret_rotator/switches.yaml` ships in the package: `dry_run`, `paused` (the
   kill switch), `kinds_enabled`, `max_rotations_per_run`, `card_tag` and `telegram_chat_id`. A change
   takes effect once its green build has rebuilt the image. Disabling `IaC/Scheduled Secret Rotation`
@@ -52,15 +56,19 @@ ssh -t ansible@srviac "sudo iac -c 'secret-rotator run <leaf>'"
 ## Layout
 
 - `src/secret_rotator/` is the core: the annotation contract, the audit and the schedule, plans and
-  their step factory (`plan`), the executor with its lock and staging leaf, the generic steps
+  their step factory (`plan`), the executor with its lock, the staging leaf that records a plan in
+  flight (`staging`) and the run state (`state`), the generic steps
   (`kvsteps`, `k8ssteps`, `jenkinssteps`, `ansiblesteps`, `opsteps`), the nightly run (`nightly`),
   the standing card, and the clients for OpenBao, Kubernetes, Jenkins, YouTrack and Telegram.
 - `src/secret_rotator/kinds/<name>/` holds one package per kind: `random`, `manual` and `approle`.
   Each is registered as a `secret_rotator.kinds` entry point in `pyproject.toml`. The leaves of a kind
-  the contract knows but no package implements are skipped.
+  the contract knows but no package implements are skipped. `kinds/manual/types/<type>.md` holds one
+  document per credential type: the standard instructions a `manual` key's `type` arg picks, under
+  a front matter of the credential's name, the shape a pasted value has and whether it expires.
 - `src/secret_rotator/seed.yaml` holds the annotations `annotate` writes, transcribed from the
-  catalog. `store-keys.json` lists the store's leaves and key names, without values, for the
-  offline `--keys` runs and the seed's tests.
+  catalog, in a compact form: per leaf, a default and per-key fields under `keys:`, which `annotate`
+  expands into one entry per data key. `store-keys.json` lists the store's leaves and key names,
+  without values, for the offline `--keys` runs and the seed's tests.
 
 ## Development
 
