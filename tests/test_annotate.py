@@ -569,7 +569,24 @@ class TestSeed:
 
     def test_an_entry_over_512_bytes_refuses_the_seed(self):
         text = self.problems(f"iac/x:\n  kind: manual\n  activate: none\n  notes: {'n' * 513}\n")
-        assert "iac/x: the leaf default's entry: 559 bytes, more than 512" in text
+        assert (
+            "iac/x: the leaf default's entry: 585 bytes with an expires_at, more than 512" in text
+        )
+
+    def test_a_scheduled_entry_counts_the_expires_at_a_rotation_adds(self):
+        notes = "n" * 454  # 500 bytes as the seed gives it, 526 once a rotation adds an expires_at
+        text = self.problems(f"iac/x:\n  kind: manual\n  activate: none\n  notes: {notes}\n")
+        assert (
+            "iac/x: the leaf default's entry: 526 bytes with an expires_at, more than 512" in text
+        )
+
+    def test_a_none_or_copy_entry_counts_no_expires_at(self):
+        # Each entry 500 bytes, which neither kind adds an expires_at to.
+        seed = self.load(
+            f"iac/x:\n  kind: none\n  notes: {'n' * 474}\n"
+            f"iac/z:\n  kind: 'copy:iac/y#k'\n  activate: none\n  notes: {'n' * 448}\n"
+        )
+        assert set(seed.leaves) == {"iac/x", "iac/z"}
 
     def test_a_key_s_entry_counts_the_default_s_fields_it_takes(self):
         activate = "manual:" + "a" * 250
@@ -578,7 +595,7 @@ class TestSeed:
             f"iac/x:\n  kind: random\n  activate: '{activate}'\n"
             f"  keys:\n    k:\n      notes: {notes}\n    u: {{kind: none, notes: {notes}}}\n"
         )
-        assert "iac/x: keys: k: its entry: 549 bytes, more than 512" in text
+        assert "iac/x: keys: k: its entry: 575 bytes with an expires_at, more than 512" in text
         assert "keys: u" not in text
 
     def test_a_key_whose_entry_name_is_over_128_bytes(self):

@@ -37,6 +37,9 @@ from secret_rotator.openbao import Metadata, OpenBao, OpenBaoError
 
 DEFAULT_SEED = resources.files("secret_rotator") / "seed.yaml"
 DEFAULT_KEYS = resources.files("secret_rotator") / "store-keys.json"
+# The expires_at a rotation or `stamp` may add to a scheduled key's entry (design §3.2), for its
+# size: an ISO date's ten characters.
+SIZED_EXPIRY = "9999-12-31"
 
 # A seed leaf's names beside the entry's fields: `keys:`, each key's own fields over the leaf
 # default's; `marker: <key>`, a marker leaf (R11), created with that one data key when the store
@@ -116,7 +119,8 @@ def _entry(leaf: SeedLeaf, kind: str, own: Mapping) -> dict:
 
 def _sizes(path: str, leaf: SeedLeaf) -> list[str]:
     """What the leaf expands to that the metadata cannot hold: a named key's entry name over 128
-    bytes, an entry over 512, the default's on a key without fields of its own or a named key's."""
+    bytes, an entry over 512, the default's on a key without fields of its own or a named key's;
+    an entry whose kind takes an expires_at counted with one, which a rotation may add later."""
     default = leaf.default.get("kind")
     problems = [
         f"{path}: {KEYS}: {key}: {entry_name(key)} is longer than {MAX_KEY_BYTES} bytes"
@@ -127,11 +131,13 @@ def _sizes(path: str, leaf: SeedLeaf) -> list[str]:
     for key, own in leaf.keys.items():
         if (kind := own.get("kind", default)) is not None:
             entries[f"{KEYS}: {key}: its entry"] = _entry(leaf, kind, own)
-    return problems + [
-        f"{path}: {what}: {n} bytes, more than {MAX_VALUE_BYTES}"
-        for what, fields in entries.items()
-        if (n := size(dump_entry(fields))) > MAX_VALUE_BYTES
-    ]
+    for what, fields in entries.items():
+        expiry = "expires_at" in takes(fields["kind"]) and "expires_at" not in fields
+        sized = {**fields, "expires_at": SIZED_EXPIRY} if expiry else fields
+        if (n := size(dump_entry(sized))) > MAX_VALUE_BYTES:
+            counted = " with an expires_at" if expiry else ""
+            problems.append(f"{path}: {what}: {n} bytes{counted}, more than {MAX_VALUE_BYTES}")
+    return problems
 
 
 def load_seed(path: Path) -> Seed:
