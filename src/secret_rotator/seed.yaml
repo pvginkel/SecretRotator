@@ -296,9 +296,9 @@ eso/prd/jenkins-mcp/prd/config:
       kind: manual
       args: {"type":"jenkins-basic-auth"}
       interval: 365d
-      notes: "An upstream Basic <user:token> header that jenkins-mcp's mcp-filter sends to Jenkins'
-        /mcp-server/stateless, kept as is by slice 044; the Jenkins-token kind's slice turns it into
-        a template when it first mints the token."
+      notes: "An upstream Basic <base64(user:token)> header that jenkins-mcp's mcp-filter sends to
+        Jenkins' /mcp-server/stateless, kept as is by slice 044; the Jenkins-token kind's slice turns
+        it into a template when it first mints the token."
 
 eso/prd/jenkins-telegram-bot/prd/config:
   kind: jenkins-token
