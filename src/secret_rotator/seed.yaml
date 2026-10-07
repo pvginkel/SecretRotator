@@ -309,8 +309,8 @@ eso/prd/jenkins-telegram-bot/prd/config:
       kind: manual
       args: {"type":"telegram-bot-token"}
       interval: 365d
-      notes: "The Jenkins build bot: posts one message per build and edits it in place, in the chat
-        of telegram-chat-id."
+      notes: "The Jenkins build bot, loudOnly in prd: it posts each failed build and each alert a
+        build's log raises, in the chat of telegram-chat-id."
     telegram-chat-id: {kind: none}
 
 eso/prd/kubecoder/dev/bot-token:
