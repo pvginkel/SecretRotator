@@ -1,15 +1,15 @@
 """The generic KV steps (design §4.2): random.generate's default and shape, kv.write and kv.copy
 as KV v2 patches with read-back and an undo to the version they started from, and kv.stamp's one
-metadata patch of ISO-dated per-key stamps."""
+check-and-set write of the run state with ISO-dated per-key stamps."""
 
 import pytest
-from fixtures import compliant_store
-from plans import COPY, LEAF, NOW, client, fake
+from plans import COPY, LEAF, NOW, client, fake, put_state, run_state, state_of
 
-from secret_rotator.audit import audit
+from secret_rotator.contract import STATE_LEAF
 from secret_rotator.kvsteps import URLSAFE, KvCopy, KvStamp, KvWrite, RandomGenerate
 from secret_rotator.model import StepFailed, value_name
 from secret_rotator.openbao import OpenBaoError
+from secret_rotator.state import LeafState
 
 TRELLO = "eso/prd/trello/prd/trello"  # api-key, bearer-token, token
 
@@ -17,6 +17,7 @@ TRELLO = "eso/prd/trello/prd/trello"  # api-key, bearer-token, token
 class Ctx:
     def __init__(self, bao, **staged):
         self.bao = client(bao)
+        self.state = run_state(bao)
         self.now = NOW
         self.values = dict(staged)
 
@@ -174,36 +175,38 @@ class TestKvCopy:
 
 
 class TestKvStamp:
-    def test_it_stamps_the_rotated_keys_and_the_status_in_one_metadata_patch(self):
+    def test_it_stamps_the_rotated_keys_and_the_status_in_one_write_of_the_run_state(self):
         bao = fake()
-        bao.meta(TRELLO)["rotator_step"] = "kv.stamp"
+        put_state(bao, TRELLO, stamps={"token": "2026-01-01"}, status="failed")
         step = KvStamp(TRELLO, ("bearer-token",))
         assert step.silent and not step.mutates and step.undo is None
         step.run(Ctx(bao))
         (write,) = bao.writes()
-        assert write[:2] == ("PATCH", f"kv/metadata/{TRELLO}")
-        meta = bao.meta(TRELLO)
-        assert meta["rotated_at_bearer-token"] == "2026-10-05"
-        assert "rotated_at_token" not in meta and "rotated_at_api-key" not in meta
-        assert meta["rotator_status"] == "ok" and "rotator_step" not in meta
-        assert meta["rotator_last_run"] == "2026-10-05T04:30:00+00:00"
+        assert write[:2] == ("POST", f"kv/data/{STATE_LEAF}")
+        assert write[3]["options"] == {"cas": 1}
+        state = state_of(bao, TRELLO)
+        assert state.stamps == {"token": "2026-01-01", "bearer-token": "2026-10-05"}
+        assert state.status == "ok"
+        assert state.last_run == "2026-10-05T04:30:00+00:00"
+        assert "rotated_at_bearer-token" not in bao.meta(TRELLO)
 
     def test_it_clears_the_nightly_run_s_backoff(self):
         bao = fake()
-        bao.meta(TRELLO).update({"rotator_failed_nights": "3", "rotator_held_by": "ANS-9"})
+        put_state(bao, TRELLO, failed_nights=3, held_by="ANS-9")
         KvStamp(TRELLO, ("bearer-token",)).run(Ctx(bao))
-        assert "rotator_failed_nights" not in bao.meta(TRELLO)
-        assert "rotator_held_by" not in bao.meta(TRELLO)
+        state = state_of(bao, TRELLO)
+        assert state.failed_nights == 0 and state.held_by is None
 
-    def test_the_audit_accepts_its_stamps(self):
+    def test_it_writes_nothing_on_the_secret_leaf_s_metadata(self):
         bao = fake()
-        KvStamp(TRELLO, ("bearer-token",)).run(Ctx(bao))
-        store = compliant_store()
-        store[TRELLO].meta.update(bao.meta(TRELLO))
-        assert audit(store).findings == []
+        before = dict(bao.meta(TRELLO))
+        KvStamp(TRELLO, ("bearer-token",), ("ns/externalsecret/a",)).run(Ctx(bao))
+        assert bao.meta(TRELLO) == before
+        assert not [w for w in bao.writes() if w[1].startswith("kv/metadata/")]
 
     def test_a_leaf_gone_mid_plan_is_a_failure_not_a_stamp(self):
         bao = fake()
         del bao.leaves[TRELLO]
-        with pytest.raises(OpenBaoError, match="HTTP 404: no leaf"):
+        with pytest.raises(StepFailed, match=f"no leaf {TRELLO}: it is gone from the store"):
             KvStamp(TRELLO, ("bearer-token",)).run(Ctx(bao))
+        assert state_of(bao, TRELLO) == LeafState()

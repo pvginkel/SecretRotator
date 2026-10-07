@@ -1,5 +1,7 @@
-"""The command line: its usage errors, and the offline audit over a key file."""
+"""The command line: its usage errors, the stamp command, and the offline audit over a key
+file."""
 
+import datetime
 import io
 import json
 import subprocess
@@ -18,14 +20,15 @@ from fake_telegram import CHAT, FakeTelegram
 from fake_telegram import TOKEN as BOT
 from fake_youtrack import TAG, FakeYouTrack
 from fixtures import COMPLIANT
-from plans import LEAF, fake_of
+from plans import LEAF, client, fake_of, put_state, state_of
 from test_kinds import ACTIVATE_NONE, WIFI, store_of
 from test_nightly import TRELLO, WEBHOOK
 from test_nightly import world as nightly_world
 
 from secret_rotator import cli
+from secret_rotator.audit import audit, due_keys, live_store
 from secret_rotator.console import Console
-from secret_rotator.contract import LOCK_LEAF
+from secret_rotator.contract import LOCK_LEAF, STATE_LEAF
 from secret_rotator.openbao import OpenBao
 from secret_rotator.switches import Switches, SwitchesError
 from secret_rotator.telegram import Telegram
@@ -160,7 +163,7 @@ class TestTheNightlyRun:
     def test_run_without_a_path_is_the_nightly_run(self):
         bao = nightly_world(due=(LEAF,))
         for leaf, key in ((TRELLO, "bearer-token"), (WEBHOOK, "token")):
-            bao.meta(leaf)[f"rotated_at_{key}"] = "2999-01-01"  # not due on any real date
+            put_state(bao, leaf, stamps={key: "2999-01-01"})  # not due on any real date
         youtrack, telegram, lines = FakeYouTrack(), FakeTelegram(), []
         code = cli.main(
             ["run"],
@@ -175,12 +178,79 @@ class TestTheNightlyRun:
         )
         assert code == 0, lines
         assert lines[0] == f"secret-rotator run, {SOURCE}"
-        assert "rotated_at_token" in bao.meta(LEAF)
+        assert "token" in state_of(bao, LEAF).stamps
         taken = [
             r for r in bao.requests if r[:2] == ("POST", f"kv/data/{LOCK_LEAF}") and r[3]["data"]
         ]
         assert taken[0][3]["data"]["holder"].startswith("run on ")
         assert "Rotated 1:" in telegram.messages[-1]
+
+
+class TestStamp:
+    """`stamp`: a key's rotation stamp set in the run state by hand (design §3.2, R77)."""
+
+    ENV = {cli.ROLE_ID_ENV: ROLE_ID, cli.SECRET_ID_ENV: SECRET_ID}
+
+    def stamp(self, bao, *argv):
+        lines = []
+        code = cli.main(
+            ["stamp", *argv],
+            opener=bao,
+            out=lines.append,
+            environ=self.ENV,
+            kube=lambda token: pytest.fail("stamp built a cluster client"),
+        )
+        return code, lines
+
+    def test_the_key_falls_due_its_interval_after_the_stamp(self):
+        store = store_of(**ACTIVATE_NONE)
+        bao = fake_of(store)
+        code, lines = self.stamp(bao, LEAF, "token", "--rotated-at", "2026-10-01")
+        assert code == 0
+        assert lines == [f"{LEAF}#token: rotation stamp 2026-10-01, was none"]
+        assert state_of(bao, LEAF).stamps == {"token": "2026-10-01"}
+        assert bao.meta(LEAF) == store[LEAF].meta
+        live = live_store(client(bao), runs=True)
+        due = [(s.key, s.due_at) for s in due_keys(live, audit(live), datetime.date(2026, 10, 15))]
+        assert ("token", datetime.date(2026, 10, 15)) in due
+
+    def test_a_new_stamp_says_what_it_replaced_and_keeps_the_rest_of_the_state(self):
+        bao = fake_of(store_of(**ACTIVATE_NONE))
+        put_state(bao, LEAF, stamps={"token": "2026-09-01"}, status="failed", last_error="e")
+        code, lines = self.stamp(bao, LEAF, "token", "--rotated-at", "2026-10-01")
+        assert code == 0
+        assert lines == [f"{LEAF}#token: rotation stamp 2026-10-01, was 2026-09-01"]
+        state = state_of(bao, LEAF)
+        assert state.stamps == {"token": "2026-10-01"}
+        assert (state.status, state.last_error) == ("failed", "e")
+
+    def test_a_leaf_or_a_key_the_store_does_not_hold_is_an_error_and_writes_nothing(self):
+        bao = fake_of(store_of(**ACTIVATE_NONE))
+        assert self.stamp(bao, "no/such", "token", "--rotated-at", "2026-10-01") == (
+            1,
+            ["error: no leaf no/such"],
+        )
+        assert self.stamp(bao, LEAF, "nope", "--rotated-at", "2026-10-01") == (
+            1,
+            [f"error: no key nope in the current version of {LEAF}"],
+        )
+        assert self.stamp(bao, STATE_LEAF, LEAF, "--rotated-at", "2026-10-01")[0] == 1
+        assert bao.writes() == []
+
+    @pytest.mark.parametrize("date", ["yesterday", "2026-13-01", "20261001"])
+    def test_a_date_that_is_not_an_iso_date_is_a_usage_error(self, date):
+        code, err = usage("stamp", LEAF, "token", "--rotated-at", date, env=self.ENV)
+        assert code == 2 and f"{date!r} is not an ISO date (YYYY-MM-DD)" in err
+
+    def test_a_date_after_today_or_none_is_a_usage_error(self):
+        code, err = usage("stamp", LEAF, "token", "--rotated-at", "2999-01-01", env=self.ENV)
+        assert code == 2 and "--rotated-at 2999-01-01 is after today" in err
+        code, err = usage("stamp", LEAF, "token", env=self.ENV)
+        assert code == 2 and "--rotated-at" in err
+
+    def test_it_needs_the_rotators_approle(self):
+        code, err = usage("stamp", LEAF, "token", "--rotated-at", "2026-10-01")
+        assert code == 2 and "SECRET_ROTATOR_ROLE_ID and SECRET_ROTATOR_SECRET_ID" in err
 
 
 REFUSED = "error: POST auth/approle/login: transport error: connection refused"

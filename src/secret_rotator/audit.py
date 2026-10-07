@@ -20,7 +20,10 @@ from secret_rotator.contract import (
     resolve,
 )
 from secret_rotator.openbao import OpenBao
-from secret_rotator.schedule import STAMP_PREFIX, KeySchedule, interval_of, schedule
+from secret_rotator.schedule import KeySchedule, interval_of, schedule
+from secret_rotator.staging import InFlight, flights
+from secret_rotator.state import LeafState
+from secret_rotator.state import read as read_state
 
 # The leaves the prd cluster's ESO reads: the orphan check's, since the rotator reads no other
 # cluster. eso/dev/ is the dev cluster's.
@@ -32,6 +35,8 @@ class Leaf:
     path: str
     keys: set[str] | None  # None: the current version's keys cannot be read
     meta: dict[str, str]
+    state: LeafState = field(default_factory=LeafState)  # its run state
+    flight: InFlight | None = None  # its plan in flight
 
 
 @dataclass(frozen=True)
@@ -101,12 +106,6 @@ def check_leaf(leaf: Leaf, store: dict[str, Leaf], kinds_of: dict) -> list[Findi
                 find(meta_key, f"the leaf has no key {name!r}", name)
             elif kinds is not None and (k := kinds.get(name)) is not None and not is_scheduled(k):
                 find(meta_key, f"key {name!r} is {k}, which takes no interval", name)
-        elif meta_key.startswith(STAMP_PREFIX):
-            name = meta_key[len(STAMP_PREFIX) :]
-            try:
-                parse_date(value)
-            except ContractError as e:
-                find(meta_key, str(e), name)
 
     if kinds is not None and kind is not None and kind_error(kind) is None:
         for key, k in kinds.items():
@@ -228,13 +227,27 @@ def due_keys(store: dict[str, Leaf], result: Audit, today: datetime.date) -> lis
         if path in result.blocked_leaves:
             continue
         unblocked = {key: kind for key, kind in kinds.items() if not result.blocked(path, key)}
-        due += [s for s in schedule(path, store[path].meta, unblocked) if s.due(today)]
+        leaf = store[path]
+        due += [s for s in schedule(path, leaf.meta, unblocked, leaf.state.stamps) if s.due(today)]
     return sorted(due, key=lambda s: (s.due_at, s.leaf, s.key))
 
 
-def live_store(bao: OpenBao) -> dict[str, Leaf]:
-    """Every leaf of the mount with its metadata and key names; no value is read."""
-    return {path: Leaf(path, bao.subkeys(path), bao.metadata(path) or {}) for path in bao.leaves()}
+def live_store(bao: OpenBao, *, runs: bool = False) -> dict[str, Leaf]:
+    """Every leaf of the mount with its metadata and key names; no value is read. With runs, each
+    leaf's run state and plan in flight too, read from the rotator's working leaves: the state
+    leaf, and the staging leaves with the values the plans in flight staged."""
+    states = read_state(bao)[1] if runs else {}
+    flying = flights(bao) if runs else {}
+    return {
+        path: Leaf(
+            path,
+            bao.subkeys(path),
+            bao.metadata(path) or {},
+            states.get(path, LeafState()),
+            flying.get(path),
+        )
+        for path in bao.leaves()
+    }
 
 
 def report(result: Audit, store: dict[str, Leaf], out) -> int:

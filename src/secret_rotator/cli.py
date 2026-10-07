@@ -1,6 +1,7 @@
 """secret-rotator: the commands of design §8."""
 
 import argparse
+import datetime
 import functools
 import os
 import time
@@ -12,9 +13,11 @@ from secret_rotator import audit as aud
 from secret_rotator import nightly, provenance, registry, terminal
 from secret_rotator.cluster import Cluster
 from secret_rotator.console import Console
+from secret_rotator.contract import ContractError, parse_date
 from secret_rotator.kube import Kube, KubeError
 from secret_rotator.lock import holder_name, utcnow
 from secret_rotator.openbao import OpenBao, OpenBaoError
+from secret_rotator.state import LeafState, State
 from secret_rotator.switches import Switches, SwitchesError
 from secret_rotator.switches import load as load_switches
 from secret_rotator.telegram import TOKEN as BOT_TOKEN
@@ -35,9 +38,16 @@ PRINT = functools.partial(print, flush=True)
 DESCRIPTION = """\
 Rotates the secrets of OpenBao's kv mount by their annotations (AnsibleSpecs
 secret-rotation/design.md). Live commands log in with the rotator's AppRole from
-SECRET_ROTATOR_ROLE_ID and SECRET_ROTATOR_SECRET_ID; but annotate, they read the prd
-cluster with the ServiceAccount token in SECRET_ROTATOR_K8S_TOKEN. No output carries a
+SECRET_ROTATOR_ROLE_ID and SECRET_ROTATOR_SECRET_ID; but annotate and stamp, they read the
+prd cluster with the ServiceAccount token in SECRET_ROTATOR_K8S_TOKEN. No output carries a
 secret value. Exit status: 0 on success, 1 on a finding or a failure, 2 on a usage error."""
+
+
+def iso_date(text: str) -> datetime.date:
+    try:
+        return parse_date(text)
+    except ContractError as e:
+        raise argparse.ArgumentTypeError(str(e)) from None
 
 
 def parser() -> argparse.ArgumentParser:
@@ -96,6 +106,23 @@ def parser() -> argparse.ArgumentParser:
     )
     run.add_argument("path", nargs="?", help="the leaf, a path of the kv mount")
     run.set_defaults(keys=None, seed=None)
+    stamp = commands.add_parser(
+        "stamp",
+        help="set a key's rotation stamp in the run state",
+        description="Sets the key's rotation stamp in kv/rotator/state to the date its current "
+        "value was written: the key falls due its interval after that date. For a value written "
+        "outside a rotation, as the go-live writes the rotator's own leaves.",
+    )
+    stamp.add_argument("path", help="the leaf, a path of the kv mount")
+    stamp.add_argument("key", help="a data key of the leaf")
+    stamp.add_argument(
+        "--rotated-at",
+        type=iso_date,
+        required=True,
+        help="the date the key's current value was written, not after today",
+        metavar="YYYY-MM-DD",
+    )
+    stamp.set_defaults(keys=None, seed=None)
     return p
 
 
@@ -155,7 +182,7 @@ def main(
             f"{ROLE_ID_ENV} and {SECRET_ID_ENV} are not set: the rotator's AppRole, "
             f"kv/iac/rotator-approle"
         )
-    reads_cluster = not offline and args.command != "annotate"
+    reads_cluster = not offline and args.command not in ("annotate", "stamp")
     if reads_cluster and not environ.get(K8S_TOKEN_ENV):
         p.error(
             f"{K8S_TOKEN_ENV} is not set: the secret-rotator ServiceAccount's token, "
@@ -163,6 +190,8 @@ def main(
         )
     seed_path = args.seed or ann.DEFAULT_SEED
     today = utcnow().date()
+    if args.command == "stamp" and args.rotated_at > today:
+        p.error(f"--rotated-at {args.rotated_at} is after today, {today}")
     try:
         if args.command == "run" and args.path is None:
             return run_nightly(environ, opener, out, kube, switches(), youtrack, telegram, clock)
@@ -176,6 +205,8 @@ def main(
         bao = connect(environ, opener, clock)
         if seed is not None:
             return ann.run_apply(bao, seed, args.apply, out)
+        if args.command == "stamp":
+            return run_stamp(bao, args.path, args.key, args.rotated_at, out)
         cluster = Cluster(kube(environ[K8S_TOKEN_ENV]))
         if args.command == "run":
             con = console()
@@ -189,7 +220,7 @@ def main(
                 cluster=cluster,
                 notify=notifier(bao, switches().telegram_chat_id, telegram, con),
             )
-        store = aud.live_store(bao)
+        store = aud.live_store(bao, runs=args.command == "plan")
         result = aud.audit(store, cluster.referenced())
         if args.command == "plan":
             return terminal.print_leaf(out, args.path, store, result, kinds, today, cluster)
@@ -204,6 +235,29 @@ def main(
     ) as e:
         out(f"error: {e}")
         return 1
+
+
+def run_stamp(
+    bao: OpenBao, leaf: str, key: str, rotated_at: datetime.date, out: Callable[[str], None]
+) -> int:
+    """`stamp`: the key's rotation stamp set in the run state. 1 when the store has no such leaf
+    or key."""
+    leaves = bao.leaves()
+    if leaf not in leaves:
+        out(f"error: no leaf {leaf}")
+        return 1
+    if key not in (bao.subkeys(leaf) or ()):
+        out(f"error: no key {key} in the current version of {leaf}")
+        return 1
+    was: dict[str, str | None] = {}
+
+    def stamp(state: LeafState) -> None:
+        was[key] = state.stamps.get(key)
+        state.stamps[key] = rotated_at.isoformat()
+
+    State(bao, leaves).update(leaf, stamp)
+    out(f"{leaf}#{key}: rotation stamp {rotated_at}, was {was[key] or 'none'}")
+    return 0
 
 
 def run_nightly(

@@ -7,7 +7,7 @@ from importlib.metadata import EntryPoint
 
 import pytest
 from fixtures import compliant_store
-from plans import COPY, LEAF, NOW, Recorder, client, fake_of, lock
+from plans import COPY, LEAF, NOW, Recorder, client, fake_of, lock, run_state, state_of
 
 from secret_rotator import registry
 from secret_rotator.audit import Leaf, audit
@@ -62,7 +62,9 @@ def plan_for(leaf, kind, keys, store=None):
 def run(store, plan, *answers, data=None):
     bao = fake_of(store, data)
     r = Recorder(*answers)
-    outcome = Executor(client(bao), plan, r, lock(bao), dry_run=False, clock=lambda: NOW).run()
+    outcome = Executor(
+        client(bao), plan, r, lock(bao), state=run_state(bao), dry_run=False, clock=lambda: NOW
+    ).run()
     return bao, outcome, r
 
 
@@ -169,9 +171,7 @@ class TestManual:
         assert data["bearer-token"] == f"SECRET-{TRELLO}-bearer-token"
         (body,) = [b for m, p, _, b, _ in bao.requests if (m, p) == ("PATCH", f"kv/data/{TRELLO}")]
         assert body["data"] == {"token": "NEW-trello-token"}
-        meta = bao.meta(TRELLO)
-        assert meta["rotated_at_token"] == "2026-10-05"
-        assert "rotated_at_api-key" not in meta and "rotated_at_bearer-token" not in meta
+        assert state_of(bao, TRELLO).stamps == {"token": "2026-10-05"}
 
     def test_rotation_args_describe_the_credential_and_its_shape(self):
         store = store_of(**ACTIVATE_NONE)
@@ -213,14 +213,23 @@ class TestManual:
         assert request.title == "Rotate seal-key at its source"
         assert request.instruction == "the bootstrap tier, rotated by hand at its source"
         assert bao.data(SEAL) == {"seal-key": f"{MARKER_VALUE}; rotated 2026-10-05T04:30:00+00:00"}
-        assert bao.version(SEAL) == 2 and bao.meta(SEAL)["rotated_at_seal-key"] == "2026-10-05"
+        assert bao.version(SEAL) == 2
+        assert state_of(bao, SEAL).stamps == {"seal-key": "2026-10-05"}
 
     def test_once_confirmed_at_the_source_a_marker_rotation_cannot_be_aborted(self):
         store = store_of()
         bao = fake_of(store, {SEAL: {"seal-key": MARKER_VALUE}})
         bao.refuse["PATCH", f"kv/data/{SEAL}"] = 403
         plan = plan_for(SEAL, "manual", ["seal-key"], store)
-        e = Executor(client(bao), plan, Recorder({}), lock(bao), dry_run=False, clock=lambda: NOW)
+        e = Executor(
+            client(bao),
+            plan,
+            Recorder({}),
+            lock(bao),
+            state=run_state(bao),
+            dry_run=False,
+            clock=lambda: NOW,
+        )
         assert e.run() is Outcome.FAILED
         with pytest.raises(AbortRefused, match="seal-key was rotated at its source"):
             e.abort()
@@ -319,7 +328,8 @@ class TestOperatorSteps:
         store = store_of(**ACTIVATE_NONE)
         bao, outcome, _ = run(store, plan_for(WIFI, "manual", ["password"], store), Abandon.EXIT)
         assert outcome is Outcome.EXITED
-        assert "rotator/staging/manual/shared/wifi" not in bao.leaves
+        # The staging leaf holds the plan's record, in flight at the credential, and no value.
+        assert set(bao.data("rotator/staging/manual/shared/wifi")) == {"keys", "step"}
 
 
 class TestTheLeafsPlans:
@@ -355,7 +365,7 @@ class TestTheLeafsPlans:
 
     def test_due_plans_come_first_and_one_that_cannot_be_built_says_why(self):
         store = store_of()
-        store[TRELLO].meta["rotated_at_bearer-token"] = "2026-09-30"
+        store[TRELLO].state.stamps["bearer-token"] = "2026-09-30"
         plans, _ = of_leaf(TRELLO, store, audit(store), KINDS)
         assert [(p.keys, p.due_at) for p in plans] == [
             (("bearer-token",), datetime.date(2026, 10, 14)),

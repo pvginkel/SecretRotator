@@ -1,22 +1,35 @@
 """The Kubernetes activation of a plan (design §4.3): auto derived live, the named specs built, the
 leaf's ExternalSecrets synced before every rollout, named rollouts included, one step per target
-and each once, every sync before every rollout; rotator_consumers; and such a plan run, failed,
-rolled back and dry run by the executor."""
+and each once, every sync before every rollout; the consumers the stamp records; and such a plan
+run, failed, rolled back and dry run by the executor."""
 
+import dataclasses
 import datetime
 import io
 
 import pytest
 from fake_cluster import FakeCluster, externalsecret, pod_spec, workload
-from plans import COPY, LEAF, NOW, Recorder, client, fake_of, lock
+from plans import (
+    COPY,
+    LEAF,
+    NOW,
+    Recorder,
+    client,
+    fake_of,
+    flight_of,
+    lock,
+    run_state,
+    state_of,
+)
 from test_kinds import KINDS, store_of
 
 from secret_rotator import cli, terminal
 from secret_rotator.audit import audit
 from secret_rotator.cluster import Cluster
 from secret_rotator.console import Console
-from secret_rotator.contract import CONSUMERS, MAX_VALUE_BYTES, consumers_text
+from secret_rotator.contract import MAX_VALUE_BYTES
 from secret_rotator.executor import Executor, Outcome
+from secret_rotator.kvsteps import KvStamp
 from secret_rotator.model import Action, Skipped
 from secret_rotator.plan import PlanError, make
 
@@ -172,20 +185,21 @@ class TestConsumers:
     def test_the_stamp_records_them_and_removes_them_when_there_are_none(self):
         bao = fake_of(store_of())
         run(bao, plan_of())
-        assert bao.meta(LEAF)[CONSUMERS] == (
-            "app-prd/externalsecret/app-token,app-prd/deployment/app,app-prd/statefulset/app-db"
+        assert state_of(bao, LEAF).consumers == (
+            "app-prd/externalsecret/app-token",
+            "app-prd/deployment/app",
+            "app-prd/statefulset/app-db",
         )
         run(bao, plan_of(store_of(eso__prd__app__prd__token="none")))
-        assert CONSUMERS not in bao.meta(LEAF)
+        assert state_of(bao, LEAF).consumers == ()
 
-    def test_too_many_are_cut_with_how_many_more(self):
-        items = [f"ns-{n:03}/deployment/a-long-workload-name-{n:03}" for n in range(30)]
-        text = consumers_text(items)
-        assert len(text.encode()) <= MAX_VALUE_BYTES < len(",".join(items).encode())
-        shown = text.rsplit(" +", 1)[0].split(",")
-        assert shown == items[: len(shown)] and text.endswith(f" +{30 - len(shown)}")
-        assert consumers_text(["x" * 600]) == "+1"
-        assert consumers_text(items[:2]) == ",".join(items[:2])
+    def test_they_are_kept_whole_past_a_metadata_value_s_cap(self):
+        items = tuple(f"ns-{n:03}/deployment/a-long-workload-name-{n:03}" for n in range(30))
+        assert len(",".join(items).encode()) > MAX_VALUE_BYTES
+        bao = fake_of(store_of())
+        _, outcome = run(bao, plan_of(), steps=(KvStamp(LEAF, ("token",), items),))
+        assert outcome is Outcome.DONE
+        assert state_of(bao, LEAF).consumers == items
 
 
 def ticking():
@@ -194,9 +208,17 @@ def ticking():
     return lambda: next(times)
 
 
-def run(bao, plan, *, dry_run=False, recorder=None):
+def run(bao, plan, *, dry_run=False, recorder=None, steps=None):
+    if steps is not None:
+        plan = dataclasses.replace(plan, steps=steps)
     executor = Executor(
-        client(bao), plan, recorder or Recorder(), lock(bao), dry_run=dry_run, clock=ticking()
+        client(bao),
+        plan,
+        recorder or Recorder(),
+        lock(bao),
+        state=run_state(bao),
+        dry_run=dry_run,
+        clock=ticking(),
     )
     return executor, executor.run()
 
@@ -209,7 +231,7 @@ class TestExecution:
         assert outcome is Outcome.DONE
         assert fake.syncs == 1
         assert fake.get("deployments", "app-prd", "app")["metadata"]["generation"] == 2
-        assert bao.meta(LEAF)["rotator_status"] == "ok"
+        assert state_of(bao, LEAF).status == "ok"
 
     def test_a_rollout_that_fails_stops_the_plan_and_abort_undoes_kv_then_re_activates(self):
         fake = FakeCluster()
@@ -219,10 +241,12 @@ class TestExecution:
         recorder = Recorder()
         executor, outcome = run(bao, plan_of(fake=fake), recorder=recorder)
         assert outcome is Outcome.FAILED
-        meta = bao.meta(LEAF)
-        assert meta["rotator_status"] == "failed-activation"
-        assert meta["rotator_step"] == "random/token/k8s.rollout:app-prd/statefulset/app-db"
-        assert "app-prd/statefulset/app-db not Ready within 5 min" in meta["rotator_last_error"]
+        state = state_of(bao, LEAF)
+        assert state.status == "failed-activation"
+        flight = flight_of(bao, LEAF)
+        assert (flight.kind, flight.keys) == ("random", ("token",))
+        assert flight.step == "k8s.rollout:app-prd/statefulset/app-db"
+        assert "app-prd/statefulset/app-db not Ready within 5 min" in state.last_error
         fake.stuck.clear()
         recorder.events.clear()
         assert executor.abort() is Outcome.ROLLED_BACK

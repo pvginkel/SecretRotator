@@ -142,11 +142,12 @@ class OpenBao:
         self.expires = self.clock() + lease if lease else None
 
     def leaves(self, prefix: str = "") -> list[str]:
-        """Every leaf under the prefix, but the rotator's working leaves."""
+        """Every leaf under the prefix. The rotator's working leaves are left out unless the
+        prefix is among them: leaves("rotator/staging/") lists the staging leaves."""
         status, doc = self.call("LIST", f"{MOUNT}/metadata/{prefix}")
         found = []
         for name in [] if status == 404 else doc["data"]["keys"]:
-            if is_working_leaf(prefix + name):
+            if is_working_leaf(prefix + name) and not is_working_leaf(prefix):
                 continue
             if name.endswith("/"):
                 found += self.leaves(prefix + name)

@@ -12,18 +12,18 @@ import termios
 import threading
 
 import pytest
-from plans import COPY, LEAF, client, fake_of
+from plans import COPY, LEAF, client, fake_of, flight_of, state_of
 from test_kinds import ACTIVATE_NONE, KINDS, SEAL, TRELLO, WIFI, store_of
 
 from secret_rotator import terminal
 from secret_rotator.audit import audit
 from secret_rotator.console import PASTE_END, PASTE_START, Console, HiddenEntry
 from secret_rotator.contract import LOCK_LEAF, MARKER_VALUE
-from secret_rotator.executor import in_flight
 from secret_rotator.lock import Lock
 from secret_rotator.model import Step, StepFailed
 from secret_rotator.opsteps import OperatorConfirm
 from secret_rotator.plan import make, tool_part
+from secret_rotator.staging import InFlight
 
 TODAY = datetime.date(2026, 10, 5)
 
@@ -132,7 +132,7 @@ class TestPlanCommand:
 
     def test_the_plan_in_flight_and_the_keys_without_a_plan_are_named(self):
         store = store_of(**ACTIVATE_NONE)
-        store[TRELLO].meta["rotator_step"] = "manual/token/kv.write"
+        store[TRELLO].flight = InFlight("manual", ("token",), "kv.write")
         lines = []
         terminal.print_leaf(lines.append, TRELLO, store, audit(store), KINDS, TODAY)
         assert lines[1] == "  in flight: its manual plan of token, at kv.write"
@@ -218,7 +218,7 @@ class TestRun:
         bao = fake_of(store)
         code, out = run(bao, WIFI, "y", "SECRET-psk", "x")
         assert code == 0 and "Left in flight" in out
-        assert in_flight(bao.meta(WIFI)).step == "operator.credential:password"
+        assert flight_of(bao, WIFI).step == "operator.credential:password"
         code, out = run(bao, WIFI, "r", "SECRET-psk", "c")
         assert code == 0
         assert "its manual plan of password" in out and "It stopped at step 1 of 3" in out
@@ -293,6 +293,12 @@ class TestFailure:
         assert "It failed at step 4 of 6: do the flaky thing." in out
         assert "    the flaky thing failed" in out
 
+    def test_details_of_a_failure_taken_up_in_a_new_run_are_its_recorded_run_and_error(self):
+        bao, _, _ = self.failed("x")
+        code, out = run(bao, LEAF, "d", "x", kinds=kinds_with(Wrapped(Flaky(), CHECK)))
+        assert code == 1
+        assert f"{state_of(bao, LEAF).last_run}: the flaky thing failed" in out
+
     def test_a_failed_undo_offers_retry_and_details_but_no_abort(self):
         store = store_of(**ACTIVATE_NONE)
         bao = fake_of(store)
@@ -354,12 +360,12 @@ class TestHandActivation:
     def test_exit_there_leaves_the_rollback_for_run_to_continue(self):
         bao, code, out = self.started("x")
         assert code == 0 and "Rolled back:" not in out and "Left in flight" in out
-        assert in_flight(bao.meta(LEAF)) is not None
+        assert flight_of(bao, LEAF) is not None
         code, out = run(bao, LEAF, "r", "d")
         assert code == 0
         assert "── again: restart the app by hand" in out
         assert "Rolled back: the rotation of token is undone." in out
-        assert in_flight(bao.meta(LEAF)) is None
+        assert flight_of(bao, LEAF) is None
 
 
 class Interrupted(Step):
@@ -378,7 +384,7 @@ def test_ctrl_c_in_a_tool_step_leaves_the_plan_in_flight_there():
     code, out = run(bao, LEAF, "y", kinds=kinds_with(Wrapped(Interrupted())))
     assert code == 1
     assert "Interrupted at: wait for the cluster. It is left in flight there" in out
-    assert in_flight(bao.meta(LEAF)).step == "test.interrupted"
+    assert flight_of(bao, LEAF).step == "test.interrupted"
     assert bao.data(LOCK_LEAF) == {}
 
 

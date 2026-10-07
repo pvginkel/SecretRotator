@@ -189,6 +189,7 @@ class TestApply:
     def test_a_live_leaf_the_seed_lacks_is_reported_but_not_the_working_leaves(self, run):
         run.bao.leaves["eso/prd/new/prd/thing"] = {"data": {"k": "SECRET-x"}, "meta": {}}
         run.bao.leaves["rotator/lock"] = {"data": {"holder": ""}, "meta": {}}
+        run.bao.leaves["rotator/state"] = {"data": {"eso/x": "{}"}, "meta": {}}
         run.bao.leaves["rotator/staging/random/x"] = {"data": {"k": "SECRET-y"}, "meta": {}}
         assert run.apply() == 0
         assert [line for line in run.lines if line.startswith("not in the seed")] == [
@@ -368,7 +369,7 @@ class TestSeed:
         )
 
     def test_a_marker_lives_under_rotator_and_names_a_key(self):
-        for leaf in ("iac/x", "rotator/staging/x", "rotator/lock"):
+        for leaf in ("iac/x", "rotator/staging/x", "rotator/lock", "rotator/state"):
             assert f"{leaf}: marker: a marker leaf lives under rotator/" in self.problems(
                 f"{leaf}:\n  marker: k\n  notes: n\n"
             ), leaf

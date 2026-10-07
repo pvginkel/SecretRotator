@@ -13,14 +13,15 @@ from dataclasses import dataclass
 from secret_rotator import card as cards
 from secret_rotator.audit import Audit, Leaf, audit, due_keys, live_store, report
 from secret_rotator.cluster import Cluster
-from secret_rotator.contract import FAILED_NIGHTS, HELD_BY, LAST_ERROR, STATUS
-from secret_rotator.executor import Executor, Outcome, in_flight
+from secret_rotator.executor import Executor, Outcome
 from secret_rotator.k8ssteps import K8sRollout
 from secret_rotator.lock import Holder, Lock, LockHeld, utcnow
 from secret_rotator.model import Event, Finished, Started, Step
 from secret_rotator.openbao import OpenBao
 from secret_rotator.plan import Kind, Plan, PlanError, make, split
 from secret_rotator.schedule import KeySchedule
+from secret_rotator.staging import flights
+from secret_rotator.state import LeafState, State
 from secret_rotator.switches import Switches
 from secret_rotator.telegram import TOKEN as BOT_TOKEN
 from secret_rotator.telegram import Telegram, TelegramError, failed
@@ -164,6 +165,7 @@ class Night:
         self.lock = Lock(bao, holder, clock=now)
         self.broken = False  # the run itself broke: it exits non-zero
         self.store: dict[str, Leaf] = {}
+        self.state = State(bao, self.store)  # a write keeps the state of the leaves of the store
         self.result = Audit([], {})
         self.card: Card | None = None
         self.card_known = False  # whether the open card was found, or found to be none
@@ -188,7 +190,7 @@ class Night:
         if (holder := self.lock.holder()) is not None:
             self.locked_out(holder, "it ran nothing tonight")
             return 1 if self.broken else 0
-        self.store = live_store(self.bao)
+        self.store.update(live_store(self.bao, runs=True))
         self.result = audit(self.store, self.cluster.referenced())
         report(self.result, self.store, self.out)
         self.find_card()
@@ -257,8 +259,7 @@ class Night:
 
     def admit(self, due: Due) -> None:
         """Starts the plan, or says why not; a failed plan is rolled back."""
-        meta = self.store[due.leaf].meta
-        if (flight := in_flight(meta)) is not None:
+        if (flight := self.store[due.leaf].flight) is not None:
             self.out(f"    not started: the leaf has its {flight.kind} plan in flight, on the card")
             return
         try:
@@ -307,24 +308,25 @@ class Night:
         self.out("    not started: it has an operator step, so the leaf is manual-due")
         self.manual.setdefault(due.leaf, []).extend(zip(due.keys, due.dates, strict=True))
         # A failure of another plan of the leaf keeps its status: the card names it until then.
-        status = self.store[due.leaf].meta.get(STATUS)
-        if not self.dry_run and status not in (MANUAL_DUE, *FAILED):
-            self.bao.patch_metadata(due.leaf, {STATUS: MANUAL_DUE})
-            self.store[due.leaf].meta[STATUS] = MANUAL_DUE
+        if self.dry_run or self.store[due.leaf].state.status in (MANUAL_DUE, *FAILED):
+            return
+
+        def mark(state: LeafState) -> None:
+            if state.status not in (MANUAL_DUE, *FAILED):
+                state.status = MANUAL_DUE
+
+        self.store[due.leaf].state = self.state.update(due.leaf, mark)
 
     def held(self, leaf: str) -> bool:
         """Whether the leaf waits for the card naming it to close (ruling 2026-10-05). Once that
         card is closed, the leaf is due again with its count from zero."""
-        meta = self.store[leaf].meta
-        by = meta.get(HELD_BY)
-        if by is None or int(meta.get(FAILED_NIGHTS, "0")) < HOLD_AFTER:
+        state = self.store[leaf].state
+        if state.held_by is None or state.failed_nights < HOLD_AFTER:
             return False
-        if not self.card_known or (self.card is not None and self.card.readable == by):
+        if not self.card_known or (self.card is not None and self.card.readable == state.held_by):
             return True
         if not self.dry_run:
-            self.bao.patch_metadata(leaf, {FAILED_NIGHTS: None, HELD_BY: None})
-            meta.pop(FAILED_NIGHTS)
-            meta.pop(HELD_BY)
+            self.store[leaf].state = self.state.update(leaf, release)
         return False
 
     def unhealthy(self, plan: Plan) -> str | None:
@@ -340,7 +342,9 @@ class Night:
     def execute(self, plan: Plan, due: Due) -> None:
         leaf = plan.target.leaf
         renderer = LogRenderer(self.out, self.clock)
-        executor = Executor(self.bao, plan, renderer, self.lock, dry_run=False, clock=self.now)
+        executor = Executor(
+            self.bao, plan, renderer, self.lock, state=self.state, dry_run=False, clock=self.now
+        )
         if executor.run() is Outcome.DONE:
             self.out("    rotated")
             self.rotated.append(str(due))
@@ -379,17 +383,23 @@ class Night:
         if leaf in self.failed_tonight:
             return
         self.failed_tonight.add(leaf)
-        nights = int(self.store[leaf].meta.get(FAILED_NIGHTS, "0")) + 1
-        self.bao.patch_metadata(leaf, {FAILED_NIGHTS: str(nights)})
+
+        def count(state: LeafState) -> None:
+            state.failed_nights += 1
+
+        self.state.update(leaf, count)
 
     def refresh(self, leaf: str) -> None:
-        """The leaf's state as the plan left it, for the leaf's later plans and the card."""
-        self.store[leaf].meta = self.bao.metadata(leaf) or {}
+        """The leaf as the plan left it, for the leaf's later plans and the card."""
+        held = self.store[leaf]
+        held.meta = self.bao.metadata(leaf) or {}
+        held.state = self.state.of(leaf)
+        held.flight = flights(self.bao).get(leaf)
 
     def forewarn(self, due: Due) -> None:
         """The advance warning of a manual rotation not due yet (ruling 2026-10-05)."""
         warned = [(k, d) for k, d in zip(due.keys, due.dates, strict=True) if warns(d, self.today)]
-        if not warned or in_flight(self.store[due.leaf].meta) is not None:
+        if not warned or self.store[due.leaf].flight is not None:
             return
         try:
             plan = make(
@@ -414,10 +424,9 @@ class Night:
     def state_items(self) -> list[str]:
         """What the leaves' state keeps open: plans stopped or in flight, failed rotations."""
         items = []
-        for path in sorted(self.store):
-            meta = self.store[path].meta
-            status, error = meta.get(STATUS), meta.get(LAST_ERROR, "")
-            if (flight := in_flight(meta)) is not None:
+        for path, leaf in sorted(self.store.items()):
+            status, error = leaf.state.status, leaf.state.last_error or ""
+            if (flight := leaf.flight) is not None:
                 what = f"{status} at {flight.step}" if status in FAILED else "in flight"
                 items.append(
                     f"`{path}`: its {flight.kind} plan of {', '.join(flight.keys)} is {what}, "
@@ -425,7 +434,7 @@ class Night:
                     + (f". {error}" if status in FAILED else "")
                 )
             elif status in FAILED:
-                held = int(meta.get(FAILED_NIGHTS, "0")) >= HOLD_AFTER
+                held = leaf.state.failed_nights >= HOLD_AFTER
                 then = "not retried while this card is open" if held else "due again"
                 items.append(f"`{path}`: {status}, rolled back, {then}: {error}")
         return items
@@ -463,16 +472,18 @@ class Night:
 
     def hold(self, card: Card) -> None:
         """Every leaf failed HOLD_AFTER nights in a row now waits for this card to close."""
+
+        def wait(state: LeafState) -> None:
+            state.held_by = card.readable
+
         for path, leaf in sorted(self.store.items()):
-            meta = leaf.meta
-            nights = int(meta.get(FAILED_NIGHTS, "0"))
+            state = leaf.state
             if (
-                meta.get(STATUS) in FAILED
-                and nights >= HOLD_AFTER
-                and meta.get(HELD_BY) != card.readable
+                state.status in FAILED
+                and state.failed_nights >= HOLD_AFTER
+                and state.held_by != card.readable
             ):
-                self.bao.patch_metadata(path, {HELD_BY: card.readable})
-                meta[HELD_BY] = card.readable
+                leaf.state = self.state.update(path, wait)
 
     def digest(self) -> None:
         """The night's one message, when something happened (design §3.6)."""
@@ -495,6 +506,12 @@ class Night:
             self.out("telegram: a quiet night, nothing to send")
             return
         self.send("\n".join([f"Secret rotation, {self.today}", *lines]))
+
+
+def release(state: LeafState) -> None:
+    """A held leaf's card is closed: it is due again with its count from zero."""
+    state.failed_nights = 0
+    state.held_by = None
 
 
 def keys(due: Due) -> str:

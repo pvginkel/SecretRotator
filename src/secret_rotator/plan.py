@@ -106,8 +106,9 @@ class StepFactory:
         self.cluster = cluster
         self.jenkins = jenkins or Jenkins()
         self.ansible = ansible or Ansible()
-        # What the activation read from the cluster, for rotator_consumers: the ExternalSecrets it
-        # syncs and the workloads it derived; a named target is in rotation_activate already.
+        # What the activation read from the cluster, for the leaf's consumers in the run state: the
+        # ExternalSecrets it syncs and the workloads it derived; a named target is in
+        # rotation_activate already.
         self.consumers: list[str] = []
 
     def generate(
@@ -325,8 +326,6 @@ def target(
     for key in sorted(keys):
         if kinds.get(key) != kind:
             problems.append(f"{key} is not a {kind} key")
-        elif not set(key).isdisjoint(",/"):
-            problems.append(f"{key}: a key name with ',' or '/' cannot be named in rotator_step")
         elif audit.blocked(leaf, key):
             problems.append(f"{key} is blocked by a finding")
     if problems:
@@ -445,7 +444,8 @@ def of_leaf(
     if not groups:
         return [], unplanned
     planned = {key: kind for kind, keys in groups.items() for key in keys}
-    due = {s.key: s.due_at for s in schedule(leaf, store[leaf].meta, planned)}
+    held = store[leaf]
+    due = {s.key: s.due_at for s in schedule(leaf, held.meta, planned, held.state.stamps)}
     plans = []
     for kind, keys in groups.items():
         for subset in split(kinds[kind], keys):

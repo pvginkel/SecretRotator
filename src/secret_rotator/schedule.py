@@ -1,5 +1,5 @@
-"""When each scheduled key falls due (design §3.2): per key, from its own stamp and interval,
-capped by the leaf's expiries."""
+"""When each scheduled key falls due (design §3.2): per key, from its own stamp in the run state
+(§3.4) and its interval, capped by the leaf's expiries."""
 
 import datetime
 from collections.abc import Mapping
@@ -9,12 +9,7 @@ from secret_rotator.contract import EXPIRES_AT, is_scheduled, parse_date, parse_
 
 DEFAULT_INTERVAL = "14d"
 EXPIRY_LEAD = datetime.timedelta(days=7)
-STAMP_PREFIX = "rotated_at_"
 EXPIRIES = ("rotation_expires_at", EXPIRES_AT)
-
-
-def stamp_key(key: str) -> str:
-    return STAMP_PREFIX + key
 
 
 def interval_of(meta: Mapping[str, str], key: str) -> int | None:
@@ -41,9 +36,13 @@ class KeySchedule:
 
 
 def schedule(
-    path: str, meta: Mapping[str, str], kinds: Mapping[str, str | None]
+    path: str,
+    meta: Mapping[str, str],
+    kinds: Mapping[str, str | None],
+    stamps: Mapping[str, str],
 ) -> list[KeySchedule]:
-    """Every scheduled key of a leaf. Its annotations must hold the contract (the audit's)."""
+    """Every scheduled key of a leaf. Its annotations must hold the contract (the audit's);
+    stamps: the leaf's rotation stamps, data key -> ISO date."""
     expiries = [parse_date(meta[k]) for k in EXPIRIES if k in meta]
     cap = min(expiries) - EXPIRY_LEAD if expiries else None
     out = []
@@ -51,7 +50,7 @@ def schedule(
         if not is_scheduled(kind):
             continue
         interval = interval_of(meta, key)
-        stamp = meta.get(stamp_key(key))
+        stamp = stamps.get(key)
         rotated_at = None if stamp is None else parse_date(stamp)
         if interval is None:
             scheduled = None

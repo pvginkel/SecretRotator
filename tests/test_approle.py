@@ -13,7 +13,7 @@ from fake_cluster import FakeCluster, compliant_objects, pod_spec, secret, workl
 from fake_jenkins import APPROLE as JENKINS_CREDENTIAL
 from fake_jenkins import CREDENTIALS, FakeJenkins
 from fake_openbao import approle
-from plans import NOW, Recorder, client, fake_of, lock
+from plans import NOW, Recorder, client, fake_of, lock, run_state, state_of
 from test_activation import ticking
 from test_kinds import KINDS
 
@@ -117,6 +117,7 @@ class World:
             self.plan(leaf),
             self.recorder,
             lock(self.bao),
+            state=run_state(self.bao),
             dry_run=False,
             clock=ticking(),
         )
@@ -272,8 +273,8 @@ class TestTheRuns:
         # The leaf told which one the consumer held: the stray is no business of this plan.
         assert set(world.live("rotator")) == {new, "SECRET-stray-rotator"}
         assert world.minted("rotator") == ["2160h"]
-        meta = world.bao.meta(ROTATOR)
-        assert meta[EXPIRES_AT] == IN_90_DAYS and meta["rotated_at_secret_id"] == "2026-10-05"
+        assert world.bao.meta(ROTATOR)[EXPIRES_AT] == IN_90_DAYS
+        assert state_of(world.bao, ROTATOR).stamps == {"secret_id": "2026-10-05"}
         assert not any(new in text for text in world.texts())
 
     def test_k8s_secret_writes_the_secret_rolls_eso_and_destroys_the_one_it_held(self, tmp_path):

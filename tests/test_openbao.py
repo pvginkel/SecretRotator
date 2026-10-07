@@ -46,9 +46,21 @@ def test_a_refused_login_raises_with_its_status():
 def test_the_walk_lists_every_leaf_of_the_mount_but_the_working_leaves():
     bao = fake()
     bao.leaves["rotator/lock"] = {"data": {}, "meta": {}}
+    bao.leaves["rotator/state"] = {"data": {}, "meta": {}}
     bao.leaves["rotator/staging/random/a/b"] = {"data": {}, "meta": {}}
     bao.leaves["rotator/approle/eso"] = {"data": {"secret_id": "m"}, "meta": {}}
     assert client(bao).leaves() == sorted([*COMPLIANT, "rotator/approle/eso"])
+    assert client(bao).leaves("rotator/") == ["rotator/approle/eso"]
+
+
+def test_the_walk_under_the_staging_leaves_lists_them():
+    bao = fake()
+    bao.leaves["rotator/staging/random/a/b"] = {"data": {}, "meta": {}}
+    bao.leaves["rotator/staging/manual/c"] = {"data": {}, "meta": {}}
+    assert client(bao).leaves("rotator/staging/") == [
+        "rotator/staging/manual/c",
+        "rotator/staging/random/a/b",
+    ]
 
 
 def test_subkeys_are_names_only_and_none_for_a_deleted_version_or_no_leaf():

@@ -8,7 +8,18 @@ import datetime
 import pytest
 from fake_jenkins import APPROLE, CREDENTIALS, TOKEN, YT, FakeJenkins, string_credential
 from fake_openbao import FakeOpenBao
-from plans import COPY, LEAF, NOW, Recorder, client, fake_of, lock
+from plans import (
+    COPY,
+    LEAF,
+    NOW,
+    Recorder,
+    client,
+    fake_of,
+    flight_of,
+    lock,
+    run_state,
+    state_of,
+)
 from test_kinds import KINDS, store_of
 
 from secret_rotator import terminal
@@ -232,7 +243,13 @@ def ticking():
 
 def run(bao, plan, *, dry_run=False, recorder=None):
     executor = Executor(
-        client(bao), plan, recorder or Recorder(), lock(bao), dry_run=dry_run, clock=ticking()
+        client(bao),
+        plan,
+        recorder or Recorder(),
+        lock(bao),
+        state=run_state(bao),
+        dry_run=dry_run,
+        clock=ticking(),
     )
     return executor, executor.run()
 
@@ -273,7 +290,7 @@ class TestTheYouTrackWebhookToken:
         _, outcome = run(bao, plan_of(store, fake, WEBHOOK))
         assert outcome is Outcome.DONE
         assert fake.triggered() == [(YT, {"ROTATE_TOKEN": "true"})]
-        assert bao.meta(WEBHOOK)["rotator_status"] == "ok"
+        assert state_of(bao, WEBHOOK).status == "ok"
 
     def test_a_failed_build_stops_the_plan_and_abort_undoes_kv_then_runs_the_job_again(self):
         fake = FakeJenkins()
@@ -283,10 +300,10 @@ class TestTheYouTrackWebhookToken:
         recorder = Recorder()
         executor, outcome = run(bao, plan_of(store, fake, WEBHOOK), recorder=recorder)
         assert outcome is Outcome.FAILED
-        meta = bao.meta(WEBHOOK)
-        assert meta["rotator_status"] == "failed-activation"
-        assert meta["rotator_step"] == f"random/token/{YT_ID}"
-        assert meta["rotator_last_error"] == f"{YT} build #1 ended FAILURE"
+        state = state_of(bao, WEBHOOK)
+        assert state.status == "failed-activation"
+        assert flight_of(bao, WEBHOOK).step == YT_ID
+        assert state.last_error == f"{YT} build #1 ended FAILURE"
         fake.jobs[YT] = "SUCCESS"
         recorder.events.clear()
         assert executor.abort() is Outcome.ROLLED_BACK
@@ -304,7 +321,7 @@ class TestTheYouTrackWebhookToken:
         bao.leaves["rotator/jenkins"]["data"]["token"] = "SECRET-revoked"
         _, outcome = run(bao, plan_of(store, fake, WEBHOOK))
         assert outcome is Outcome.FAILED
-        error = bao.meta(WEBHOOK)["rotator_last_error"]
+        error = state_of(bao, WEBHOOK).last_error
         assert error == f"POST {job_path(YT)}/buildWithParameters?ROTATE_TOKEN=true: HTTP 401"
 
     def test_a_dry_run_asks_jenkins_nothing(self):

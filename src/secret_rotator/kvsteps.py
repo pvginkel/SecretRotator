@@ -6,19 +6,10 @@ import secrets
 import string
 from collections.abc import Mapping
 
-from secret_rotator.contract import (
-    CONSUMERS,
-    FAILED_NIGHTS,
-    HELD_BY,
-    LAST_RUN,
-    MARKER_VALUE,
-    STATUS,
-    STEP,
-    consumers_text,
-)
+from secret_rotator.contract import MARKER_VALUE
 from secret_rotator.model import Context, Step, StepFailed, value_name
 from secret_rotator.openbao import Version
-from secret_rotator.schedule import stamp_key
+from secret_rotator.state import LeafState
 
 URLSAFE = string.ascii_letters + string.digits + "-_"
 # 43 URL-safe characters carry more than 32 random bytes: above Kibana's 32-character
@@ -154,10 +145,10 @@ class KvCopy(KvPatch):
 
 
 class KvStamp(Step):
-    """Records the rotation once it took effect, in one metadata patch: the rotated keys' stamps,
-    rotator_status ok, rotator_step and the nightly run's backoff cleared, and rotator_consumers:
-    what the plan's activation read from the cluster (design §3.4), removed when it read nothing.
-    The core appends it to every plan (design R20)."""
+    """Records the rotation once it took effect, in one check-and-set write of the run state
+    (design §3.4): the rotated keys' stamps, the leaf's status ok and last run, the nightly run's
+    backoff cleared, and its consumers: what the plan's activation read from the cluster, none when
+    it read nothing. The core appends it to every plan (design R20)."""
 
     type = "kv.stamp"
     silent = True
@@ -169,15 +160,19 @@ class KvStamp(Step):
         self.consumers = consumers
 
     def run(self, ctx: Context) -> str:
+        if ctx.bao.metadata(self.leaf) is None:
+            raise StepFailed(
+                f"no leaf {self.leaf}: it is gone from the store, so nothing is stamped"
+            )
         today = ctx.now.date().isoformat()
-        stamps: dict[str, str | None] = {stamp_key(key): today for key in self.keys}
-        state = {
-            STATUS: "ok",
-            STEP: None,
-            FAILED_NIGHTS: None,
-            HELD_BY: None,
-            LAST_RUN: ctx.now.isoformat(timespec="seconds"),
-            CONSUMERS: consumers_text(list(self.consumers)) if self.consumers else None,
-        }
-        ctx.bao.patch_metadata(self.leaf, stamps | state)
-        return f"{', '.join(stamps)} = {today}"
+
+        def stamp(state: LeafState) -> None:
+            state.stamps |= dict.fromkeys(self.keys, today)
+            state.status = "ok"
+            state.last_run = ctx.now.isoformat(timespec="seconds")
+            state.consumers = self.consumers
+            state.failed_nights = 0
+            state.held_by = None
+
+        ctx.state.update(self.leaf, stamp)
+        return f"{', '.join(self.keys)} rotated {today}"

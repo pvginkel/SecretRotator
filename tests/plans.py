@@ -1,16 +1,22 @@
-"""Test doubles for the plan model: a store on the fake OpenBao, a kind built like `random`, steps
-whose behaviour a test sets, and a renderer that records events and answers asks."""
+"""Test doubles for the plan model: a store on the fake OpenBao with its run state and plans in
+flight, a kind built like `random`, steps whose behaviour a test sets, and a renderer that records
+events and answers asks."""
 
+import dataclasses
 import datetime
+import json
 
 from fake_openbao import TOKEN, FakeOpenBao
 from fixtures import COMPLIANT, compliant_store, data_of
 
 from secret_rotator.audit import audit
+from secret_rotator.contract import STATE_LEAF
 from secret_rotator.lock import Lock
 from secret_rotator.model import Actor, Finished, Started, Step, StepFailed
 from secret_rotator.openbao import OpenBao
 from secret_rotator.plan import build, target
+from secret_rotator.staging import KEYS, STEP, InFlight, flights, staging_leaf
+from secret_rotator.state import LeafState, State
 
 NOW = datetime.datetime(2026, 10, 5, 4, 30, tzinfo=datetime.UTC)
 LEAF = "eso/prd/app/prd/token"  # random, key token, copied to iac/copy#token
@@ -44,6 +50,39 @@ def client(bao):
 
 def lock(bao, who="test run"):
     return Lock(client(bao), who, clock=lambda: NOW)
+
+
+def run_state(bao):
+    """The run state as a process that read every leaf of the fake's store writes it."""
+    return State(client(bao), set(bao.leaves))
+
+
+def state_of(bao, leaf):
+    """The leaf's run state in the fake."""
+    data = bao.leaves.get(STATE_LEAF, {}).get("data") or {}
+    return LeafState.load(data[leaf]) if leaf in data else LeafState()
+
+
+def put_state(bao, leaf, **fields):
+    """Sets fields of the leaf's run state in the fake, as a run left them; stamps are added to
+    the leaf's."""
+    current = state_of(bao, leaf)
+    if "stamps" in fields:
+        fields["stamps"] = current.stamps | fields["stamps"]
+    entry = bao.leaves.setdefault(STATE_LEAF, {"data": {}, "meta": {}})
+    entry["data"] = entry["data"] | {leaf: dataclasses.replace(current, **fields).dump()}
+
+
+def flight_of(bao, leaf):
+    """The leaf's plan in flight in the fake, read from its staging leaf; None when it has none."""
+    return flights(client(bao)).get(leaf)
+
+
+def put_flight(bao, kind, leaf, keys, step, **staged):
+    """A plan in flight in the fake, as a run left it at the step."""
+    data = {KEYS: json.dumps(list(keys)), STEP: step} | staged
+    bao.leaves[staging_leaf(kind, leaf)] = {"data": data, "meta": {}}
+    return InFlight(kind, tuple(keys), step)
 
 
 class Journal(list):

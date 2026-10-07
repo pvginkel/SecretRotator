@@ -14,12 +14,23 @@ from fake_telegram import CHAT, FakeTelegram
 from fake_telegram import TOKEN as BOT
 from fake_youtrack import TAG, FakeYouTrack
 from fake_youtrack import TOKEN as JEEVES
-from plans import COPY, LEAF, NOW, Journal, RandomLike, Tool, fake
+from plans import (
+    COPY,
+    LEAF,
+    NOW,
+    Journal,
+    RandomLike,
+    Tool,
+    fake,
+    flight_of,
+    put_state,
+    state_of,
+)
 from test_kinds import KINDS
 
 from secret_rotator import card, nightly
 from secret_rotator.cluster import Cluster
-from secret_rotator.contract import FAILED_NIGHTS, HELD_BY, LOCK_LEAF, STATUS, STEP
+from secret_rotator.contract import LOCK_LEAF
 from secret_rotator.openbao import OpenBao
 from secret_rotator.switches import Switches
 from secret_rotator.telegram import Telegram
@@ -50,15 +61,15 @@ def world(*, due=(LEAF, TRELLO)):
         }
     for leaf, key in ((LEAF, "token"), (TRELLO, "bearer-token"), (WEBHOOK, "token")):
         if leaf not in due:
-            bao.meta(leaf)[f"rotated_at_{key}"] = TODAY.isoformat()
-    bao.meta(BOT_LEAF)["rotated_at_telegram-bot-token"] = TODAY.isoformat()
+            put_state(bao, leaf, stamps={key: TODAY.isoformat()})
+    put_state(bao, BOT_LEAF, stamps={"telegram-bot-token": TODAY.isoformat()})
     return bao
 
 
 def manual_due_in(bao, days):
     """The bot leaf's manual telegram-bot-token falls due that many days from today."""
     stamp = TODAY + datetime.timedelta(days=days - 365)
-    bao.meta(BOT_LEAF)["rotated_at_telegram-bot-token"] = stamp.isoformat()
+    put_state(bao, BOT_LEAF, stamps={"telegram-bot-token": stamp.isoformat()})
 
 
 class Night:
@@ -147,8 +158,8 @@ class TestTheLock:
 
         night = Night(bao, opener=operator_takes_it_after_the_first_plan)
         assert night() == 0
-        assert bao.meta(LEAF)["rotated_at_token"] == TODAY.isoformat()
-        assert "rotated_at_bearer-token" not in bao.meta(TRELLO)
+        assert state_of(bao, LEAF).stamps["token"] == TODAY.isoformat()
+        assert "bearer-token" not in state_of(bao, TRELLO).stamps
         lock_message, digest = night.telegram.messages
         assert "held by run a/b" in lock_message and "started no plan after it" in lock_message
         assert "Rotated 1:" in digest
@@ -199,8 +210,8 @@ class TestTheDueSet:
         night = Night()
         assert night() == 0
         bao = night.bao
-        assert bao.meta(LEAF)["rotated_at_token"] == TODAY.isoformat()
-        assert bao.meta(TRELLO)["rotated_at_bearer-token"] == TODAY.isoformat()
+        assert state_of(bao, LEAF).stamps["token"] == TODAY.isoformat()
+        assert state_of(bao, TRELLO).stamps["bearer-token"] == TODAY.isoformat()
         assert bao.data(COPY)["token"] == bao.data(LEAF)["token"] != f"SECRET-{LEAF}-token"
         assert bao.data(LOCK_LEAF) == {}
         (digest,) = night.telegram.messages
@@ -214,24 +225,24 @@ class TestTheDueSet:
 
     def test_the_cap_takes_the_oldest_first_and_the_next_night_the_rest(self):
         bao = world()
-        bao.meta(LEAF)["rotated_at_token"] = (TODAY - 15 * DAY).isoformat()
-        bao.meta(TRELLO)["rotated_at_bearer-token"] = (TODAY - 30 * DAY).isoformat()
+        put_state(bao, LEAF, stamps={"token": (TODAY - 15 * DAY).isoformat()})
+        put_state(bao, TRELLO, stamps={"bearer-token": (TODAY - 30 * DAY).isoformat()})
         night = Night(bao)
         night(max_rotations_per_run=1)
-        assert bao.meta(TRELLO)["rotated_at_bearer-token"] == TODAY.isoformat()
-        assert bao.meta(LEAF)["rotated_at_token"] != TODAY.isoformat()
+        assert state_of(bao, TRELLO).stamps["bearer-token"] == TODAY.isoformat()
+        assert state_of(bao, LEAF).stamps["token"] != TODAY.isoformat()
         assert "1 more due past the cap of 1" in night.telegram.messages[-1]
         night(max_rotations_per_run=1)
-        assert bao.meta(LEAF)["rotated_at_token"] == TODAY.isoformat()
+        assert state_of(bao, LEAF).stamps["token"] == TODAY.isoformat()
 
     def test_the_first_pass_drains_every_unstamped_key_under_the_cap(self):
         bao = world()
         night = Night(bao)
         night(max_rotations_per_run=1)
-        assert "rotated_at_token" in bao.meta(LEAF)
-        assert "rotated_at_bearer-token" not in bao.meta(TRELLO)
+        assert "token" in state_of(bao, LEAF).stamps
+        assert "bearer-token" not in state_of(bao, TRELLO).stamps
         night(now=NOW + DAY, max_rotations_per_run=1)
-        assert bao.meta(TRELLO)["rotated_at_bearer-token"] == (TODAY + DAY).isoformat()
+        assert state_of(bao, TRELLO).stamps["bearer-token"] == (TODAY + DAY).isoformat()
 
 
 class TestAdmission:
@@ -241,7 +252,7 @@ class TestAdmission:
         before = dict(bao.data(BOT_LEAF))
         night = Night(bao)
         assert night(kinds_enabled=frozenset({"random", "manual"})) == 0
-        assert bao.meta(BOT_LEAF)[STATUS] == "manual-due" and STEP not in bao.meta(BOT_LEAF)
+        assert state_of(bao, BOT_LEAF).status == "manual-due" and flight_of(bao, BOT_LEAF) is None
         assert bao.data(BOT_LEAF) == before and night.cluster.patches() == []
         line = f"Manual rotation of telegram-bot-token at `{BOT_LEAF}` is due"
         assert night.telegram.messages == [f"Secret rotation, 2026-10-05\n{line}"]
@@ -251,11 +262,10 @@ class TestAdmission:
     def test_a_manual_due_leaf_keeps_the_failed_status_of_its_other_plan(self, status):
         bao = world(due=())
         manual_due_in(bao, 0)
-        bao.meta(BOT_LEAF)[STATUS] = status
-        bao.meta(BOT_LEAF)["rotator_last_error"] = "the job failed"
+        put_state(bao, BOT_LEAF, status=status, last_error="the job failed")
         night = Night(bao)
         assert night(kinds_enabled=frozenset({"random", "manual"})) == 0
-        assert bao.meta(BOT_LEAF)[STATUS] == status
+        assert state_of(bao, BOT_LEAF).status == status
         assert f"`{BOT_LEAF}`: {status}, rolled back" in night.card()["description"]
 
     @pytest.mark.parametrize("days", [28, 21, 14, 13, 7, 1])
@@ -268,7 +278,7 @@ class TestAdmission:
         unit = "day" if days == 1 else "days"
         line = f"Manual rotation of telegram-bot-token at `{BOT_LEAF}` is due in {days} {unit}"
         assert night.telegram.messages == [f"Secret rotation, 2026-10-05\n{line}, on {on}"]
-        assert STATUS not in bao.meta(BOT_LEAF) and night.youtrack.writes() == []
+        assert state_of(bao, BOT_LEAF).status is None and night.youtrack.writes() == []
 
     @pytest.mark.parametrize("days", [29, 27, 22, 20, 15, 300])
     def test_between_those_days_it_is_quiet(self, days):
@@ -297,7 +307,7 @@ class TestHealthFirst:
         app["status"]["health"]["status"] = "Degraded"
         assert night() == 0
         bao = night.bao
-        assert "rotated_at_token" not in bao.meta(LEAF) and bao.data(LEAF)["token"].startswith(
+        assert "token" not in state_of(bao, LEAF).stamps and bao.data(LEAF)["token"].startswith(
             "SECRET-"
         )
         assert night.telegram.messages == [] and night.cluster.patches() == []
@@ -307,7 +317,7 @@ class TestHealthFirst:
         ) in night.card()["description"]
         app["status"]["health"]["status"] = "Healthy"
         night(now=NOW + DAY)
-        assert bao.meta(LEAF)["rotated_at_token"] == (TODAY + DAY).isoformat()
+        assert state_of(bao, LEAF).stamps["token"] == (TODAY + DAY).isoformat()
         assert "1 resolved" in night.card()["comments"][-1]
 
 
@@ -317,11 +327,12 @@ class TestFailure:
         bao.refuse["PATCH", f"kv/data/{COPY}"] = 403
         night = Night(bao)
         assert night() == 0
-        meta = bao.meta(LEAF)
+        state = state_of(bao, LEAF)
         assert bao.data(LEAF)["token"] == f"SECRET-{LEAF}-token"
-        assert meta[STATUS] == "failed" and STEP not in meta and meta[FAILED_NIGHTS] == "1"
+        assert state.status == "failed" and state.failed_nights == 1
+        assert flight_of(bao, LEAF) is None
         assert "rotator/staging/random/" + LEAF not in bao.leaves
-        assert bao.meta(TRELLO)["rotated_at_bearer-token"] == TODAY.isoformat()
+        assert state_of(bao, TRELLO).stamps["bearer-token"] == TODAY.isoformat()
         failure, digest = night.telegram.messages
         assert failure.startswith(
             f"The random plan of {LEAF} (token) failed at copy to {COPY}#token: PATCH "
@@ -335,8 +346,8 @@ class TestFailure:
         )
         del bao.refuse["PATCH", f"kv/data/{COPY}"]
         night(now=NOW + DAY)
-        meta = bao.meta(LEAF)
-        assert meta[STATUS] == "ok" and FAILED_NIGHTS not in meta
+        state = state_of(bao, LEAF)
+        assert state.status == "ok" and state.failed_nights == 0
         assert night.card()["description"].endswith("Nothing is open.")
 
     def test_a_failed_rollback_is_told_too_and_left_for_run(self):
@@ -350,8 +361,7 @@ class TestFailure:
             "app-prd/deployment/app"
         )
         assert rollback.endswith(f"`secret-rotator run {LEAF}` continues it.")
-        meta = night.bao.meta(LEAF)
-        assert meta[STEP] == "random/token/k8s.rollout:app-prd/deployment/app"
+        assert flight_of(night.bao, LEAF).step == "k8s.rollout:app-prd/deployment/app"
         night.cluster.stuck.clear()
         night(now=NOW + DAY)
         assert "not started: the leaf has its random plan in flight" in night.log()
@@ -364,8 +374,8 @@ class TestFailure:
         assert night() == 0
         failure, digest = night.telegram.messages
         assert "It is not rolled back: deliver cannot be taken back. It stays stopped" in failure
-        assert night.bao.meta(LEAF)[STEP] == "random/token/deliver"
-        assert night.bao.meta(TRELLO)["rotated_at_bearer-token"] == TODAY.isoformat()
+        assert flight_of(night.bao, LEAF).step == "deliver"
+        assert state_of(night.bao, TRELLO).stamps["bearer-token"] == TODAY.isoformat()
         assert f"random plan of {LEAF} (token): stopped for `secret-rotator run {LEAF}`" in digest
 
     def test_a_plan_that_breaks_off_outside_its_steps_does_not_end_the_run(self):
@@ -375,7 +385,7 @@ class TestFailure:
         assert night() == 0
         failure, digest = night.telegram.messages
         assert failure.startswith(f"The random plan of {LEAF} (token) broke off: DELETE")
-        assert bao.meta(TRELLO)["rotated_at_bearer-token"] == TODAY.isoformat()
+        assert state_of(bao, TRELLO).stamps["bearer-token"] == TODAY.isoformat()
         assert "Failed 1:" in digest and bao.data(LOCK_LEAF) == {}
 
     def test_three_failed_nights_hold_the_leaf_until_its_card_is_closed(self):
@@ -384,16 +394,17 @@ class TestFailure:
         night = Night(world(due=(LEAF,)), kinds=kinds)
         for n in range(3):
             night(now=NOW + n * DAY)
-        meta = night.bao.meta(LEAF)
-        assert meta[FAILED_NIGHTS] == "3" and meta[HELD_BY] == "ANS-101"
+        state = state_of(night.bao, LEAF)
+        assert state.failed_nights == 3 and state.held_by == "ANS-101"
         assert "not retried while this card is open" in night.card()["description"]
         runs, messages = len(journal), len(night.telegram.messages)
         night(now=NOW + 3 * DAY)
         assert len(journal) == runs and len(night.telegram.messages) == messages
         night.card()["resolved"] = True
         night(now=NOW + 4 * DAY)
-        assert len(journal) > runs and night.bao.meta(LEAF)[FAILED_NIGHTS] == "1"
-        assert HELD_BY not in night.bao.meta(LEAF) and night.card()["idReadable"] == "ANS-102"
+        assert len(journal) > runs and state_of(night.bao, LEAF).failed_nights == 1
+        assert state_of(night.bao, LEAF).held_by is None
+        assert night.card()["idReadable"] == "ANS-102"
 
     def test_a_plan_that_cannot_be_built_goes_on_the_card(self):
         bao = world(due=(LEAF,))
@@ -442,7 +453,7 @@ class TestTheStandingCard:
         night = Night(world(due=(LEAF,)))
         night.youtrack.down = True
         assert night() == 1
-        assert night.bao.meta(LEAF)["rotated_at_token"] == TODAY.isoformat()
+        assert state_of(night.bao, LEAF).stamps["token"] == TODAY.isoformat()
         assert "error: the open card cannot be looked up" in night.log()
 
 
@@ -457,7 +468,7 @@ class TestTelegram:
         night = Night(world(due=(LEAF,)))
         night.telegram.down = True
         assert night() == 1
-        assert night.bao.meta(LEAF)["rotated_at_token"] == TODAY.isoformat()
+        assert state_of(night.bao, LEAF).stamps["token"] == TODAY.isoformat()
         assert "error: a Telegram message was not sent: sendMessage: HTTP 502" in night.log()
         assert BOT not in night.log()
 

@@ -220,12 +220,6 @@ class TestContract:
                 store["jenkins/youtrack"].meta[key] = value
                 assert found(store) == [("jenkins/youtrack", key)], value
 
-    def test_a_stamp_that_is_not_an_iso_date(self):
-        store = compliant_store()
-        store["eso/prd/app/prd/token"].meta["rotated_at_token"] = "yesterday"
-        store["eso/prd/app/prd/oidc"].meta["rotated_at_client_secret"] = "2026-10-05"
-        assert found(store) == [("eso/prd/app/prd/token", "rotated_at_token")]
-
     def test_a_leaf_whose_keys_cannot_be_read_is_a_finding_and_its_metadata_still_checked(self):
         store = compliant_store()
         store["shared/wifi"].keys = None
@@ -299,7 +293,7 @@ class TestNeverAndDue:
 
     def test_with_no_stamp_every_unblocked_scheduled_key_is_due_oldest_first(self):
         store = compliant_store()
-        store["eso/prd/app/prd/token"].meta["rotated_at_token"] = "2026-10-01"
+        store["eso/prd/app/prd/token"].state.stamps["token"] = "2026-10-01"
         store["shared/ceph"].meta["rotation_interval"] = "2w"
         store["shared/wifi"].meta["rotation_expires_at"] = "soon"
         store["eso/prd/trello/prd/trello"].meta["interval_bearer-token"] = "3w"
@@ -394,13 +388,15 @@ class TestLiveAudit:
     def test_the_rotators_working_leaves_are_not_checked_or_read(self):
         bao = annotated_bao()
         bao.leaves["rotator/lock"] = {"data": {"holder": ""}, "meta": {}}
+        bao.leaves["rotator/state"] = {"data": {"eso/prd/app/prd/token": "{}"}, "meta": {}}
         bao.leaves["rotator/staging/random/eso/prd/app/prd/token"] = {
             "data": {"token": "SECRET-staged"},
             "meta": {},
         }
         run = Run(bao)
         assert run("audit") == 0, run.text
-        assert not [p for _, p, *_ in bao.requests if "rotator/lock" in p or "staging" in p]
+        working = ("rotator/lock", "rotator/state", "staging")
+        assert not [p for _, p, *_ in bao.requests if any(w in p for w in working)]
 
 
 class TestOrphans:

@@ -9,40 +9,22 @@ from dataclasses import dataclass
 
 MOUNT = "kv"
 
-# The rotator's working leaves (design §3.3, §4.3, §4.5): run state, never annotated or checked.
+# The rotator's working leaves (design §3.3, §3.4, §4.3, §4.5): the staging leaves, the lock and
+# the run state, never annotated or checked.
 STAGING_PREFIX = "rotator/staging/"
 LOCK_LEAF = "rotator/lock"
+STATE_LEAF = "rotator/state"
 
 # What annotate creates a marker leaf's one data key holding (catalog § rotator/): the credential
 # itself is never in KV.
 MARKER_VALUE = "marker leaf: the credential is not kept in KV"
 
-# The rotator's run state on a leaf (design §3.4), written by metadata patch.
-STATUS = "rotator_status"
-STEP = "rotator_step"
-LAST_ERROR = "rotator_last_error"
-LAST_RUN = "rotator_last_run"
-CONSUMERS = "rotator_consumers"
-EXPIRES_AT = "rotator_expires_at"  # the ISO date a minted credential expires
-# The nightly run's backoff: how many nights in a row a plan of the leaf failed, and the standing
-# card the leaf waits on once that reached three, not retried until that card is closed.
-FAILED_NIGHTS = "rotator_failed_nights"
-HELD_BY = "rotator_held_by"
+EXPIRES_AT = "rotator_expires_at"  # on a leaf: the ISO date a minted credential expires
 
 # KV v2 custom_metadata limits (Vault's; not verified for OpenBao 2.5.4).
 MAX_KEYS = 64
 MAX_KEY_BYTES = 128
 MAX_VALUE_BYTES = 512
-
-
-def consumers_text(items: list[str]) -> str:
-    """rotator_consumers' value: the items comma-separated, as many as fit in a metadata value,
-    then ` +<n>` for the n that do not (design §9)."""
-    text, shown = ",".join(items), len(items)
-    while len(text.encode()) > MAX_VALUE_BYTES:
-        shown -= 1
-        text = f"{','.join(items[:shown])} +{len(items) - shown}".strip()
-    return text
 
 
 NONE = "none"
@@ -96,7 +78,7 @@ class ContractError(ValueError):
 
 
 def is_working_leaf(path: str) -> bool:
-    return path == LOCK_LEAF or path.startswith(STAGING_PREFIX)
+    return path in (LOCK_LEAF, STATE_LEAF) or path.startswith(STAGING_PREFIX)
 
 
 def kind_error(value: str) -> str | None:

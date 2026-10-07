@@ -9,7 +9,6 @@ from collections.abc import Callable, Mapping
 from secret_rotator.audit import Audit, Leaf, audit, live_store
 from secret_rotator.cluster import Cluster
 from secret_rotator.console import Console
-from secret_rotator.contract import LAST_ERROR, LAST_RUN
 from secret_rotator.executor import (
     Abandon,
     AbortRefused,
@@ -17,7 +16,6 @@ from secret_rotator.executor import (
     Outcome,
     PlanMismatch,
     Stand,
-    in_flight,
 )
 from secret_rotator.kube import KubeError
 from secret_rotator.lock import Holder, Lock, LockError, LockHeld
@@ -25,6 +23,7 @@ from secret_rotator.model import Action, Actor, Event, Finished, Progress, Skipp
 from secret_rotator.openbao import OpenBao, OpenBaoError
 from secret_rotator.opsteps import ConfirmRequest, CredentialRequest, Field, ShowRequest
 from secret_rotator.plan import Kind, LeafPlan, Plan, PlanError, make, of_leaf
+from secret_rotator.state import LeafState, State
 from secret_rotator.telegram import failed
 
 Choice = tuple[str, str]  # the letter that answers it, and the word it is in
@@ -72,7 +71,7 @@ def print_leaf(
     out(leaf)
     if leaf not in result.kinds:
         out("  its keys cannot be read: its current version is deleted or destroyed")
-    if flight := in_flight(store[leaf].meta):
+    if flight := store[leaf].flight:
         out(f"  in flight: its {flight.kind} plan of {', '.join(flight.keys)}, at {flight.step}")
     for p in plans:
         out(f"  {heading(p, today)}")
@@ -311,7 +310,7 @@ class Driver:
         self.leaf = executor.leaf
         self.notify = notify
 
-    def go(self, stand: Stand, meta: Mapping[str, str]) -> int:
+    def go(self, stand: Stand, state: LeafState) -> int:
         e, c = self.executor, self.console
         at = e.plan.steps[e.at]
         if stand is Stand.FRESH:
@@ -324,7 +323,7 @@ class Driver:
         else:
             what = "Its rollback stopped at" if stand is Stand.ROLLING_BACK else "It failed at"
             c.line(f"{what} step {e.at + 1} of {len(e.plan.steps)}: {at.title}.")
-            c.line(f"    {meta.get(LAST_ERROR, '')}")
+            c.line(f"    {state.last_error or ''}")
             outcome = Outcome.FAILED if stand is Stand.FAILED else Outcome.ROLLBACK_FAILED
         return self.settle(outcome)
 
@@ -382,8 +381,8 @@ class Driver:
         if failure is not None:
             self.console.line(failure.technical.rstrip())
             return
-        meta = self.executor.bao.metadata(self.leaf) or {}
-        self.console.line(f"{meta.get(LAST_RUN, '?')}: {meta.get(LAST_ERROR, 'no error recorded')}")
+        state = self.executor.state.of(self.leaf)
+        self.console.line(f"{state.last_run or '?'}: {state.last_error or 'no error recorded'}")
 
     def attempt(self, action: Callable[[], Outcome]) -> Outcome | None:
         """The executor's run or abort, offering to break a dead holder's lock; None when it did
@@ -452,15 +451,15 @@ def run_leaf(
     """`run <path>`: the leaf's plan in flight, else the plan the operator picks, run to an end. 1
     when it did not end with the plan done, rolled back, cancelled or left by the operator.
     notify: where each failure is told in Telegram too."""
-    store = live_store(bao)
+    store = live_store(bao, runs=True)
     if leaf not in store:
         console.line(f"error: no leaf {leaf}")
         return 1
     result = audit(store, None if cluster is None else cluster.referenced())
     plans, unplanned = of_leaf(leaf, store, result, kinds, cluster)
-    meta = store[leaf].meta
+    flight = store[leaf].flight
     try:
-        if (flight := in_flight(meta)) is None:
+        if flight is None:
             plan = choose(console, leaf, plans, unplanned, today)
             if plan is None:
                 return 0 if any(p.plan for p in plans) else 1
@@ -474,10 +473,11 @@ def run_leaf(
             if any((p.kind, p.keys) != (flight.kind, flight.keys) for p in plans):
                 console.line("Its other plans wait until this one is done or rolled back.")
         renderer = TerminalRenderer(console, clock)
-        executor = Executor(bao, plan, renderer, Lock(bao, holder), dry_run=False)
+        state = State(bao, store)
+        executor = Executor(bao, plan, renderer, Lock(bao, holder), state=state, dry_run=False)
         renderer.executor = executor
         stand = Stand.FRESH if flight is None else executor.load()
-        return Driver(console, executor, renderer, notify).go(stand, meta)
+        return Driver(console, executor, renderer, notify).go(stand, store[leaf].state)
     except (PlanMismatch, OpenBaoError, KubeError) as e:
         console.line(f"error: {e}")
         return 1

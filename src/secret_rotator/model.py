@@ -9,6 +9,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from secret_rotator.openbao import OpenBao
+from secret_rotator.state import State
 
 
 class Actor(StrEnum):
@@ -46,6 +47,7 @@ class Context(Protocol):
     """What a running step gets from the executor."""
 
     bao: OpenBao
+    state: State  # the run state, which kv.stamp writes
     now: datetime.datetime  # UTC
 
     def progress(self, detail: str) -> None:
