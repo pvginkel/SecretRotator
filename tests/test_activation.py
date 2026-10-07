@@ -20,6 +20,8 @@ from plans import (
     fake_of,
     flight_of,
     lock,
+    put_flight,
+    put_state,
     run_state,
     state_of,
 )
@@ -344,6 +346,21 @@ class TestCommands:
             for line in lines
         )
         assert not [line for line in lines if "SECRET" in line]
+
+    def test_the_live_plan_reads_the_run_state_and_the_plan_in_flight(self):
+        lines = []
+        bao = fake_of(store_of())
+        put_state(bao, LEAF, stamps={"token": "2026-10-01"})
+        put_flight(bao, "random", LEAF, ["token"], "k8s.rollout:app-prd/statefulset/app-db")
+        code = cli.main(
+            ["plan", LEAF], opener=bao, out=lines.append, environ=self.ENV, kube=FakeCluster().kube
+        )
+        assert code == 0, lines
+        at = "k8s.rollout:app-prd/statefulset/app-db"
+        assert f"  in flight: its random plan of token, at {at}" in lines
+        assert any(line.startswith("  random plan of token · due") for line in lines), lines
+        assert any("2026-10-15" in line for line in lines), lines
+        assert not [line for line in lines if "never rotated" in line]
 
     def test_run_rolls_out_in_the_terminal(self):
         bao = fake_of(store_of())
