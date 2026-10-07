@@ -145,11 +145,12 @@ class KvCopy(KvPatch):
 
 
 class KvStamp(Step):
-    """Records the rotation once it took effect (design §3.2, §3.4): first the expiry the plan
-    staged for a rotated key as its expires_at, in its entry; then, in one check-and-set write of
-    the run state, the rotated keys' stamps, the leaf's status ok and last run, the nightly run's
-    backoff cleared, and its consumers: what the plan's activation read from the cluster, none when
-    it read nothing. The core appends it to every plan (design R20)."""
+    """Records the rotation once it took effect (design §3.2, §3.4): first each rotated key's
+    expires_at in its entry, the expiry its plan staged for it, cleared where it staged none or
+    an empty one; then, in one check-and-set write of the run state, the rotated keys' stamps, the
+    leaf's status ok and last run, the nightly run's backoff cleared, and its consumers: what the
+    plan's activation read from the cluster, none when it read nothing. The core appends it to
+    every plan (design R20)."""
 
     type = "kv.stamp"
     silent = True
@@ -166,15 +167,23 @@ class KvStamp(Step):
             raise StepFailed(
                 f"no leaf {self.leaf}: it is gone from the store, so nothing is stamped"
             )
-        expiries = {k: d for k in self.keys if (d := ctx.staged(expiry_name(k))) is not None}
-        patch = {}
+        expiries = {k: ctx.staged(expiry_name(k)) or None for k in self.keys}
+        patch, cleared = {}, []
         for key, expires in expiries.items():
             name = entry_name(key)
             if name not in meta:
+                if expires is None:
+                    continue
                 raise StepFailed(f"{self.leaf} has no entry {name}: its expiry cannot be written")
             fields = load_entry(meta[name])
-            if fields.get("expires_at") != expires:
-                patch[name] = dump_entry(fields | {"expires_at": expires})
+            if fields.get("expires_at") == expires:
+                continue
+            if expires is None:
+                cleared.append(key)
+                fields.pop("expires_at")
+            else:
+                fields["expires_at"] = expires
+            patch[name] = dump_entry(fields)
         if patch:
             ctx.bao.patch_metadata(self.leaf, patch)
         today = ctx.now.date().isoformat()
@@ -188,5 +197,6 @@ class KvStamp(Step):
             state.held_by = None
 
         ctx.state.update(self.leaf, stamp)
-        expire = "".join(f"; {key} expires {expires}" for key, expires in expiries.items())
-        return f"{', '.join(self.keys)} rotated {today}{expire}"
+        expire = "".join(f"; {k} expires {d}" for k, d in expiries.items() if d is not None)
+        clear = "".join(f"; {key} expiry cleared" for key in cleared)
+        return f"{', '.join(self.keys)} rotated {today}{expire}{clear}"

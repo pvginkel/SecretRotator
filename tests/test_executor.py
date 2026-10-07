@@ -2,8 +2,10 @@
 its outcome in the run state; a failure stops it, Retry and a new process resume it, Abort rolls
 it back or cancels it, and a dry run touches nothing."""
 
+import datetime
+
 import pytest
-from fixtures import AUTO, annotated, compliant_store, data_of, edit
+from fixtures import AUTO, annotated, compliant_store, data_of, edit, fields_of
 from plans import (
     COPY,
     LEAF,
@@ -20,10 +22,12 @@ from plans import (
     lock,
     plan_of,
     put_flight,
+    put_state,
     run_state,
     state_of,
 )
 
+from secret_rotator.audit import audit, live_store
 from secret_rotator.contract import LOCK_LEAF, STATE_LEAF
 from secret_rotator.executor import (
     Abandon,
@@ -36,6 +40,7 @@ from secret_rotator.executor import (
 from secret_rotator.kvsteps import URLSAFE
 from secret_rotator.lock import Lock, LockHeld
 from secret_rotator.model import Action, Skipped, Step, StepFailed
+from secret_rotator.schedule import schedule
 from secret_rotator.staging import NOT_LANDED, InFlight, staging_leaf
 from secret_rotator.state import LeafState
 
@@ -65,6 +70,14 @@ def run(bao, plan, *answers):
 
 def writes_to(bao, path):
     return [(m, p) for m, p, *_ in bao.writes() if p == path]
+
+
+def due_at(bao, leaf=LEAF, key="token"):
+    """When the key falls due, read from the store as the nightly run reads it."""
+    live = live_store(client(bao), runs=True)
+    entries = audit(live).entries[leaf]
+    (found,) = [s for s in schedule(leaf, entries, live[leaf].state.stamps) if s.key == key]
+    return found.due_at
 
 
 class ExtraFirst(RandomLike):
@@ -108,6 +121,16 @@ class TestARun:
             for step in ("random.generate:token", "kv.write", "kv.copy:iac/copy#token", "kv.stamp")
             for state in ("started", "ok")
         ]
+
+    def test_a_rotation_past_the_key_s_expiry_leaves_it_due_at_its_stamp_plus_its_interval(self):
+        # 045 close-out B2: an expiry that has passed kept a freshly rotated key due every run.
+        bao = fake()
+        edit(bao.meta(LEAF), "token", expires_at="2026-10-01")
+        put_state(bao, LEAF, stamps={"token": "2026-09-30"})
+        assert due_at(bao) == datetime.date(2026, 9, 24)
+        assert run(bao, plan_of())[0] is Outcome.DONE
+        assert "expires_at" not in fields_of(bao.meta(LEAF), "token")
+        assert due_at(bao) == datetime.date(2026, 10, 19)
 
     def test_the_staging_leaf_is_destroyed_and_the_lock_released_not_deleted(self):
         bao = fake()
@@ -380,6 +403,15 @@ class TestAbort:
         ]
         assert bao.data(LEAF)["token"] == OLD and bao.data(COPY) == data_of(COPY)
         assert flight_of(bao, LEAF) is None and STAGING not in bao.leaves
+
+    def test_a_rotation_rolled_back_leaves_the_key_s_expires_at_as_it_was(self):
+        bao = fake()
+        edit(bao.meta(LEAF), "token", expires_at="2026-10-01")
+        meta = dict(bao.meta(LEAF))
+        executor_ = executor(bao, plan_of(Tool("activate", Journal(), fail=1)), Recorder())
+        assert executor_.run() is Outcome.FAILED
+        assert executor_.abort() is Outcome.ROLLED_BACK
+        assert bao.meta(LEAF) == meta
 
     def test_the_kv_undos_restore_the_copies_before_the_primary(self):
         bao = fake()

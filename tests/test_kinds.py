@@ -7,7 +7,7 @@ import re
 from importlib.metadata import EntryPoint
 
 import pytest
-from fixtures import annotated, compliant_store, edit, set_activate
+from fixtures import annotated, compliant_store, edit, fields_of, set_activate
 from plans import COPY, LEAF, NOW, Recorder, client, fake_of, lock, run_state, state_of
 
 from secret_rotator import registry
@@ -17,8 +17,9 @@ from secret_rotator.executor import Abandon, AbortRefused, Executor, Outcome
 from secret_rotator.kinds.approle import AppRole
 from secret_rotator.kinds.manual import TYPES, Manual, load_type
 from secret_rotator.kinds.random import Random
-from secret_rotator.model import StepFailed, value_name
+from secret_rotator.model import StepFailed, expiry_name, value_name
 from secret_rotator.opsteps import (
+    EXPIRY,
     ConfirmRequest,
     CredentialRequest,
     OperatorConfirm,
@@ -274,6 +275,7 @@ class TestManual:
         ((_, request),) = r.asked
         assert isinstance(request, CredentialRequest)
         assert [f.key for f in request.fields] == ["token"] and request.fields[0].shape is None
+        assert not request.expires
         assert request.instruction == (
             f"Mint a new token for {TRELLO} where it is issued.\n\nNotes: cannot be rotated"
         )
@@ -296,6 +298,35 @@ class TestManual:
         assert credential.shape is github.shape
         assert plan.ask == "paste a new GitHub personal access token"
         assert plan.description.startswith("You mint a new GitHub personal access token and enter")
+
+    def test_a_type_that_expires_asks_the_expiry_with_the_value_and_the_stamp_writes_it(self):
+        store = store_of(**ACTIVATE_NONE)
+        edit(store[WIFI].meta, "password", args={"type": "github-pat"}, expires_at="2026-10-01")
+        plan = plan_for(WIFI, "manual", ["password"], store)
+        answer = {"password": "github_pat_SECRET", EXPIRY: "2027-01-04"}
+        bao, outcome, r = run(store, plan, answer)
+        assert outcome is Outcome.DONE
+        ((_, request),) = r.asked
+        assert request.expires
+        assert fields_of(bao.meta(WIFI), "password")["expires_at"] == "2027-01-04"
+
+    def test_a_blank_expiry_leaves_the_key_without_one(self):
+        store = store_of(**ACTIVATE_NONE)
+        edit(store[WIFI].meta, "password", args={"type": "github-pat"}, expires_at="2026-10-01")
+        plan = plan_for(WIFI, "manual", ["password"], store)
+        bao, outcome, _ = run(store, plan, {"password": "github_pat_SECRET", EXPIRY: ""})
+        assert outcome is Outcome.DONE
+        assert "expires_at" not in fields_of(bao.meta(WIFI), "password")
+
+    def test_a_type_that_does_not_expire_asks_no_expiry_and_its_rotation_clears_one(self):
+        store = store_of(**ACTIVATE_NONE)
+        edit(store[WIFI].meta, "password", args={"type": "openai-api-key"}, expires_at="2027-01-01")
+        plan = plan_for(WIFI, "manual", ["password"], store)
+        bao, outcome, r = run(store, plan, {"password": "sk-SECRET"})
+        assert outcome is Outcome.DONE
+        ((_, request),) = r.asked
+        assert not request.expires
+        assert "expires_at" not in fields_of(bao.meta(WIFI), "password")
 
     def test_every_key_of_a_type_shows_the_same_instructions_untemplated(self):
         store = store_of(**ACTIVATE_NONE)
@@ -422,6 +453,8 @@ class TestActivation:
 
 class TestOperatorSteps:
     class Ctx:
+        now = NOW
+
         def __init__(self, answer=None, staged=None):
             self.answer = answer
             self.values = dict(staged or {})
@@ -443,6 +476,37 @@ class TestOperatorSteps:
         assert step.run(ctx) == "a: 8 characters, b: 9 characters"
         assert ctx.values == {value_name("a"): "SECRET-a", value_name("b"): "SECRET-bb"}
         assert step.run(ctx) == "entered before" and len(ctx.asked) == 1
+
+    def test_a_credential_that_expires_stages_its_expiry_for_each_key_before_the_values(self):
+        step = OperatorCredential(("a", "b"), "t", "i", expires=True)
+        ctx = self.Ctx({"a": "SECRET-a", "b": "SECRET-bb", EXPIRY: "2027-01-04"})
+        assert step.run(ctx) == "a: 8 characters, b: 9 characters; expires 2027-01-04"
+        assert ctx.asked[0].expires
+        assert ctx.values == {
+            expiry_name("a"): "2027-01-04",
+            expiry_name("b"): "2027-01-04",
+            value_name("a"): "SECRET-a",
+            value_name("b"): "SECRET-bb",
+        }
+        assert list(ctx.values)[:2] == [expiry_name("a"), expiry_name("b")]
+
+    def test_a_blank_expiry_is_staged_as_none(self):
+        ctx = self.Ctx({"a": "SECRET-a", EXPIRY: ""})
+        assert OperatorCredential(("a",), "t", "i", expires=True).run(ctx).endswith("; no expiry")
+        assert ctx.values[expiry_name("a")] == ""
+
+    @pytest.mark.parametrize(
+        "expiry, problem",
+        [
+            ("soon", "'soon' is not an ISO date"),
+            ("2026-10-05", "2026-10-05 is not after today, 2026-10-05"),
+        ],
+    )
+    def test_an_expiry_that_is_no_date_after_today_fails_and_stages_nothing(self, expiry, problem):
+        ctx = self.Ctx({"a": "SECRET-a", EXPIRY: expiry})
+        with pytest.raises(StepFailed, match=f"the expiry entered is no expiry: {problem}"):
+            OperatorCredential(("a",), "t", "i", expires=True).run(ctx)
+        assert ctx.values == {}
 
     def test_a_credential_answered_without_a_value_fails(self):
         with pytest.raises(StepFailed, match="no value was entered for b"):

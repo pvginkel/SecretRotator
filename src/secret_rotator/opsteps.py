@@ -2,10 +2,15 @@
 renderer through ctx.ask with its request; the renderer answers, or the operator abandons the step
 by Abort or exit, which the executor takes over. They do not fail on the operator's account."""
 
+import datetime
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from secret_rotator.model import Actor, Context, Step, StepFailed, value_name
+from secret_rotator.contract import ContractError, parse_date
+from secret_rotator.model import Actor, Context, Step, StepFailed, expiry_name, value_name
+
+# The answer's name of the new credential's expiry, beside the fields' keys.
+EXPIRY = "expires_at"
 
 
 @dataclass(frozen=True)
@@ -25,11 +30,14 @@ class Field:
 
 @dataclass(frozen=True)
 class CredentialRequest:
-    """Enter one value per field, masked; answered with each field's value, none empty."""
+    """Enter one value per field, masked; answered with each field's value, none empty. One that
+    expires also asks the new credential's expiry, answered under EXPIRY: an ISO date after today,
+    or empty for none."""
 
     title: str
     instruction: str  # where to mint it, with which scopes
     fields: tuple[Field, ...]
+    expires: bool = False
 
 
 @dataclass(frozen=True)
@@ -51,30 +59,58 @@ class ConfirmRequest:
 
 class OperatorCredential(Step):
     """The operator mints a value elsewhere and enters it: each key's value is staged as its new
-    value, for the kv.write after it. A value staged before an exit or a crash is kept."""
+    value, for the kv.write after it. A value staged before an exit or a crash is kept. For a
+    credential that expires (design §6) it asks the expiry too, staged for each key, empty for
+    none, for kv.stamp to write as its expires_at; staged before the values, so a value staged
+    has its expiry staged."""
 
     type = "operator.credential"
     actor = Actor.OPERATOR
 
     def __init__(
-        self, keys: tuple[str, ...], title: str, instruction: str, shape: Shape | None = None
+        self,
+        keys: tuple[str, ...],
+        title: str,
+        instruction: str,
+        shape: Shape | None = None,
+        *,
+        expires: bool = False,
     ):
         super().__init__(f"operator.credential:{','.join(keys)}", title)
         self.keys = keys
         self.instruction = instruction
         self.shape = shape
+        self.expires = expires
 
     def run(self, ctx: Context) -> str:
         names = {key: value_name(key) for key in self.keys}
         if all(ctx.staged(name) is not None for name in names.values()):
             return "entered before"
         fields = tuple(Field(key, self.shape) for key in self.keys)
-        answer = ctx.ask(CredentialRequest(self.title, self.instruction, fields))
+        answer = ctx.ask(CredentialRequest(self.title, self.instruction, fields, self.expires))
         if empty := [key for key in self.keys if not answer.get(key)]:
             raise StepFailed(f"no value was entered for {', '.join(empty)}")
+        entered = ", ".join(f"{key}: {len(answer[key])} characters" for key in self.keys)
+        if self.expires:
+            expiry = answer[EXPIRY]
+            if expiry and (problem := expiry_problem(expiry, ctx.now.date())):
+                raise StepFailed(f"the expiry entered is no expiry: {problem}")
+            for key in self.keys:
+                ctx.stage(expiry_name(key), expiry)
+            entered += f"; expires {expiry}" if expiry else "; no expiry"
         for key, name in names.items():
             ctx.stage(name, answer[key])
-        return ", ".join(f"{key}: {len(answer[key])} characters" for key in self.keys)
+        return entered
+
+
+def expiry_problem(text: str, today: datetime.date) -> str | None:
+    """What keeps the text from being a new credential's expiry, an ISO date after today; None
+    when it is one."""
+    try:
+        date = parse_date(text)
+    except ContractError as e:
+        return str(e)
+    return None if date > today else f"{date} is not after today, {today}"
 
 
 class OperatorShow(Step):

@@ -12,7 +12,7 @@ import termios
 import threading
 
 import pytest
-from fixtures import edit
+from fixtures import edit, fields_of
 from plans import COPY, LEAF, client, fake_of, flight_of, state_of
 from test_kinds import ACTIVATE_NONE, KINDS, SEAL, TRELLO, WIFI, store_of
 
@@ -191,6 +191,35 @@ class TestRun:
         assert "9 characters  ✓ starts with sk-" in out
         assert bao.data(WIFI) == {"password": "sk-SECRET"}
         assert "SECRET" not in out
+
+    def test_a_type_that_expires_asks_its_expiry_again_until_it_is_a_date_after_today(self):
+        store = store_of(**ACTIVATE_NONE)
+        edit(store[WIFI].meta, "password", args={"type": "github-pat"}, expires_at="2026-10-01")
+        bao = fake_of(store)
+        answers = ("y", "github_pat_SECRET", "soon", "2026-10-05", "2099-12-31", "c")
+        code, out = run(bao, WIFI, *answers)
+        assert code == 0
+        assert out.count("expires on (YYYY-MM-DD, blank for none): ") == 3
+        assert "  'soon' is not an ISO date (YYYY-MM-DD)" in out
+        assert "  2026-10-05 is not after today, 2026-10-05" in out
+        assert fields_of(bao.meta(WIFI), "password")["expires_at"] == "2099-12-31"
+        assert "SECRET" not in out
+
+    def test_a_blank_expiry_clears_the_one_the_key_held(self):
+        store = store_of(**ACTIVATE_NONE)
+        edit(store[WIFI].meta, "password", args={"type": "github-pat"}, expires_at="2026-10-01")
+        bao = fake_of(store)
+        assert run(bao, WIFI, "y", "github_pat_SECRET", "", "c")[0] == 0
+        assert "expires_at" not in fields_of(bao.meta(WIFI), "password")
+
+    def test_enter_again_asks_the_expiry_again_too(self):
+        store = store_of(**ACTIVATE_NONE)
+        edit(store[WIFI].meta, "password", args={"type": "github-pat"})
+        bao = fake_of(store)
+        answers = ("y", "github_pat_ONE", "2099-01-01", "e", "github_pat_TWO", "2099-12-31", "c")
+        assert run(bao, WIFI, *answers)[0] == 0
+        assert bao.data(WIFI) == {"password": "github_pat_TWO"}
+        assert fields_of(bao.meta(WIFI), "password")["expires_at"] == "2099-12-31"
 
     def test_a_mismatch_continued_anyway_is_taken(self):
         store = store_of(**ACTIVATE_NONE)

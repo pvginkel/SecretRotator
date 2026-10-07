@@ -21,7 +21,14 @@ from secret_rotator.kube import KubeError
 from secret_rotator.lock import Holder, Lock, LockError, LockHeld
 from secret_rotator.model import Action, Actor, Event, Finished, Progress, Skipped, Started, Step
 from secret_rotator.openbao import OpenBao, OpenBaoError
-from secret_rotator.opsteps import ConfirmRequest, CredentialRequest, Field, ShowRequest
+from secret_rotator.opsteps import (
+    EXPIRY,
+    ConfirmRequest,
+    CredentialRequest,
+    Field,
+    ShowRequest,
+    expiry_problem,
+)
 from secret_rotator.plan import Kind, LeafPlan, Plan, PlanError, make, of_leaf
 from secret_rotator.state import LeafState, State
 from secret_rotator.telegram import failed
@@ -142,8 +149,14 @@ class TerminalRenderer:
     """The executor's events as lines, live while a step runs; its operator steps as prompts.
     Silent steps show only when they fail, the rollback under its own heading."""
 
-    def __init__(self, console: Console, clock: Callable[[], float] = time.monotonic):
+    def __init__(
+        self,
+        console: Console,
+        today: datetime.date,
+        clock: Callable[[], float] = time.monotonic,
+    ):
         self.console = console
+        self.today = today  # a new credential's expiry is after it
         self.clock = clock
         self.executor: Executor | None = None  # set by its driver: Abort's count and blocker
         self.began: dict[tuple[str, Action], float] = {}
@@ -207,22 +220,34 @@ class TerminalRenderer:
         for line in text.splitlines():
             self.console.line(line)
 
-    def _enter(self, fields: tuple[Field, ...]) -> dict[str, str]:
+    def _enter(self, request: CredentialRequest) -> dict[str, str]:
         values = {}
-        for field in fields:
+        for field in request.fields:
             values[field.key] = self.console.hidden(f"{field.key} (hidden): ")
             self.console.line(f"  {check(field, values[field.key])}")
+        if request.expires:
+            values[EXPIRY] = self._expiry()
         return values
+
+    def _expiry(self) -> str:
+        """The new credential's expiry: an ISO date after today, or blank for none; asked again
+        until it is one."""
+        while True:
+            text = self.console.ask("expires on (YYYY-MM-DD, blank for none): ").strip()
+            problem = text and expiry_problem(text, self.today)
+            if not problem:
+                return text
+            self.console.line(f"  {problem}")
 
     def _credential(self, request: CredentialRequest) -> dict[str, str] | Abandon:
         c = self.console
         self._instruct(request.instruction)
         ending = self._endings()
-        values = self._enter(request.fields)
+        values = self._enter(request)
         while True:
             letter = menu(c, [("c", "continue"), ("e", "enter again"), *ending])
             if letter == "e":
-                values = self._enter(request.fields)
+                values = self._enter(request)
             elif letter == "c":
                 if empty := [f.key for f in request.fields if not values[f.key]]:
                     c.line(f"Every field needs a value: {', '.join(empty)} is empty.")
@@ -489,7 +514,7 @@ def run_leaf(
             console.line(f"{leaf}: its {plan.target.kind} plan of {', '.join(flight.keys)}.")
             if any((p.kind, p.keys) != (flight.kind, flight.keys) for p in plans):
                 console.line("Its other plans wait until this one is done or rolled back.")
-        renderer = TerminalRenderer(console, clock)
+        renderer = TerminalRenderer(console, today, clock)
         state = State(bao, store)
         executor = Executor(bao, plan, renderer, Lock(bao, holder), state=state, dry_run=False)
         renderer.executor = executor

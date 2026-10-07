@@ -7,7 +7,8 @@ OpenBao.
 A key's one arg, `type`, names its credential type: one document in types/ each, `<type>.md`, the
 type's standard instructions for minting it under a YAML front matter of what the credential is,
 the shape a pasted value has, and whether it expires. The instructions are the same for every key
-of the type; the key's own notes show below them."""
+of the type; the key's own notes show below them. For a type that expires the operator gives the
+new credential's expiry with it, which the stamp writes as the key's expires_at."""
 
 import re
 from collections.abc import Mapping
@@ -118,6 +119,7 @@ class Manual:
                 f"Mint a new {_what(leaf)} and enter it",
                 instruction + (f"\n\nNotes: {notes}" if notes else ""),
                 known.shape if known else None,
+                expires=bool(known and known.expires),
             ),
             *ctx.steps.write(),
             *ctx.steps.activate(),

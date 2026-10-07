@@ -129,9 +129,12 @@ class StepFactory:
         t = self.target
         return [Marker(t.kind, t.leaf, key) for key in t.keys]
 
-    def credential(self, title: str, instruction: str, shape: Shape | None = None) -> list[Step]:
-        """The operator mints the plan's keys elsewhere and enters them, one masked input each."""
-        return [OperatorCredential(self.target.keys, title, instruction, shape)]
+    def credential(
+        self, title: str, instruction: str, shape: Shape | None = None, *, expires: bool = False
+    ) -> list[Step]:
+        """The operator mints the plan's keys elsewhere and enters them, one masked input each;
+        expires: with the new credential's expiry."""
+        return [OperatorCredential(self.target.keys, title, instruction, shape, expires=expires)]
 
     def show(
         self, name: str, title: str, instruction: str, *, irreversible: str = ""

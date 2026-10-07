@@ -13,7 +13,15 @@ from secret_rotator import audit as aud
 from secret_rotator import nightly, provenance, registry, terminal
 from secret_rotator.cluster import Cluster
 from secret_rotator.console import Console
-from secret_rotator.contract import ContractError, parse_date
+from secret_rotator.contract import (
+    ContractError,
+    dump_entry,
+    entry_name,
+    is_scheduled,
+    kind_in,
+    load_entry,
+    parse_date,
+)
 from secret_rotator.kube import Kube, KubeError
 from secret_rotator.lock import holder_name, utcnow
 from secret_rotator.openbao import OpenBao, OpenBaoError
@@ -110,19 +118,33 @@ def parser() -> argparse.ArgumentParser:
     run.set_defaults(keys=None, seed=None)
     stamp = commands.add_parser(
         "stamp",
-        help="set a key's rotation stamp in the run state",
+        help="set a key's rotation stamp in the run state, or set or clear its expires_at",
         description="Sets the key's rotation stamp in kv/rotator/state to the date its current "
         "value was written: the key falls due its interval after that date. For a value written "
-        "outside a rotation, as the go-live writes the rotator's own leaves.",
+        "outside a rotation, as the go-live writes the rotator's own leaves. Sets or clears the "
+        "expires_at in the key's rotation_<key> entry, the date its current credential stops "
+        "working: the key falls due 7 days before it. Once the entry exists, only a rotation and "
+        "this command write its expires_at.",
     )
     stamp.add_argument("path", help="the leaf, a path of the kv mount")
     stamp.add_argument("key", help="a data key of the leaf")
     stamp.add_argument(
         "--rotated-at",
         type=iso_date,
-        required=True,
         help="the date the key's current value was written, not after today",
         metavar="YYYY-MM-DD",
+    )
+    expiry = stamp.add_mutually_exclusive_group()
+    expiry.add_argument(
+        "--expires-at",
+        type=iso_date,
+        help="the date the key's current credential stops working",
+        metavar="YYYY-MM-DD",
+    )
+    expiry.add_argument(
+        "--clear-expires-at",
+        action="store_true",
+        help="the key's current credential does not expire",
     )
     stamp.set_defaults(keys=None, seed=None)
     return p
@@ -192,8 +214,11 @@ def main(
         )
     seed_path = args.seed or ann.DEFAULT_SEED
     today = utcnow().date()
-    if args.command == "stamp" and args.rotated_at > today:
-        p.error(f"--rotated-at {args.rotated_at} is after today, {today}")
+    if args.command == "stamp":
+        if not (args.rotated_at or args.expires_at or args.clear_expires_at):
+            p.error("stamp sets something: --rotated-at, --expires-at or --clear-expires-at")
+        if args.rotated_at and args.rotated_at > today:
+            p.error(f"--rotated-at {args.rotated_at} is after today, {today}")
     try:
         if args.command == "run" and args.path is None:
             return run_nightly(environ, opener, out, kube, switches(), youtrack, telegram, clock)
@@ -209,7 +234,15 @@ def main(
         if seed is not None:
             return ann.run_apply(bao, seed, args.apply, out)
         if args.command == "stamp":
-            return run_stamp(bao, args.path, args.key, args.rotated_at, out)
+            return run_stamp(
+                bao,
+                args.path,
+                args.key,
+                out,
+                rotated_at=args.rotated_at,
+                expires_at=args.expires_at,
+                clear_expiry=args.clear_expires_at,
+            )
         cluster = Cluster(kube(environ[K8S_TOKEN_ENV]))
         if args.command == "run":
             con = console()
@@ -241,10 +274,18 @@ def main(
 
 
 def run_stamp(
-    bao: OpenBao, leaf: str, key: str, rotated_at: datetime.date, out: Callable[[str], None]
+    bao: OpenBao,
+    leaf: str,
+    key: str,
+    out: Callable[[str], None],
+    *,
+    rotated_at: datetime.date | None = None,
+    expires_at: datetime.date | None = None,
+    clear_expiry: bool = False,
 ) -> int:
-    """`stamp`: the key's rotation stamp set in the run state. 1 when the store has no such leaf
-    or key."""
+    """`stamp`: the key's rotation stamp set in the run state, given rotated_at; then the
+    expires_at in its entry set, given expires_at, or cleared. 1, before anything is written,
+    when the store has no such leaf or key, or the key's entry takes no expires_at."""
     leaves = bao.leaves()
     if leaf not in leaves:
         out(f"error: no leaf {leaf}")
@@ -252,14 +293,32 @@ def run_stamp(
     if key not in (bao.subkeys(leaf) or ()):
         out(f"error: no key {key} in the current version of {leaf}")
         return 1
-    was: dict[str, str | None] = {}
+    expiry = expires_at is not None or clear_expiry
+    name = entry_name(key)
+    entry = (bao.metadata(leaf) or {}).get(name) if expiry else None
+    if expiry and entry is None:
+        out(f"error: {leaf} has no entry {name}")
+        return 1
+    if expiry and not is_scheduled(kind_in(entry)):
+        out(f"error: {leaf}#{key} is no scheduled key: its entry takes no expires_at")
+        return 1
+    if rotated_at is not None:
+        was: dict[str, str | None] = {}
 
-    def stamp(state: LeafState) -> None:
-        was[key] = state.stamps.get(key)
-        state.stamps[key] = rotated_at.isoformat()
+        def stamp(state: LeafState) -> None:
+            was[key] = state.stamps.get(key)
+            state.stamps[key] = rotated_at.isoformat()
 
-    State(bao, leaves).update(leaf, stamp)
-    out(f"{leaf}#{key}: rotation stamp {rotated_at}, was {was[key] or 'none'}")
+        State(bao, leaves).update(leaf, stamp)
+        out(f"{leaf}#{key}: rotation stamp {rotated_at}, was {was[key] or 'none'}")
+    if expiry:
+        fields = load_entry(entry)
+        before = fields.pop("expires_at", None)
+        if expires_at is not None:
+            fields["expires_at"] = expires_at.isoformat()
+        if fields.get("expires_at") != before:
+            bao.patch_metadata(leaf, {name: dump_entry(fields)})
+        out(f"{leaf}#{key}: expires_at {expires_at or 'none'}, was {before or 'none'}")
     return 0
 
 

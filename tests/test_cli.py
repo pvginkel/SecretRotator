@@ -19,8 +19,8 @@ from fake_openbao import TOKEN as BAO_TOKEN
 from fake_telegram import CHAT, FakeTelegram
 from fake_telegram import TOKEN as BOT
 from fake_youtrack import TAG, FakeYouTrack
-from fixtures import COMPLIANT, fields_of
-from plans import LEAF, client, fake_of, put_state, state_of
+from fixtures import COMPLIANT, edit, fields_of
+from plans import COPY, LEAF, client, fake_of, put_state, state_of
 from test_kinds import ACTIVATE_NONE, WIFI, store_of
 from test_nightly import TRELLO, WEBHOOK
 from test_nightly import world as nightly_world
@@ -187,7 +187,8 @@ class TestTheNightlyRun:
 
 
 class TestStamp:
-    """`stamp`: a key's rotation stamp set in the run state by hand (design §3.2, R77)."""
+    """`stamp`: a key's rotation stamp set in the run state, and the expires_at in its entry set
+    or cleared, by hand (design §3.2, R77)."""
 
     ENV = {cli.ROLE_ID_ENV: ROLE_ID, cli.SECRET_ID_ENV: SECRET_ID}
 
@@ -242,11 +243,77 @@ class TestStamp:
         code, err = usage("stamp", LEAF, "token", "--rotated-at", date, env=self.ENV)
         assert code == 2 and f"{date!r} is not an ISO date (YYYY-MM-DD)" in err
 
-    def test_a_date_after_today_or_none_is_a_usage_error(self):
+    def test_a_stamp_after_today_is_a_usage_error(self):
         code, err = usage("stamp", LEAF, "token", "--rotated-at", "2999-01-01", env=self.ENV)
         assert code == 2 and "--rotated-at 2999-01-01 is after today" in err
+
+    def test_it_sets_something_or_it_is_a_usage_error(self):
         code, err = usage("stamp", LEAF, "token", env=self.ENV)
-        assert code == 2 and "--rotated-at" in err
+        assert code == 2
+        assert "stamp sets something: --rotated-at, --expires-at or --clear-expires-at" in err
+
+    def test_expires_at_sets_the_key_s_expiry_in_its_entry_alone(self):
+        store = store_of(**ACTIVATE_NONE)
+        bao = fake_of(store)
+        code, lines = self.stamp(bao, LEAF, "token", "--expires-at", "2026-12-01")
+        assert code == 0
+        assert lines == [f"{LEAF}#token: expires_at 2026-12-01, was none"]
+        assert fields_of(bao.meta(LEAF), "token") == fields_of(store[LEAF].meta, "token") | {
+            "expires_at": "2026-12-01"
+        }
+        assert [w[:2] for w in bao.writes()] == [("PATCH", f"kv/metadata/{LEAF}")]
+
+    def test_clear_expires_at_clears_it_and_says_what_it_replaced(self):
+        store = store_of(**ACTIVATE_NONE)
+        edit(store[LEAF].meta, "token", expires_at="2026-12-01")
+        bao = fake_of(store)
+        code, lines = self.stamp(bao, LEAF, "token", "--clear-expires-at")
+        assert code == 0
+        assert lines == [f"{LEAF}#token: expires_at none, was 2026-12-01"]
+        assert "expires_at" not in fields_of(bao.meta(LEAF), "token")
+
+    def test_an_expiry_the_entry_holds_already_is_not_written_again(self):
+        bao = fake_of(store_of(**ACTIVATE_NONE))
+        code, lines = self.stamp(bao, LEAF, "token", "--clear-expires-at")
+        assert (code, lines) == (0, [f"{LEAF}#token: expires_at none, was none"])
+        assert bao.writes() == []
+
+    def test_a_stamp_and_an_expiry_together_set_when_the_key_falls_due(self):
+        bao = fake_of(store_of(**ACTIVATE_NONE))
+        argv = ("--rotated-at", "2026-10-01", "--expires-at", "2026-10-20")
+        code, lines = self.stamp(bao, LEAF, "token", *argv)
+        assert code == 0
+        assert lines == [
+            f"{LEAF}#token: rotation stamp 2026-10-01, was none",
+            f"{LEAF}#token: expires_at 2026-10-20, was none",
+        ]
+        live = live_store(client(bao), runs=True)
+        due = [(s.key, s.due_at) for s in due_keys(live, audit(live), datetime.date(2026, 10, 13))]
+        assert ("token", datetime.date(2026, 10, 13)) in due
+
+    def test_an_expiry_for_a_key_whose_entry_takes_none_is_an_error_and_writes_nothing(self):
+        store = store_of(**ACTIVATE_NONE)
+        del store[LEAF].meta["rotation_token"]
+        bao = fake_of(store)
+        argv = ("--rotated-at", "2026-10-01", "--clear-expires-at")
+        assert self.stamp(bao, COPY, "token", *argv) == (
+            1,
+            [f"error: {COPY}#token is no scheduled key: its entry takes no expires_at"],
+        )
+        assert self.stamp(bao, LEAF, "token", "--expires-at", "2026-12-01") == (
+            1,
+            [f"error: {LEAF} has no entry rotation_token"],
+        )
+        assert bao.writes() == []
+
+    def test_expires_at_and_clear_expires_at_together_are_a_usage_error(self):
+        argv = ("--expires-at", "2026-12-01", "--clear-expires-at")
+        code, err = usage("stamp", LEAF, "token", *argv, env=self.ENV)
+        assert code == 2 and "not allowed with argument" in err
+
+    def test_an_expiry_that_is_not_an_iso_date_is_a_usage_error(self):
+        code, err = usage("stamp", LEAF, "token", "--expires-at", "soon", env=self.ENV)
+        assert code == 2 and "'soon' is not an ISO date (YYYY-MM-DD)" in err
 
     def test_it_needs_the_rotators_approle(self):
         code, err = usage("stamp", LEAF, "token", "--rotated-at", "2026-10-01")

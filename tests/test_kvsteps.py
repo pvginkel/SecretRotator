@@ -1,7 +1,7 @@
 """The generic KV steps (design §4.2): random.generate's default and shape, kv.write and kv.copy
 as KV v2 patches with read-back and an undo to the version they started from, and kv.stamp's one
-check-and-set write of the run state with ISO-dated per-key stamps, after a staged expiry written
-into its key's entry."""
+check-and-set write of the run state with ISO-dated per-key stamps, after each key's expires_at
+written from what its plan staged, or cleared."""
 
 import pytest
 from fixtures import edit, fields_of
@@ -200,7 +200,7 @@ class TestKvStamp:
         state = state_of(bao, TRELLO)
         assert state.failed_nights == 0 and state.held_by is None
 
-    def test_without_a_staged_expiry_it_writes_nothing_on_the_secret_leaf_s_metadata(self):
+    def test_a_key_without_an_expiry_and_none_staged_has_nothing_written_on_its_metadata(self):
         bao = fake()
         before = dict(bao.meta(TRELLO))
         KvStamp(TRELLO, ("bearer-token",), ("ns/externalsecret/a",)).run(Ctx(bao))
@@ -237,6 +237,39 @@ class TestKvStamp:
             Ctx(bao, **{expiry_name("admin-token"): "2027-01-03"})
         )
         assert [w[1] for w in bao.writes()[writes:]] == [f"kv/data/{STATE_LEAF}"]
+
+    def test_a_key_with_no_expiry_staged_has_the_one_its_entry_held_cleared(self):
+        bao = fake()
+        before = fields_of(bao.meta(YOUTRACK), "admin-token")
+        detail = KvStamp(YOUTRACK, ("admin-token",)).run(Ctx(bao))
+        assert detail == "admin-token rotated 2026-10-05; admin-token expiry cleared"
+        assert fields_of(bao.meta(YOUTRACK), "admin-token") == {
+            k: v for k, v in before.items() if k != "expires_at"
+        }
+        metadata, state = bao.writes()
+        assert metadata[:2] == ("PATCH", f"kv/metadata/{YOUTRACK}")
+        assert state[:2] == ("POST", f"kv/data/{STATE_LEAF}")
+
+    def test_an_empty_staged_expiry_is_none(self):
+        bao = fake()
+        KvStamp(YOUTRACK, ("admin-token",)).run(Ctx(bao, **{expiry_name("admin-token"): ""}))
+        assert "expires_at" not in fields_of(bao.meta(YOUTRACK), "admin-token")
+
+    def test_each_key_of_the_plan_gets_its_own_expiry(self):
+        bao = fake()
+        edit(bao.meta(TRELLO), "token", expires_at="2026-10-01")
+        step = KvStamp(TRELLO, ("bearer-token", "token"))
+        step.run(Ctx(bao, **{expiry_name("bearer-token"): "2027-01-03"}))
+        assert fields_of(bao.meta(TRELLO), "bearer-token")["expires_at"] == "2027-01-03"
+        assert "expires_at" not in fields_of(bao.meta(TRELLO), "token")
+        (metadata,) = [w for w in bao.writes() if w[1].startswith("kv/metadata/")]
+        assert set(metadata[3]["custom_metadata"]) == {"rotation_bearer-token", "rotation_token"}
+
+    def test_an_entry_gone_mid_plan_with_no_expiry_staged_is_stamped_all_the_same(self):
+        bao = fake()
+        del bao.meta(TRELLO)["rotation_bearer-token"]
+        KvStamp(TRELLO, ("bearer-token",)).run(Ctx(bao))
+        assert state_of(bao, TRELLO).stamps == {"bearer-token": "2026-10-05"}
 
     def test_an_entry_gone_mid_plan_fails_before_anything_is_stamped(self):
         bao = fake()
