@@ -5,11 +5,11 @@ the operator's answers in.
 
 Where a plan stands lives in OpenBao: its staging leaf records the plan's keys, the step it is at
 and what it derived from the cluster, written before that step runs, so every step before it
-finished, and whether that step failed reporting it did not land; it exists exactly while the plan
-is in flight; the leaf's status in the run state says whether it failed. A leaf has one plan in
-flight. Step ids repeat across plans, and a leaf's plans differ by kind or by keys: only the plan
-of the kind and keys recorded resumes it. The staging leaf also holds the values the plan's steps
-produced, what their undos need, and, while a rollback runs, how far it got."""
+finished, and whether every run of that step failed reporting it did not land; it exists exactly
+while the plan is in flight; the leaf's status in the run state says whether it failed. A leaf has
+one plan in flight. Step ids repeat across plans, and a leaf's plans differ by kind or by keys:
+only the plan of the kind and keys recorded resumes it. The staging leaf also holds the values the
+plan's steps produced, what their undos need, and, while a rollback runs, how far it got."""
 
 import datetime
 from collections.abc import Callable
@@ -31,7 +31,7 @@ from secret_rotator.model import (
 )
 from secret_rotator.openbao import OpenBao, OpenBaoError
 from secret_rotator.plan import Plan
-from secret_rotator.staging import NOT_LANDED, Staging, flights
+from secret_rotator.staging import NOT_LANDED, STEP, Staging, flights
 from secret_rotator.state import LeafState, State
 
 ROLLBACK = "rollback"  # staging: how many of the rollback's items are done
@@ -213,9 +213,10 @@ class Executor:
                 return step.no_undo or f"{step.title}: it cannot be undone"
         return None
 
-    def _fail(self, step: Step, action: Action, e: Exception) -> Outcome:
+    def _fail(self, step: Step, action: Action, e: Exception, *, unlanded: bool = False) -> Outcome:
+        """unlanded: no earlier run of the step landed, so this one may mark it not landed."""
         error, technical = failure(e)
-        if action is Action.RUN and isinstance(e, StepFailed) and not e.landed:
+        if unlanded and isinstance(e, StepFailed) and not e.landed:
             try:
                 self.staging.put(NOT_LANDED, step.id)
             except OpenBaoError as e2:
@@ -238,13 +239,16 @@ class Executor:
             self.at = at
             step = self.plan.steps[at]
             self.renderer.event(Started(step))
+            # A step judges only its own run, so one the plan was already at counts as landed
+            # unless every run of it so far failed reporting it did not land.
+            unlanded = self.staging.get(STEP) != step.id or self.staging.get(NOT_LANDED) == step.id
             try:
                 self.staging.record(self.plan.target.keys, step.id, self.plan.derived)
                 detail = step.run(_RunContext(self, step, Action.RUN))
             except _Abandoned as a:
                 return Outcome.EXITED if a.choice is Abandon.EXIT else self._abort()
             except Exception as e:
-                return self._fail(step, Action.RUN, e)
+                return self._fail(step, Action.RUN, e, unlanded=unlanded)
             self.renderer.event(Finished(step, Action.RUN, True, detail or ""))
         self.staging.destroy()
         return Outcome.DONE

@@ -13,8 +13,8 @@ from secret_rotator.contract import STAGING_PREFIX
 from secret_rotator.openbao import OpenBao
 
 # The record's names among the staged ones: the plan's keys, a JSON array, the id of the step the
-# plan is at, what it derived from the cluster (Derived.dump), and that step's id once it failed
-# reporting it did not land (model.StepFailed.landed), which the next record drops.
+# plan is at, what it derived from the cluster (Derived.dump), and that step's id once every run of
+# it failed reporting it did not land (model.StepFailed.landed), which the next record drops.
 KEYS = "keys"
 STEP = "step"
 DERIVED = "derived"

@@ -463,6 +463,28 @@ class TestAbort:
         assert NOT_LANDED not in bao.data(STAGING)
         assert e.abort_blocker() == "irrev cannot be taken back"
 
+    def test_a_retry_that_did_not_land_leaves_an_earlier_attempt_landed(self):
+        bao = fake()
+        irrev = Tool("irrev", Journal(), undoable=False, fail=3)
+        e = executor(bao, plan_of(irrev), Recorder())
+        assert e.run() is Outcome.FAILED
+        irrev.landed = False
+        for _ in range(2):
+            assert e.run() is Outcome.FAILED
+            assert NOT_LANDED not in bao.data(STAGING)
+            assert e.abort_blocker() == "irrev cannot be taken back"
+
+    def test_a_retry_that_did_not_land_after_attempts_that_did_not_either_rolls_back(self):
+        bao = fake()
+        j = Journal()
+        irrev = Tool("irrev", j, undoable=False, fail=2, landed=False)
+        assert run(bao, plan_of(irrev))[0] is Outcome.FAILED
+        e = executor(bao, plan_of(irrev), Recorder())
+        assert e.run() is Outcome.FAILED
+        assert bao.data(STAGING)[NOT_LANDED] == "irrev"
+        assert e.abort() is Outcome.ROLLED_BACK
+        assert j == [("run", "irrev"), ("run", "irrev")]
+
     def test_with_nothing_else_mutated_it_is_a_cancel(self):
         bao = fake()
         kind = ExtraFirst(Tool("irrev", Journal(), undoable=False, fail=1, landed=False))

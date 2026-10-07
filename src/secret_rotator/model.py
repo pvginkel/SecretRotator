@@ -124,11 +124,11 @@ class Step(abc.ABC):
     # that did not land as it is.
     undo: Callable[[Context], str | None] | None = None
     # Why a mutating step without an undo cannot be taken back, shown when Abort is refused. Abort
-    # is refused once such a step ran, a failed run included, unless the failure is a StepFailed
-    # with landed False. A step raises that only where what it does is known never to have taken
-    # effect, and its docstring names those failures. A step that did not land counts as not
-    # having run: nothing of it is undone or re-run, and only the steps before it gate Abort
-    # (design §4.5).
+    # is refused once such a step ran, a failed run included, unless every run of it failed with a
+    # StepFailed with landed False. A step raises that only where what it does is known never to
+    # have taken effect, and its docstring names those failures. A step that did not land counts
+    # as not having run: nothing of it is undone or re-run, and only the steps before it gate
+    # Abort (design §4.5).
     no_undo = ""
 
     def __init__(self, id: str, title: str, *, estimate: int = 0):

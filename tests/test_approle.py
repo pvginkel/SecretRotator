@@ -348,6 +348,17 @@ class TestTheRuns:
         assert world.live("backup") == {"SECRET-old-backup": "accessor-old-backup"}
         assert world.bao.data(BACKUP) == {"secret_id": MARKER_VALUE}
 
+    def test_a_retry_that_changed_no_host_cannot_roll_back_a_run_that_did(self, tmp_path):
+        world = World(tmp_path, "failed")
+        assert world.run(BACKUP) is Outcome.FAILED
+        minted = world.live("backup")
+        world.ansible = Ansible(tmp_path, (sys.executable, FAKE_PLAYBOOK, "unchanged"))
+        executor = world.executor(BACKUP)
+        assert executor.run() is Outcome.FAILED
+        with pytest.raises(AbortRefused, match="previous backup secret_id is not known"):
+            executor.abort()
+        assert world.live("backup") == minted
+
     def test_a_jenkins_credential_write_jenkins_refused_is_rolled_back(self, tmp_path):
         world = World(tmp_path)
         world.jenkins.refused["POST", f"{credential_path(JENKINS_CREDENTIAL)}/config.xml"] = 403
@@ -359,6 +370,21 @@ class TestTheRuns:
         assert world.live("jenkins") == {"SECRET-old-jenkins": "accessor-old-jenkins"}
         assert world.jenkins.secret(JENKINS_CREDENTIAL) == "SECRET-old-secret-id"
         assert world.bao.data(JENKINS) == {"secret_id": MARKER_VALUE}
+
+    def test_a_retry_that_never_reached_jenkins_cannot_roll_back_a_write_of_unknown_outcome(
+        self, tmp_path
+    ):
+        world = World(tmp_path)
+        config = f"{credential_path(JENKINS_CREDENTIAL)}/config.xml"
+        world.jenkins.refused["POST", config] = 502
+        assert world.run(JENKINS) is Outcome.FAILED
+        minted = world.live("jenkins")
+        world.jenkins.refused = {("GET", config): 503}
+        executor = world.executor(JENKINS)
+        assert executor.run() is Outcome.FAILED
+        with pytest.raises(AbortRefused):
+            executor.abort()
+        assert world.live("jenkins") == minted
 
     def test_manual_shows_the_new_secret_id_and_records_the_rotation(self, tmp_path):
         world = World(tmp_path)
