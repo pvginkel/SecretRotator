@@ -1,5 +1,6 @@
 """The OpenBao client: AppRole login through the VIP's listener port, the walk, key names without
-values, metadata patch, create, and refusals and transport failures it names."""
+values, metadata and its patch with max_versions, create, and refusals and transport failures it
+names."""
 
 import urllib.error
 
@@ -7,7 +8,14 @@ import pytest
 from fake_openbao import ROLE_ID, SECRET_ID, TOKEN, FakeOpenBao, approle
 from fixtures import COMPLIANT, data_of, fields_of
 
-from secret_rotator.openbao import ADDR, RELOGIN_MARGIN, OpenBao, OpenBaoError, Version
+from secret_rotator.openbao import (
+    ADDR,
+    RELOGIN_MARGIN,
+    Metadata,
+    OpenBao,
+    OpenBaoError,
+    Version,
+)
 
 
 def fake():
@@ -91,6 +99,26 @@ def test_patch_sends_a_merge_patch_of_custom_metadata():
             "application/merge-patch+json",
         )
     ]
+
+
+def test_a_patch_removes_the_keys_it_sets_to_null_and_may_set_max_versions():
+    bao = fake()
+    c = client(bao)
+    c.patch_metadata("shared/wifi", {"rotation_password": None, "notes": "n"}, max_versions=20)
+    assert bao.requests[-1][3] == {
+        "custom_metadata": {"rotation_password": None, "notes": "n"},
+        "max_versions": 20,
+    }
+    assert c.leaf_metadata("shared/wifi") == Metadata({"notes": "n"}, 20)
+    c.patch_metadata("shared/wifi", {}, max_versions=5)
+    assert bao.requests[-1][3] == {"max_versions": 5}
+    assert c.leaf_metadata("shared/wifi") == Metadata({"notes": "n"}, 5)
+
+
+def test_leaf_metadata_is_the_custom_metadata_and_max_versions_or_none_for_no_leaf():
+    c = client(fake())
+    assert c.leaf_metadata("iac/copy") == Metadata(COMPLIANT["iac/copy"][1], 0)
+    assert c.leaf_metadata("no/such/leaf") is None
 
 
 def test_create_writes_the_first_version_only():

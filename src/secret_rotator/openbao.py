@@ -31,6 +31,14 @@ class OpenBaoError(Exception):
 
 
 @dataclass(frozen=True)
+class Metadata:
+    """A leaf's metadata, as much of it as the rotator reads."""
+
+    custom: dict[str, str]
+    max_versions: int  # 0: the mount's
+
+
+@dataclass(frozen=True)
 class Version:
     """One version of a leaf's data."""
 
@@ -157,10 +165,15 @@ class OpenBao:
 
     def metadata(self, leaf: str) -> dict[str, str] | None:
         """The leaf's custom_metadata; None when the store has no such leaf."""
+        found = self.leaf_metadata(leaf)
+        return None if found is None else found.custom
+
+    def leaf_metadata(self, leaf: str) -> Metadata | None:
+        """None when the store has no such leaf."""
         status, doc = self.call("GET", f"{MOUNT}/metadata/{leaf}")
         if status == 404:
             return None
-        return doc["data"].get("custom_metadata") or {}
+        return Metadata(doc["data"].get("custom_metadata") or {}, doc["data"]["max_versions"])
 
     def subkeys(self, leaf: str) -> set[str] | None:
         """The data key names of the current version, without their values; None when that
@@ -169,13 +182,17 @@ class OpenBao:
         subkeys = None if status == 404 else doc["data"]["subkeys"]
         return None if subkeys is None else set(subkeys)
 
-    def patch_metadata(self, leaf: str, custom: dict[str, str | None]) -> None:
+    def patch_metadata(
+        self, leaf: str, custom: dict[str, str | None], max_versions: int | None = None
+    ) -> None:
         """A merge patch of custom_metadata: keys it does not name are kept (never a put), a None
-        value removes its key. Refused when the store has no such leaf."""
+        value removes its key; with max_versions, that too. Refused when the store has no such
+        leaf."""
         path = f"{MOUNT}/metadata/{leaf}"
-        status, _ = self.call(
-            "PATCH", path, {"custom_metadata": custom}, content_type="application/merge-patch+json"
-        )
+        body: dict = {"custom_metadata": custom} if custom else {}
+        if max_versions is not None:
+            body["max_versions"] = max_versions
+        status, _ = self.call("PATCH", path, body, content_type="application/merge-patch+json")
         if status == 404:
             raise OpenBaoError(f"PATCH {path}: HTTP 404: no leaf {leaf}", status)
 

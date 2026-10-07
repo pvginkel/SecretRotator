@@ -1,6 +1,7 @@
 """The seed (catalog.md transcribed) and its apply: each leaf's compact form, a leaf default and
-per-key overrides, expanded into one rotation_<key> entry per data key and written by metadata
-patch, never put; and the marker leaves it declares (design §5, catalog § rotator/)."""
+per-key overrides, expanded into one rotation_<key> entry per data key; a leaf's custom metadata
+made exactly those entries by metadata patch, never put, and an automatic leaf's max_versions set;
+and the marker leaves it declares (design §3.4, §5, catalog § rotator/)."""
 
 import json
 import re
@@ -32,7 +33,7 @@ from secret_rotator.contract import (
     load_entry,
     takes,
 )
-from secret_rotator.openbao import OpenBao, OpenBaoError
+from secret_rotator.openbao import Metadata, OpenBao, OpenBaoError
 
 DEFAULT_SEED = resources.files("secret_rotator") / "seed.yaml"
 DEFAULT_KEYS = resources.files("secret_rotator") / "store-keys.json"
@@ -44,6 +45,9 @@ KEYS = "keys"
 MARKER = "marker"
 MARKER_PREFIX = "rotator/"
 DATA_KEY = re.compile(r"[^/\s]+")
+
+# The KV versions an automatic leaf keeps (design §3.4).
+MAX_VERSIONS = 20
 
 LEAF_PATH = re.compile(r"[^/\s]+(/[^/\s]+)*")
 
@@ -204,10 +208,16 @@ def expand(leaf: SeedLeaf, keys: Iterable[str]) -> dict[str, dict]:
     return {key: _entry(leaf, kind, leaf.keys.get(key, {})) for key, kind in kinds.items()}
 
 
-def changes(entries: Mapping[str, dict], current: Mapping[str, str]) -> dict[str, str]:
-    """The entries the seed adds or changes, by metadata key. An existing entry keeps its
+def automatic(entries: Mapping[str, dict]) -> bool:
+    """A leaf with a key whose kind is neither manual nor none, a copy included (design §3.4)."""
+    return any(fields["kind"] not in ("manual", NONE) for fields in entries.values())
+
+
+def changes(entries: Mapping[str, dict], current: Mapping[str, str]) -> dict[str, str | None]:
+    """The patch that makes the custom metadata exactly the entries: each entry the seed adds or
+    changes, then None for every other key the metadata holds. An existing entry keeps its
     expires_at, or its absence: the seed's is written only with a new entry (design §3.2)."""
-    out = {}
+    out: dict[str, str | None] = {}
     for key, fields in sorted(entries.items()):
         name = entry_name(key)
         if name not in current:
@@ -222,13 +232,24 @@ def changes(entries: Mapping[str, dict], current: Mapping[str, str]) -> dict[str
             want["expires_at"] = live["expires_at"]
         if want != live:
             out[name] = dump_entry(want)
+    names = {entry_name(key) for key in entries}
+    out.update(dict.fromkeys(sorted(current.keys() - names)))
     return out
 
 
 @dataclass
+class Write:
+    """One leaf's: its custom metadata patch, and an automatic leaf's max_versions when it is not
+    MAX_VERSIONS."""
+
+    patch: dict[str, str | None]  # a None value removes its key
+    current: dict[str, str]
+    max_versions: int | None = None  # the leaf's, which the write sets to MAX_VERSIONS
+
+
+@dataclass
 class Plan:
-    patches: dict[str, dict[str, str]] = field(default_factory=dict)
-    current: dict[str, dict[str, str]] = field(default_factory=dict)
+    writes: dict[str, Write] = field(default_factory=dict)
     creates: dict[str, str] = field(default_factory=dict)  # marker leaf -> its data key
     unchanged: list[str] = field(default_factory=list)
     absent: list[str] = field(default_factory=list)
@@ -246,11 +267,11 @@ def make_plan(bao: OpenBao, seed: Seed) -> Plan:
     plan.uncovered = [leaf for leaf in live if leaf not in seed.leaves]
     live_set = set(live)
     for leaf in sorted(seed.leaves):
-        current = bao.metadata(leaf) if leaf in live_set else None
-        if current is None and leaf in seed.markers:
+        held = bao.leaf_metadata(leaf) if leaf in live_set else None
+        if held is None and leaf in seed.markers:
             plan.creates[leaf] = seed.markers[leaf]
-            current, keys = {}, {seed.markers[leaf]}
-        elif current is None:
+            held, keys = Metadata({}, 0), {seed.markers[leaf]}
+        elif held is None:
             plan.absent.append(leaf)
             continue
         elif (keys := bao.subkeys(leaf)) is None:
@@ -259,31 +280,37 @@ def make_plan(bao: OpenBao, seed: Seed) -> Plan:
         entries = expand(seed.leaves[leaf], keys)
         plan.unnamed += [f"{leaf}#{key}" for key in sorted(keys - entries.keys())]
         plan.unheld += [f"{leaf}#{key}" for key in sorted(seed.leaves[leaf].keys.keys() - keys)]
-        patch = changes(entries, current)
-        if not patch:
+        patch = changes(entries, held.custom)
+        versions = held.max_versions
+        if not automatic(entries) or versions == MAX_VERSIONS:
+            versions = None
+        if not patch and versions is None:
             plan.unchanged.append(leaf)
             continue
-        plan.patches[leaf], plan.current[leaf] = patch, current
-        for name in patch:
-            if size(name) > MAX_KEY_BYTES:
+        plan.writes[leaf] = Write(patch, held.custom, versions)
+        for name, value in patch.items():
+            if value is not None and size(name) > MAX_KEY_BYTES:
                 plan.errors.append(f"{leaf}: {name}: longer than {MAX_KEY_BYTES} bytes")
-        if len(current.keys() | patch.keys()) > MAX_KEYS:
+        if len(entries) > MAX_KEYS:
             plan.errors.append(f"{leaf}: more than {MAX_KEYS} metadata keys once patched")
     return plan
 
 
 def report(out: Callable[[str], None], plan: Plan, apply: bool) -> None:
-    for leaf, patch in plan.patches.items():
+    for leaf, write in plan.writes.items():
         out(leaf)
         if leaf in plan.creates:
             out(f"  create  marker leaf, data key {plan.creates[leaf]}")
-        for key, value in patch.items():
-            have = plan.current[leaf].get(key)
-            out(
-                f"  add     {key}={value}"
-                if have is None
-                else f"  change  {key}={value}  (was {have})"
-            )
+        for key, value in write.patch.items():
+            have = write.current.get(key)
+            if value is None:
+                out(f"  remove  {key}={have}")
+            elif have is None:
+                out(f"  add     {key}={value}")
+            else:
+                out(f"  change  {key}={value}  (was {have})")
+        if write.max_versions is not None:
+            out(f"  set     max_versions={MAX_VERSIONS}  (was {write.max_versions})")
     for leaf in plan.absent:
         out(f"absent from the store, skipped: {leaf}")
     for leaf in plan.unreadable:
@@ -296,7 +323,7 @@ def report(out: Callable[[str], None], plan: Plan, apply: bool) -> None:
         out(f"not in the seed: {leaf}")
     verb = "patching" if apply else "would patch (dry run; --apply writes)"
     out(
-        f"{verb} {len(plan.patches)} leaf(s), {len(plan.creates)} of them new marker leaves; "
+        f"{verb} {len(plan.writes)} leaf(s), {len(plan.creates)} of them new marker leaves; "
         f"{len(plan.unchanged)} unchanged, {len(plan.absent)} absent from the store, "
         f"{len(plan.uncovered)} live leaf(s) not in the seed"
     )
@@ -312,21 +339,23 @@ def run_apply(bao: OpenBao, seed: Seed, apply: bool, out: Callable[[str], None])
         return 1
     if not apply:
         return 0
-    for done, (leaf, patch) in enumerate(plan.patches.items()):
+    for done, (leaf, write) in enumerate(plan.writes.items()):
         try:
             if leaf in plan.creates:
                 bao.create(leaf, {plan.creates[leaf]: MARKER_VALUE})
-            bao.patch_metadata(leaf, patch)
+            bao.patch_metadata(
+                leaf, write.patch, None if write.max_versions is None else MAX_VERSIONS
+            )
         except OpenBaoError as e:
             if e.status == 403:
                 out(
                     f"stopped at {leaf}: OpenBao refused the write ({e}). The token's policy "
                     f"lacks the capability: the openbao role's rotator policy grants patch on the "
                     f"{MOUNT} mount and create under {MARKER_PREFIX}. Patched {done} of "
-                    f"{len(plan.patches)} leaf(s); run the apply again after the converge."
+                    f"{len(plan.writes)} leaf(s); run the apply again after the converge."
                 )
             else:
-                out(f"stopped at {leaf}: {e}. Patched {done} of {len(plan.patches)} leaf(s).")
+                out(f"stopped at {leaf}: {e}. Patched {done} of {len(plan.writes)} leaf(s).")
             return 1
         out(f"{'created and patched' if leaf in plan.creates else 'patched'} {leaf}")
     return 0

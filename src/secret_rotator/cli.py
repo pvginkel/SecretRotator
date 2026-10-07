@@ -76,8 +76,10 @@ def parser() -> argparse.ArgumentParser:
     annotate = commands.add_parser(
         "annotate",
         help="write the seed's annotations onto the kv mount (a dry run without --apply)",
-        description="Lists, per leaf, the metadata keys the seed adds or changes; --apply writes "
-        "them by metadata patch, never put, and creates the marker leaves the seed declares.",
+        description="Lists, per leaf, the metadata keys it adds, changes and removes to make the "
+        "leaf's custom metadata exactly the seed's entries, and an automatic leaf's max_versions "
+        "it sets to 20; --apply writes them by metadata patch, never put, and creates the marker "
+        "leaves the seed declares.",
     )
     annotate.add_argument("--seed", type=Path, help="the seed (default: the packaged one)")
     annotate.add_argument("--apply", action="store_true", help="write what the dry run lists")

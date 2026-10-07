@@ -1,6 +1,8 @@
-"""annotate: the seed's compact form expanded into one rotation_<key> entry per data key, written
-with PATCH kv/metadata only, idempotent, stopped by a refusal; a live entry's expires_at kept; the
-marker leaves it declares created under rotator/; what a seed may hold."""
+"""annotate: the seed's compact form expanded into one rotation_<key> entry per data key, and a
+leaf's custom metadata made exactly those entries, every other key removed and listed by leaf;
+max_versions 20 on automatic leaves; written with PATCH kv/metadata only, idempotent, stopped by a
+refusal; a live entry's expires_at kept; the marker leaves it declares created under rotator/; what
+a seed may hold."""
 
 import json
 import tempfile
@@ -21,18 +23,33 @@ N = len(COMPLIANT)
 OIDC = "eso/prd/app/prd/oidc"
 YOUTRACK = "jenkins/youtrack"
 
-# What the store holds before the apply: the sweep's annotations, and one entry the seed changes.
+# What the store holds before the apply: the sweep's annotations and the old layout's keys, and one
+# entry the seed changes.
 BEFORE = {
     OIDC: {
         "rotation": "coordinated",
         "notes": "Transcript-migrated.",
+        "rotation_mechanism": "keycloak-client",
+        "key_client_id": "none",
         "rotation_client_secret": dump_entry(
             {"kind": "keycloak-client", "interval": "30d", "activate": "auto"}
         ),
     },
-    "eso/prd/es/prd/creds": {"rotation": "coordinated"},
+    "eso/prd/es/prd/creds": {
+        "rotation": "coordinated",
+        "notes": "Retire the filebeat_writer user at slice close.",
+        "rotation_interval": "14d",
+        "interval_password": "30d",
+        "rotation_activate": "auto",
+        "rotation_args": '{"user":"filebeat_writer"}',
+        "rotation_expires_at": "2027-01-01",
+        "rotator_status": "ok",
+        "rotated_at_password": "2026-09-01",
+    },
     "shared/wifi": {"rotation": "coordinated", "rotated_at": "2026-01-01"},
 }
+# The leaves of COMPLIANT with a key whose kind is neither manual nor none, a copy included.
+AUTOMATIC = sorted(set(COMPLIANT) - {"shared/wifi"})
 
 MARKERS = {
     "rotator/approle/eso": {
@@ -104,16 +121,38 @@ def run():
 
 
 class TestApply:
-    def test_a_dry_run_lists_each_change_and_writes_nothing(self, run):
+    def lines_of(self, run, leaf):
+        """The dry run's lines under the leaf's own."""
+        at = run.lines.index(leaf) + 1
+        end = next(i for i, line in enumerate(run.lines[at:], at) if not line.startswith("  "))
+        return run.lines[at:end]
+
+    def test_a_dry_run_lists_each_change_and_removal_by_leaf_and_writes_nothing(self, run):
         assert run.apply() == 0, run.text
         assert run.bao.writes() == []
-        assert OIDC in run.lines
-        assert '  add     rotation_client_id={"kind":"none"}' in run.lines
-        assert (
+        assert self.lines_of(run, OIDC) == [
+            '  add     rotation_client_id={"kind":"none"}',
             '  change  rotation_client_secret={"kind":"keycloak-client","interval":"14d",'
             '"args":{"realm":"homelab"},"activate":"auto"}  (was {"kind":"keycloak-client",'
-            '"interval":"30d","activate":"auto"})'
-        ) in run.lines
+            '"interval":"30d","activate":"auto"})',
+            "  remove  key_client_id=none",
+            "  remove  notes=Transcript-migrated.",
+            "  remove  rotation=coordinated",
+            "  remove  rotation_mechanism=keycloak-client",
+            "  set     max_versions=20  (was 0)",
+        ]
+        removed = [line for line in self.lines_of(run, "eso/prd/es/prd/creds") if "remove" in line]
+        assert removed == [
+            "  remove  interval_password=30d",
+            "  remove  notes=Retire the filebeat_writer user at slice close.",
+            "  remove  rotated_at_password=2026-09-01",
+            "  remove  rotation=coordinated",
+            "  remove  rotation_activate=auto",
+            '  remove  rotation_args={"user":"filebeat_writer"}',
+            "  remove  rotation_expires_at=2027-01-01",
+            "  remove  rotation_interval=14d",
+            "  remove  rotator_status=ok",
+        ]
         assert run.lines[-1] == (
             f"would patch (dry run; --apply writes) {N} leaf(s), 0 of them "
             f"new marker leaves; 0 unchanged, 0 absent from the store, 0 live "
@@ -129,25 +168,61 @@ class TestApply:
             ("PATCH", "metadata"),
         }
 
-    def test_every_write_is_a_merge_patch_of_one_entry_per_data_key(self, run):
+    def test_every_write_is_a_merge_patch_of_the_entries_and_the_removals(self, run):
         assert run.apply("--apply") == 0, run.text
         writes = run.bao.writes()
         assert len(writes) == N
-        for method, path, _, body, ctype in writes:
+        for method, path, *_, ctype in writes:
             assert (method, ctype) == ("PATCH", "application/merge-patch+json")
             assert path.startswith("kv/metadata/"), path
-            assert list(body) == ["custom_metadata"]
         wifi = next(b for _, p, _, b, _ in writes if p == "kv/metadata/shared/wifi")
-        assert wifi["custom_metadata"] == {
-            "rotation_password": '{"kind":"manual","interval":"never","activate":"none",'
-            '"notes":"PSK in every device"}'
+        assert wifi == {
+            "custom_metadata": {
+                "rotation_password": '{"kind":"manual","interval":"never","activate":"none",'
+                '"notes":"PSK in every device"}',
+                "rotated_at": None,
+                "rotation": None,
+            }
         }
 
-    def test_keys_the_seed_does_not_name_survive(self, run):
-        run.apply("--apply")
-        assert run.bao.meta("shared/wifi")["rotated_at"] == "2026-01-01"
-        assert run.bao.meta(OIDC)["rotation"] == "coordinated"
-        assert run.bao.meta(OIDC)["notes"] == "Transcript-migrated."
+    def test_once_applied_a_leaf_s_custom_metadata_is_exactly_its_entries(self, run):
+        assert run.apply("--apply") == 0, run.text
+        for path, (_, meta) in COMPLIANT.items():
+            assert run.bao.meta(path) == meta, path
+
+    def test_an_entry_of_a_key_the_seed_gives_none_goes_and_is_listed(self, run):
+        stale = dump_entry({"kind": "none"})
+        run.bao.meta(OIDC).update({entry_name("url"): stale, entry_name("gone"): stale})
+        run.bao.leaves[OIDC]["data"]["url"] = "https://app"
+        assert run.apply() == 0, run.text
+        assert f"  remove  rotation_gone={stale}" in run.lines
+        assert f"  remove  rotation_url={stale}" in run.lines
+        assert run.apply("--apply") == 0, run.text
+        assert run.bao.meta(OIDC) == COMPLIANT[OIDC][1]
+
+    def test_the_packaged_seed_takes_the_sweep_s_notes_off_the_elastic_leaves(self, run):
+        # R4: the seed carries no note for either leaf, so the go-live's apply removes them.
+        notes = {
+            "eso/prd/filebeat/prd/elastic-credentials": "filebeat_writer: retire at slice close",
+            "eso/prd/iot/prd/elastic-credentials": "iotsupport: retire at slice close",
+        }
+        run.bao = FakeOpenBao(
+            {
+                leaf: {
+                    "data": {"password": "SECRET-p", "username": "SECRET-u"},
+                    "meta": {"notes": note, "rotation": "coordinated"},
+                }
+                for leaf, note in notes.items()
+            }
+        )
+        assert run("annotate") == 0, run.text
+        for leaf, note in notes.items():
+            assert f"  remove  notes={note}" in self.lines_of(run, leaf), leaf
+        assert run("annotate", "--apply") == 0, run.text
+        for leaf in notes:
+            meta = run.bao.meta(leaf)
+            assert sorted(meta) == ["rotation_password", "rotation_username"], leaf
+            assert not any("notes" in fields_of(meta, key) for key in ("password", "username"))
 
     def test_after_the_apply_every_key_has_its_entry(self, run):
         run.apply("--apply")
@@ -177,6 +252,15 @@ class TestApply:
         before = len(run.bao.writes())
         run.apply("--apply")
         assert len(run.bao.writes()) == before
+
+    def test_changes_removes_every_key_but_the_entries(self):
+        entries = {"token": {"kind": "random", "activate": "auto"}}
+        current = {
+            "rotation_token": dump_entry(entries["token"]),
+            "rotation_mechanism": "random",
+            "notes": "n",
+        }
+        assert ann.changes(entries, current) == {"notes": None, "rotation_mechanism": None}
 
     def test_a_seed_leaf_the_store_lacks_is_reported_and_skipped(self, run):
         del run.bao.leaves["shared/wifi"]
@@ -244,6 +328,11 @@ class TestApply:
 
     def test_more_than_64_metadata_keys_once_patched_writes_nothing(self, run):
         run.bao.meta(OIDC).update({f"sweep_{i}": "x" for i in range(61)})
+        assert run.apply() == 0, run.text
+        seed = compliant_seed()
+        seed[OIDC]["kind"] = "none"
+        run.write_seed(seed)
+        run.bao.leaves[OIDC]["data"].update({f"k{i}": "x" for i in range(63)})
         assert run.apply("--apply") == 1
         assert run.bao.writes() == []
         assert f"cannot write: {OIDC}: more than 64 metadata keys once patched" in run.lines
@@ -320,6 +409,47 @@ class TestExpiry:
         }
 
 
+class TestMaxVersions:
+    """An automatic leaf keeps 20 KV versions; annotate sets it (design §3.4)."""
+
+    def versions(self, run):
+        return {path: run.bao.leaves[path].get("max_versions", 0) for path in COMPLIANT}
+
+    def test_the_apply_sets_20_on_automatic_leaves_and_leaves_the_others(self, run):
+        run.bao.leaves["shared/wifi"]["max_versions"] = 5
+        assert run.apply("--apply") == 0, run.text
+        assert self.versions(run) == {path: 20 for path in AUTOMATIC} | {"shared/wifi": 5}
+        for _, path, _, body, _ in run.bao.writes():
+            leaf = path.removeprefix("kv/metadata/")
+            assert body.get("max_versions") == (20 if leaf in AUTOMATIC else None), leaf
+
+    def test_a_copy_makes_its_leaf_automatic_and_none_or_manual_do_not(self, run):
+        assert ann.automatic({"t": {"kind": "copy:eso/prd/a#t"}, "u": {"kind": "none"}})
+        assert ann.automatic({"t": {"kind": "random"}})
+        assert not ann.automatic({"t": {"kind": "manual"}, "u": {"kind": "none"}})
+        assert not ann.automatic({})
+
+    def test_a_leaf_lacking_only_its_max_versions_is_patched_with_it_alone(self, run):
+        run.apply("--apply")
+        run.bao.leaves["iac/copy"]["max_versions"] = 50
+        before = len(run.bao.writes())
+        assert run.apply() == 0, run.text
+        at = run.lines.index("iac/copy")
+        assert run.lines[at + 1] == "  set     max_versions=20  (was 50)"
+        assert run.lines[-1].startswith("would patch (dry run; --apply writes) 1 leaf(s)")
+        assert run.apply("--apply") == 0, run.text
+        assert run.bao.writes()[before:] == [
+            (
+                "PATCH",
+                "kv/metadata/iac/copy",
+                {},
+                {"max_versions": 20},
+                "application/merge-patch+json",
+            )
+        ]
+        assert run.bao.leaves["iac/copy"]["max_versions"] == 20
+
+
 class TestMarkers:
     """A marker leaf the seed declares is created with its one data key, then annotated."""
 
@@ -337,6 +467,7 @@ class TestMarkers:
             '  add     rotation_secret_id={"kind":"approle","interval":"14d","args":{"role":"eso",'
             '"delivery":"k8s_secret=ns/name"},"activate":"none"}'
         )
+        assert run.lines[at + 3] == "  set     max_versions=20  (was 0)"
         assert ", 2 of them new marker leaves;" in run.lines[-1]
 
     def test_the_apply_creates_each_marker_with_its_one_key_then_patches_it(self, run):

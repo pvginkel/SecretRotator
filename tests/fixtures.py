@@ -166,7 +166,7 @@ COMPLIANT = {
     ),
 }
 
-# Keys the contract leaves to others; the audit ignores them and the apply keeps them.
+# Keys outside the contract: the audit ignores them, annotate removes them.
 FOREIGN = {"rotation": "coordinated", "rotated_at": "2026-01-01", "rotator_status": "ok"}
 
 

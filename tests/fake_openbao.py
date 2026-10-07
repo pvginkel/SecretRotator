@@ -52,7 +52,8 @@ class FakeResponse(io.BytesIO):
 class FakeOpenBao:
     def __init__(self, leaves=None, approles=None, clock=None):
         # path -> {"data": dict | None, "meta": dict}, and once written "version" (the current
-        # version's number, else 1) and "history" (version number -> that version's data)
+        # version's number, else 1), "history" (version number -> that version's data) and
+        # "max_versions" (else 0)
         self.leaves = copy.deepcopy(leaves or {})
         self.requests = []  # (method, path, query, body, content type)
         self.refuse = {}  # (method, request path) -> the HTTP status it answers
@@ -121,10 +122,13 @@ class FakeOpenBao:
     def get_metadata(self, leaf, body, query, req):
         if leaf not in self.leaves:
             return self.answer(404, {"errors": []})
-        meta = self.leaves[leaf]["meta"]
-        return self.answer(
-            200, {"data": {"custom_metadata": meta or None, "current_version": self.version(leaf)}}
-        )
+        entry = self.leaves[leaf]
+        data = {
+            "custom_metadata": entry["meta"] or None,
+            "current_version": self.version(leaf),
+            "max_versions": entry.get("max_versions", 0),
+        }
+        return self.answer(200, {"data": data})
 
     def get_subkeys(self, leaf, body, query, req):
         assert query == {"depth": "1"}, query
@@ -188,11 +192,13 @@ class FakeOpenBao:
         if leaf not in self.leaves:
             return self.answer(404, {"errors": []})
         meta = self.leaves[leaf]["meta"]
-        for key, value in body["custom_metadata"].items():
+        for key, value in body.get("custom_metadata", {}).items():
             if value is None:
                 meta.pop(key, None)
             else:
                 meta[key] = value
+        if "max_versions" in body:
+            self.leaves[leaf]["max_versions"] = body["max_versions"]
         return self.answer(204, None)
 
     def logged_in(self, token):
