@@ -116,22 +116,36 @@ class TestTheRun:
         assert report(tmp_path)["argv"][:2] == ["playbooks/x.yml", "--extra-vars"]
 
     @pytest.mark.parametrize(
-        ("scenario", "error"),
+        ("scenario", "error", "landed"),
         [
             (
                 "failed",
                 "playbooks/site-openbao.yml --tags openbao_backup_delivery: srvvault2 failed",
+                True,
             ),
-            ("unreachable", "--tags openbao_backup_delivery: srvvault3 unreachable"),
-            ("norecap", "openbao_backup_delivery ended without a PLAY RECAP (exit 1)"),
-            ("nohosts", "openbao_backup_delivery ran on no host"),
-            ("exit2", "openbao_backup_delivery exited 2"),
+            ("unchanged", "--tags openbao_backup_delivery: srvvault2 failed", False),
+            ("unreachable", "--tags openbao_backup_delivery: srvvault3 unreachable", True),
+            ("norecap", "openbao_backup_delivery ended without a PLAY RECAP (exit 1)", True),
+            ("nohosts", "openbao_backup_delivery ran on no host", False),
+            ("exit2", "openbao_backup_delivery exited 2", True),
         ],
     )
-    def test_a_run_whose_recap_is_not_clean_fails_the_step(self, tmp_path, scenario, error):
+    def test_a_run_whose_recap_is_not_clean_fails_the_step_landed_if_a_host_changed(
+        self, tmp_path, scenario, error, landed
+    ):
         with pytest.raises(StepFailed, match=re.escape(error)) as e:
             step(tmp_path, scenario).run(Ctx())
         assert "PLAY [Deliver the backup secret_id]" in e.value.technical
+        assert e.value.landed is landed
+
+    def test_with_a_counter_run_a_run_that_changed_no_host_counts_as_landed(self, tmp_path):
+        counter = Playbook("playbooks/site-openbao.yml", tags=("remove",))
+        with pytest.raises(StepFailed, match="srvvault2 failed") as e:
+            step(tmp_path, "unchanged", counter=counter).run(Ctx())
+        assert e.value.landed
+        with pytest.raises(StepFailed, match="no value is staged") as e:
+            step(tmp_path, counter=counter).run(Ctx(staged={}))
+        assert e.value.landed
 
     def test_the_output_kept_of_a_failed_run_has_every_staged_value_redacted(self, tmp_path):
         with pytest.raises(StepFailed) as e:
@@ -148,8 +162,9 @@ class TestTheRun:
     def test_a_run_past_its_bound_is_killed_with_what_it_started(self, tmp_path):
         run = AnsibleRun(ansible(tmp_path, "hang", bound=1), "deliver", "deliver", DELIVER)
         started = time.monotonic()
-        with pytest.raises(StepFailed, match="did not finish within 0 min"):
+        with pytest.raises(StepFailed, match="did not finish within 0 min") as e:
             run.run(Ctx())
+        assert e.value.landed
         # The child holds the output for 60 s: only the session's kill ends the run at its bound.
         assert time.monotonic() - started < 30
         assert gone(child(tmp_path))
@@ -165,20 +180,24 @@ class TestTheRun:
             os.kill(report(tmp_path)["pid"], 0)
         assert gone(child(tmp_path))
 
-    def test_no_staged_value_fails_before_running(self, tmp_path):
-        with pytest.raises(StepFailed, match="no value is staged for openbao_backup_secret_id"):
+    def test_no_staged_value_fails_before_running_and_did_not_land(self, tmp_path):
+        with pytest.raises(
+            StepFailed, match="no value is staged for openbao_backup_secret_id"
+        ) as e:
             step(tmp_path).run(Ctx(staged={}))
-        assert not (tmp_path / "report.json").exists()
+        assert not (tmp_path / "report.json").exists() and not e.value.landed
 
-    def test_no_checkout_or_no_ansible_playbook_fails_the_step(self, tmp_path):
+    def test_no_checkout_or_no_ansible_playbook_fails_the_step_and_did_not_land(self, tmp_path):
         missing = Ansible(tmp_path / "Ansible" / "ansible", (sys.executable, FAKE, "ok"))
-        with pytest.raises(StepFailed, match="there is no Ansible checkout at"):
+        with pytest.raises(StepFailed, match="there is no Ansible checkout at") as e:
             AnsibleRun(missing, "x", "x", DELIVER).run(Ctx())
+        assert not e.value.landed
         absent = Ansible(tmp_path, ("ansible-playbook-that-is-not-there",))
         with pytest.raises(
             StepFailed, match="ansible-playbook-that-is-not-there is not on the PATH"
-        ):
+        ) as e:
             AnsibleRun(absent, "x", "x", DELIVER).run(Ctx())
+        assert not e.value.landed
 
 
 class TestTheUndo:

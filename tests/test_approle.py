@@ -23,6 +23,7 @@ from secret_rotator.audit import audit
 from secret_rotator.cluster import Cluster
 from secret_rotator.contract import EXPIRES_AT, MARKER_VALUE, parse_args
 from secret_rotator.executor import Abandon, AbortRefused, Executor, Outcome
+from secret_rotator.jenkins import credential_path
 from secret_rotator.kinds.approle import AppRole
 from secret_rotator.kinds.approle.steps import NEW, OLD, SECRET, DestroyOldAccessor, Mint
 from secret_rotator.model import StepFailed, value_name
@@ -337,6 +338,27 @@ class TestTheRuns:
         with pytest.raises(AbortRefused, match="previous backup secret_id is not known"):
             executor.abort()
         assert "SECRET-old-backup" in world.live("backup")
+
+    def test_a_playbook_that_changed_no_host_is_rolled_back(self, tmp_path):
+        world = World(tmp_path, "unchanged")
+        executor = world.executor(BACKUP)
+        assert executor.run() is Outcome.FAILED
+        assert executor.abort_blocker() is None
+        assert executor.abort() is Outcome.ROLLED_BACK
+        assert world.live("backup") == {"SECRET-old-backup": "accessor-old-backup"}
+        assert world.bao.data(BACKUP) == {"secret_id": MARKER_VALUE}
+
+    def test_a_jenkins_credential_write_jenkins_refused_is_rolled_back(self, tmp_path):
+        world = World(tmp_path)
+        world.jenkins.refused["POST", f"{credential_path(JENKINS_CREDENTIAL)}/config.xml"] = 403
+        executor = world.executor(JENKINS)
+        assert executor.run() is Outcome.FAILED
+        (failure,) = world.recorder.failures()
+        assert failure.step.id == f"jenkins.credential:{JENKINS_CREDENTIAL}"
+        assert executor.abort() is Outcome.ROLLED_BACK
+        assert world.live("jenkins") == {"SECRET-old-jenkins": "accessor-old-jenkins"}
+        assert world.jenkins.secret(JENKINS_CREDENTIAL) == "SECRET-old-secret-id"
+        assert world.bao.data(JENKINS) == {"secret_id": MARKER_VALUE}
 
     def test_manual_shows_the_new_secret_id_and_records_the_rotation(self, tmp_path):
         world = World(tmp_path)

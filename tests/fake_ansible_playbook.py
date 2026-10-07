@@ -12,13 +12,14 @@ from pathlib import Path
 HOSTS = ("srvvault1", "srvvault2", "srvvault3")
 
 
-def recap(**bad):
-    """bad: host -> its count that is not 0, as `failed` or `unreachable`."""
+def recap(changes=True, **bad):
+    """bad: host -> its count that is not 0, as `failed` or `unreachable`; changes: whether
+    srvvault1 and srvvault2 changed."""
     print("PLAY RECAP *********************************************************************")
     for host in HOSTS:
         failed = 1 if bad.get(host) == "failed" else 0
         unreachable = 1 if bad.get(host) == "unreachable" else 0
-        changed = 0 if host == "srvvault3" else 1
+        changed = 1 if changes and host != "srvvault3" else 0
         print(
             f"{host:<27}: ok=3    changed={changed}    unreachable={unreachable}    "
             f"failed={failed}    skipped=1    rescued=0    ignored=0   "
@@ -62,6 +63,11 @@ def main():
     elif scenario == "failed":
         print('fatal: [srvvault2]: FAILED! => {"msg": "the login was refused"}')
         recap(srvvault2="failed")
+        sys.exit(2)
+    elif scenario == "unchanged":
+        # The proof failed on one node before any node wrote (any_errors_fatal).
+        print('fatal: [srvvault2]: FAILED! => {"msg": "the login was refused"}')
+        recap(False, srvvault2="failed")
         sys.exit(2)
     elif scenario == "unreachable":
         recap(srvvault3="unreachable")

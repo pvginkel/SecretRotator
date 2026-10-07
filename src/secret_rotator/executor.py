@@ -5,20 +5,17 @@ the operator's answers in.
 
 Where a plan stands lives in OpenBao: its staging leaf records the plan's keys, the step it is at
 and what it derived from the cluster, written before that step runs, so every step before it
-finished, and exists exactly while the plan is in flight; the leaf's status in the run state says
-whether it failed. A leaf has one plan in flight. Step ids repeat across plans, and a leaf's plans
-differ by kind or by keys: only the plan of the kind and keys recorded resumes it. The staging leaf
-also holds the values the plan's steps produced, what their undos need, and, while a rollback runs,
-how far it got."""
+finished, and whether that step failed reporting it did not land; it exists exactly while the plan
+is in flight; the leaf's status in the run state says whether it failed. A leaf has one plan in
+flight. Step ids repeat across plans, and a leaf's plans differ by kind or by keys: only the plan
+of the kind and keys recorded resumes it. The staging leaf also holds the values the plan's steps
+produced, what their undos need, and, while a rollback runs, how far it got."""
 
 import datetime
-import traceback
 from collections.abc import Callable
 from enum import StrEnum
 from typing import Protocol
 
-from secret_rotator.jenkins import JenkinsError
-from secret_rotator.kube import KubeError
 from secret_rotator.lock import Lock, utcnow
 from secret_rotator.model import (
     Action,
@@ -30,10 +27,11 @@ from secret_rotator.model import (
     Started,
     Step,
     StepFailed,
+    failure,
 )
 from secret_rotator.openbao import OpenBao, OpenBaoError
 from secret_rotator.plan import Plan
-from secret_rotator.staging import Staging, flights
+from secret_rotator.staging import NOT_LANDED, Staging, flights
 from secret_rotator.state import LeafState, State
 
 ROLLBACK = "rollback"  # staging: how many of the rollback's items are done
@@ -85,17 +83,6 @@ class _Abandoned(BaseException):
 
     def __init__(self, choice: Abandon):
         self.choice = choice
-
-
-def _failure(e: Exception) -> tuple[str, str]:
-    """A failure's one sentence and its technical detail. An OpenBaoError, a KubeError or a
-    JenkinsError names its request, and a transport error as such."""
-    technical = "".join(traceback.format_exception(e))
-    if isinstance(e, StepFailed):
-        return e.error, e.technical or technical
-    if isinstance(e, OpenBaoError | KubeError | JenkinsError):
-        return str(e), technical
-    return f"{type(e).__name__}: {e}", technical
 
 
 class _RunContext:
@@ -202,13 +189,15 @@ class Executor:
 
     def _touched(self) -> list[Step]:
         """The steps that ran: every step before the one the plan is at, and that one too when
-        it is a tool step, which may have landed before it stopped. None while the plan is not in
-        flight: before it starts or after its stamp."""
+        it is a tool step, which may have landed before it stopped, unless it failed reporting
+        that it did not land. None while the plan is not in flight: before it starts or after its
+        stamp."""
         if not self.staging.exists:
             return []
         steps = self.plan.steps
         at = steps[self.at]
-        return [*steps[: self.at], *([at] if at.actor is Actor.TOOL else [])]
+        ran = at.actor is Actor.TOOL and self.staging.get(NOT_LANDED) != at.id
+        return [*steps[: self.at], *([at] if ran else [])]
 
     def rollback(self) -> list[tuple[Step, Action]]:
         """What Abort runs: the undos in reverse order, then the activators that ran, re-run in
@@ -225,7 +214,12 @@ class Executor:
         return None
 
     def _fail(self, step: Step, action: Action, e: Exception) -> Outcome:
-        error, technical = _failure(e)
+        error, technical = failure(e)
+        if action is Action.RUN and isinstance(e, StepFailed) and not e.landed:
+            try:
+                self.staging.put(NOT_LANDED, step.id)
+            except OpenBaoError as e2:
+                error += f" That it did not land is not recorded, so it counts as landed: {e2}"
 
         def failed(state: LeafState) -> None:
             state.status = "failed-activation" if step.activator else "failed"

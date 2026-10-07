@@ -91,18 +91,29 @@ class Journal(list):
 
 
 class Tool(Step):
-    """A mutating tool step; fails its first `fail` runs and `undo_fail` undos."""
+    """A mutating tool step; fails its first `fail` runs, reporting `landed`, and `undo_fail`
+    undos."""
 
     type = "test.tool"
     mutates = True
 
     def __init__(
-        self, id, journal, *, fail=0, undo_fail=0, undoable=True, activator=False, mutates=True
+        self,
+        id,
+        journal,
+        *,
+        fail=0,
+        undo_fail=0,
+        undoable=True,
+        activator=False,
+        mutates=True,
+        landed=True,
     ):
         super().__init__(id, f"do {id}")
         self.journal = journal
         self.fail = fail
         self.undo_fail = undo_fail
+        self.landed = landed
         self.activator = activator
         self.mutates = mutates
         if not undoable:
@@ -113,7 +124,7 @@ class Tool(Step):
         self.journal.append(("run", self.id))
         if self.fail:
             self.fail -= 1
-            raise StepFailed(f"{self.id} failed", "the technical detail")
+            raise StepFailed(f"{self.id} failed", "the technical detail", landed=self.landed)
         return f"{self.id} done"
 
     def undo(self, ctx):

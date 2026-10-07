@@ -96,6 +96,7 @@ class FakeJenkins:
         self.mangle = set()  # credential ids whose description a POST changes
         self.requests = []  # (method, path, query, body)
         self.broken = {}  # (method, path) -> the OSError it raises
+        self.refused = {}  # (method, path) -> the HTTP status it answers
         self.no_location = False
 
     def jenkins(self):
@@ -127,6 +128,8 @@ class FakeJenkins:
         self.requests.append((method, path, query, body))
         if (method, path) in self.broken:
             raise self.broken[method, path]
+        if (method, path) in self.refused:
+            return self.error(self.refused[method, path])
         auth = "Basic " + base64.b64encode(f"{USER}:{TOKEN}".encode()).decode()
         if req.get_header("Authorization") != auth:
             return self.error(401)

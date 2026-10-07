@@ -49,10 +49,11 @@ class Flaky(Step):
     type = "test.flaky"
     mutates = True
 
-    def __init__(self, fail=1, *, undoable=True, undo_fail=0):
+    def __init__(self, fail=1, *, undoable=True, undo_fail=0, landed=True):
         super().__init__("test.flaky", "do the flaky thing")
         self.fail = fail
         self.undo_fail = undo_fail
+        self.landed = landed
         if not undoable:
             self.undo = None
             self.no_undo = "the flaky thing cannot be taken back"
@@ -60,7 +61,7 @@ class Flaky(Step):
     def run(self, ctx):
         if self.fail:
             self.fail -= 1
-            raise StepFailed("the flaky thing failed", "TECHNICAL DETAIL")
+            raise StepFailed("the flaky thing failed", "TECHNICAL DETAIL", landed=self.landed)
         return "flaked"
 
     def undo(self, ctx):
@@ -284,6 +285,16 @@ class TestFailure:
         bao, code, out = self.failed("x", flaky=Flaky(undoable=False))
         assert "Abort is not possible: the flaky thing cannot be taken back" in out
         assert "[r]etry, [d]etails or e[x]it? " in out
+
+    def test_a_failed_step_without_an_undo_that_did_not_land_offers_abort(self):
+        bao, code, out = self.failed("x", flaky=Flaky(undoable=False, landed=False))
+        assert code == 1 and "Abort is not possible" not in out
+        assert "[r]etry, [a]bort, [d]etails or e[x]it? " in out
+        flaky = Flaky(fail=0, undoable=False)
+        code, out = run(bao, LEAF, "a", "y", kinds=kinds_with(Wrapped(flaky, CHECK)))
+        assert code == 0 and "[r]etry, [a]bort, [d]etails or e[x]it? " in out
+        assert "Abort and roll back 2 steps? [y/N]" in out
+        assert bao.data(LEAF)["token"] == f"SECRET-{LEAF}-token"
 
     def test_a_failure_taken_up_in_a_new_run_offers_the_same(self):
         bao, _, _ = self.failed("x")

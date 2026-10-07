@@ -3,12 +3,15 @@ step runs in, and the events its run reaches a renderer by."""
 
 import abc
 import datetime
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
-from secret_rotator.openbao import OpenBao
+from secret_rotator.jenkins import JenkinsError
+from secret_rotator.kube import KubeError
+from secret_rotator.openbao import OpenBao, OpenBaoError
 from secret_rotator.state import State
 
 
@@ -35,12 +38,31 @@ class Pace(Protocol):
 
 
 class StepFailed(Exception):
-    """A step's own failure: error is one sentence, technical the detail behind it."""
+    """A step's own failure: error is one sentence, technical the detail behind it. landed False:
+    what the step does is known never to have taken effect (Step.no_undo)."""
 
-    def __init__(self, error: str, technical: str = ""):
+    def __init__(self, error: str, technical: str = "", *, landed: bool = True):
         super().__init__(error)
         self.error = error
         self.technical = technical
+        self.landed = landed
+
+
+def failure(e: Exception) -> tuple[str, str]:
+    """A failure's one sentence and its technical detail. An OpenBaoError, a KubeError or a
+    JenkinsError names its request, and a transport error as such."""
+    technical = "".join(traceback.format_exception(e))
+    if isinstance(e, StepFailed):
+        return e.error, e.technical or technical
+    if isinstance(e, OpenBaoError | KubeError | JenkinsError):
+        return str(e), technical
+    return f"{type(e).__name__}: {e}", technical
+
+
+def not_landed(e: Exception) -> StepFailed:
+    """The failure e, its sentence and detail kept, as one of a step that did not land."""
+    error, technical = failure(e)
+    return StepFailed(error, technical, landed=False)
 
 
 class Context(Protocol):
@@ -101,7 +123,12 @@ class Step(abc.ABC):
     # A rollback undoes the step the plan stopped at too, landed or not: an undo must leave a step
     # that did not land as it is.
     undo: Callable[[Context], str | None] | None = None
-    # Why a mutating step without an undo cannot be taken back, shown when Abort is refused.
+    # Why a mutating step without an undo cannot be taken back, shown when Abort is refused. Abort
+    # is refused once such a step ran, a failed run included, unless the failure is a StepFailed
+    # with landed False. A step raises that only where what it does is known never to have taken
+    # effect, and its docstring names those failures. A step that did not land counts as not
+    # having run: nothing of it is undone or re-run, and only the steps before it gate Abort
+    # (design §4.5).
     no_undo = ""
 
     def __init__(self, id: str, title: str, *, estimate: int = 0):

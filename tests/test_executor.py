@@ -11,6 +11,7 @@ from plans import (
     Confirm,
     ConfirmFirst,
     Journal,
+    RandomLike,
     Recorder,
     Tool,
     client,
@@ -34,8 +35,8 @@ from secret_rotator.executor import (
 )
 from secret_rotator.kvsteps import URLSAFE
 from secret_rotator.lock import Lock, LockHeld
-from secret_rotator.model import Action, Skipped
-from secret_rotator.staging import InFlight, staging_leaf
+from secret_rotator.model import Action, Skipped, Step, StepFailed
+from secret_rotator.staging import NOT_LANDED, InFlight, staging_leaf
 from secret_rotator.state import LeafState
 
 STAGING = staging_leaf("random", LEAF)
@@ -64,6 +65,29 @@ def run(bao, plan, *answers):
 
 def writes_to(bao, path):
     return [(m, p) for m, p, *_ in bao.writes() if p == path]
+
+
+class ExtraFirst(RandomLike):
+    """random's shape with the extra steps between the generate and the write."""
+
+    def plan(self, leaf, ctx):
+        return [*ctx.steps.generate("token"), *self.extra, *ctx.steps.write()]
+
+
+class Unrecorded(Step):
+    """A step without an undo that did not land, and whose mark the staging leaf refuses."""
+
+    type = "test.unrecorded"
+    mutates = True
+    no_undo = "unrecorded cannot be taken back"
+
+    def __init__(self, bao):
+        super().__init__("unrecorded", "do unrecorded")
+        self.bao = bao
+
+    def run(self, ctx):
+        self.bao.broken["POST", f"kv/data/{STAGING}"] = TimeoutError("timed out")
+        raise StepFailed("unrecorded failed", landed=False)
 
 
 class TestARun:
@@ -400,6 +424,68 @@ class TestAbort:
         with pytest.raises(AbortRefused):
             e.abort()
         assert flight_of(bao, LEAF).step == "irrev"
+
+    def test_a_failed_step_that_did_not_land_rolls_back_the_steps_before_it(self):
+        bao = fake()
+        j = Journal()
+        plan = plan_of(Tool("t", j), Tool("irrev", j, undoable=False, fail=1, landed=False))
+        e = executor(bao, plan, Recorder())
+        assert e.run() is Outcome.FAILED
+        assert e.abort_blocker() is None
+        assert [(step.id, action) for step, action in e.rollback()] == [
+            ("t", Action.UNDO),
+            ("kv.copy:iac/copy#token", Action.UNDO),
+            ("kv.write", Action.UNDO),
+        ]
+        assert e.abort() is Outcome.ROLLED_BACK
+        assert j == [("run", "t"), ("run", "irrev"), ("undo", "t")]
+        assert bao.data(LEAF)["token"] == OLD and flight_of(bao, LEAF) is None
+
+    def test_that_a_step_did_not_land_is_kept_with_the_plan_in_flight(self):
+        bao = fake()
+        j = Journal()
+        plan = plan_of(Tool("irrev", j, undoable=False, fail=1, landed=False))
+        assert run(bao, plan)[0] is Outcome.FAILED
+        assert bao.data(STAGING)[NOT_LANDED] == "irrev"
+        e = executor(bao, plan, Recorder())
+        assert e.load() is Stand.FAILED and e.abort_blocker() is None
+        assert e.abort() is Outcome.ROLLED_BACK
+        assert j == [("run", "irrev")]
+
+    def test_a_retry_counts_the_step_as_landed_until_it_says_otherwise(self):
+        bao = fake()
+        j = Journal()
+        irrev = Tool("irrev", j, undoable=False, fail=2, landed=False)
+        e = executor(bao, plan_of(irrev), Recorder())
+        assert e.run() is Outcome.FAILED
+        irrev.landed = True
+        assert e.run() is Outcome.FAILED
+        assert NOT_LANDED not in bao.data(STAGING)
+        assert e.abort_blocker() == "irrev cannot be taken back"
+
+    def test_with_nothing_else_mutated_it_is_a_cancel(self):
+        bao = fake()
+        kind = ExtraFirst(Tool("irrev", Journal(), undoable=False, fail=1, landed=False))
+        e = executor(bao, plan_of(kind=kind), Recorder())
+        assert e.run() is Outcome.FAILED
+        assert e.abort() is Outcome.CANCELLED
+        assert STAGING not in bao.leaves and bao.data(LEAF)["token"] == OLD
+
+    def test_a_mark_the_staging_leaf_cannot_take_counts_the_step_as_landed_and_says_so(self):
+        bao = fake()
+        r = Recorder()
+        e = executor(bao, plan_of(Unrecorded(bao)), r)
+        assert e.run() is Outcome.FAILED
+        (failure,) = r.failures()
+        assert failure.error.startswith(
+            "unrecorded failed That it did not land is not recorded, so it counts as landed: "
+        )
+        assert "transport error" in failure.error
+        assert state_of(bao, LEAF).last_error == failure.error
+        del bao.broken["POST", f"kv/data/{STAGING}"]
+        e = executor(bao, plan_of(Unrecorded(bao)), Recorder())
+        e.load()
+        assert e.abort_blocker() == "unrecorded cannot be taken back"
 
     def test_an_activator_without_an_undo_does_not_refuse_it(self):
         bao = fake()

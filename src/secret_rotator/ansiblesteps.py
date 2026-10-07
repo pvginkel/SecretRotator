@@ -149,7 +149,9 @@ class AnsibleRun(Step):
 
     counter: the run that takes this one's change out again, its undo; a playbook run is
     idempotent, so the counter-run also leaves a run that did not land as it is. Without one the
-    step has no undo, and no_undo says why."""
+    step has no undo, and no_undo says why; a run that never started, or whose PLAY RECAP shows no
+    host changed, then reports that the step did not land; one killed at its bound, or that
+    ended without a recap, counts as landed (Step.no_undo)."""
 
     type = "ansible.run"
     mutates = True
@@ -178,11 +180,18 @@ class AnsibleRun(Step):
     def undo(self, ctx: Context) -> str:
         return self._play(ctx, self.counter)
 
+    def _failed(self, error: str, tail: str = "", *, changed: bool) -> StepFailed:
+        """The run's failure, known to have changed a host or not."""
+        return StepFailed(error, tail, landed=changed or self.counter is not None)
+
     def _play(self, ctx: Context, book: Playbook) -> str:
         values = {var: ctx.staged(name) for var, name in book.staged.items()}
         if missing := sorted(var for var, value in values.items() if value is None):
-            raise StepFailed(f"no value is staged for {', '.join(missing)}")
-        ran = self.ansible.run(book, values, lambda task: ctx.progress(redact(task, values)))
+            raise self._failed(f"no value is staged for {', '.join(missing)}", changed=False)
+        try:
+            ran = self.ansible.run(book, values, lambda task: ctx.progress(redact(task, values)))
+        except StepFailed as e:  # Ansible.run raises it only before the playbook starts
+            raise self._failed(e.error, e.technical, changed=False) from e
         output = redact(ran.output, values)
         tail = "\n".join(output.splitlines()[-TAIL:])
         hosts = recap(output)
@@ -190,6 +199,7 @@ class AnsibleRun(Step):
             raise StepFailed(f"{book} did not finish within {self.ansible.bound // 60} min", tail)
         if hosts is None:
             raise StepFailed(f"{book} ended without a PLAY RECAP (exit {ran.code})", tail)
+        changed = sum(1 for counts in hosts.values() if counts.get("changed"))
         bad = [
             f"{host} {what}"
             for host, counts in sorted(hosts.items())
@@ -197,10 +207,9 @@ class AnsibleRun(Step):
             if counts.get(what)
         ]
         if bad:
-            raise StepFailed(f"{book}: {', '.join(bad)}", tail)
+            raise self._failed(f"{book}: {', '.join(bad)}", tail, changed=bool(changed))
         if not hosts:
-            raise StepFailed(f"{book} ran on no host", tail)
+            raise self._failed(f"{book} ran on no host", tail, changed=False)
         if ran.code != 0:
-            raise StepFailed(f"{book} exited {ran.code}", tail)
-        changed = sum(1 for counts in hosts.values() if counts.get("changed"))
+            raise self._failed(f"{book} exited {ran.code}", tail, changed=bool(changed))
         return f"{len(hosts)} host{'s' if len(hosts) != 1 else ''} ok, {changed} changed"

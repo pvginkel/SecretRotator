@@ -25,7 +25,7 @@ from test_kinds import KINDS, store_of
 from secret_rotator import terminal
 from secret_rotator.audit import audit
 from secret_rotator.executor import Executor, Outcome
-from secret_rotator.jenkins import ADDR, JenkinsError, job_path
+from secret_rotator.jenkins import ADDR, JenkinsError, credential_path, job_path
 from secret_rotator.jenkinssteps import (
     JOB_BOUND,
     JenkinsCredential,
@@ -203,19 +203,26 @@ class TestJenkinsCredential:
         with pytest.raises(ValueError):
             JenkinsCredential(FakeJenkins().jenkins(), APPROLE, kv=(LEAF, "token"), staged="v")
 
-    def test_no_staged_value_fails_before_asking_jenkins(self):
+    def test_no_staged_value_fails_before_asking_jenkins_and_did_not_land(self):
         fake = FakeJenkins()
-        with pytest.raises(StepFailed, match="no value is staged as value:secret_id"):
+        with pytest.raises(StepFailed, match="no value is staged as value:secret_id") as e:
             JenkinsCredential(fake.jenkins(), APPROLE, staged="value:secret_id").run(Ctx())
-        assert fake.requests == []
+        assert fake.requests == [] and not e.value.landed
+
+    def test_without_the_admin_s_token_a_staged_value_did_not_land(self):
+        fake = FakeJenkins()
+        step = JenkinsCredential(fake.jenkins(), APPROLE, staged="v")
+        with pytest.raises(StepFailed, match="rotator/jenkins cannot be read") as e:
+            step.run(Ctx(FakeOpenBao(), staged={"v": "SECRET-x"}))
+        assert fake.requests == [] and not e.value.landed
 
     @pytest.mark.parametrize(("credential", "n"), [("a-certificate", 2), ("a-username", 0)])
     def test_a_credential_without_exactly_one_secret_field_is_refused(self, credential, n):
         fake = FakeJenkins()
         step = JenkinsCredential(fake.jenkins(), credential, staged="v")
-        with pytest.raises(StepFailed, match=f"has {n} secret fields, not one"):
+        with pytest.raises(StepFailed, match=f"has {n} secret fields, not one") as e:
             step.run(Ctx(staged={"v": "SECRET-x"}))
-        assert [r for r in fake.requests if r[0] == "POST"] == []
+        assert [r for r in fake.requests if r[0] == "POST"] == [] and not e.value.landed
 
     def test_a_re_read_that_is_not_the_credential_written_fails_the_step(self):
         fake = FakeJenkins()
@@ -223,13 +230,56 @@ class TestJenkinsCredential:
         step = JenkinsCredential(fake.jenkins(), APPROLE, staged="v")
         with pytest.raises(StepFailed, match="is not the credential written") as e:
             step.run(Ctx(staged={"v": "SECRET-x"}))
-        assert "SECRET" not in e.value.technical
+        assert "SECRET" not in e.value.technical and e.value.landed
 
-    def test_no_such_credential_is_a_jenkins_error(self):
+    def test_no_such_credential_is_jenkins_answer_and_a_staged_value_did_not_land(self):
         step = JenkinsCredential(FakeJenkins().jenkins(), "gone", staged="v")
-        with pytest.raises(JenkinsError) as e:
+        with pytest.raises(StepFailed) as e:
             step.run(Ctx(staged={"v": "SECRET-x"}))
-        assert e.value.status == 404
+        assert e.value.error == f"GET {credential_path('gone')}/config.xml: HTTP 404"
+        assert not e.value.landed
+        assert isinstance(e.value.__cause__, JenkinsError)
+        assert "JenkinsError" in e.value.technical
+
+    def test_a_write_jenkins_refuses_did_not_land(self):
+        fake = FakeJenkins()
+        fake.refused["POST", f"{credential_path(APPROLE)}/config.xml"] = 403
+        step = JenkinsCredential(fake.jenkins(), APPROLE, staged="v")
+        with pytest.raises(StepFailed) as e:
+            step.run(Ctx(staged={"v": "SECRET-x"}))
+        assert e.value.error == f"POST {credential_path(APPROLE)}/config.xml: HTTP 403"
+        assert not e.value.landed
+        assert fake.secret(APPROLE) == "SECRET-old-secret-id"
+
+    @pytest.mark.parametrize(
+        ("fault", "error"),
+        [
+            ({"refused": 502}, "HTTP 502"),
+            ({"broken": TimeoutError("timed out")}, "transport error"),
+        ],
+    )
+    def test_a_write_whose_outcome_is_unknown_counts_as_landed(self, fault, error):
+        fake = FakeJenkins()
+        request = ("POST", f"{credential_path(APPROLE)}/config.xml")
+        if "refused" in fault:
+            fake.refused[request] = fault["refused"]
+        else:
+            fake.broken[request] = fault["broken"]
+        step = JenkinsCredential(fake.jenkins(), APPROLE, staged="v")
+        with pytest.raises(JenkinsError, match=error):
+            step.run(Ctx(staged={"v": "SECRET-x"}))
+
+    def test_from_kv_a_failure_is_reported_as_it_is(self):
+        fake = FakeJenkins()
+        fake.add_string("app-token", "SECRET-old")
+        fake.refused["POST", f"{credential_path('app-token')}/config.xml"] = 403
+        bao = bao_with()
+        bao.leaves[LEAF] = {"data": {"token": "SECRET-in-kv"}, "meta": {}}
+        step = JenkinsCredential(fake.jenkins(), "app-token", kv=(LEAF, "token"))
+        with pytest.raises(JenkinsError, match="HTTP 403"):
+            step.run(Ctx(bao))
+        with pytest.raises(JenkinsError, match="HTTP 404"):
+            JenkinsCredential(fake.jenkins(), "gone", kv=(LEAF, "token")).run(Ctx(bao))
 
     def test_with_secret_puts_the_value_in_place_of_the_redaction_escaped(self):
         xml = with_secret(string_credential("x"), "a<b&c", "x")

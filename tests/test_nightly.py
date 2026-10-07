@@ -378,6 +378,16 @@ class TestFailure:
         assert state_of(night.bao, TRELLO).stamps["bearer-token"] == TODAY.isoformat()
         assert f"random plan of {LEAF} (token): stopped for `secret-rotator run {LEAF}`" in digest
 
+    def test_a_plan_whose_step_without_an_undo_did_not_land_is_rolled_back(self):
+        deliver = Tool("deliver", Journal(), fail=1, undoable=False, landed=False)
+        night = Night(world(), kinds={"random": RandomLike(deliver)})
+        assert night() == 0
+        failure, digest = night.telegram.messages
+        assert failure.endswith("The run rolls it back; the leaf is due again.")
+        assert f"• random plan of {LEAF} (token): rolled back" in digest
+        assert flight_of(night.bao, LEAF) is None
+        assert night.bao.data(LEAF)["token"] == f"SECRET-{LEAF}-token"
+
     def test_a_plan_that_breaks_off_outside_its_steps_does_not_end_the_run(self):
         bao = world()
         bao.refuse["DELETE", f"kv/metadata/rotator/staging/random/{LEAF}"] = 403

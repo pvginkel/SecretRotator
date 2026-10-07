@@ -6,8 +6,8 @@ report carries a value."""
 import xml.etree.ElementTree as ET
 from collections.abc import Mapping
 
-from secret_rotator.jenkins import Jenkins, job_path
-from secret_rotator.model import Context, Step, StepFailed, wait
+from secret_rotator.jenkins import Jenkins, JenkinsError, job_path
+from secret_rotator.model import Context, Step, StepFailed, not_landed, wait
 
 CREDENTIALS = "rotator/jenkins"  # keys user and token
 JOB_BOUND, JOB_POLL = 1800, 10  # seconds, from the trigger: the queue and the build
@@ -100,6 +100,12 @@ def _canonical(xml: str) -> str:
     return ET.canonicalize(xml, strip_text=True)
 
 
+def refused(e: Exception) -> bool:
+    """Whether Jenkins refused the request: a 4xx answer. Neither a 5xx answer nor a transport
+    error says whether the request was carried out."""
+    return isinstance(e, JenkinsError) and e.status is not None and e.status < 500
+
+
 class JenkinsCredential(Step):
     """Updates the one secret field of a credential of Jenkins' system store by its id, and
     verifies it by re-reading the credential: the same class and fields, its secret redacted.
@@ -108,7 +114,9 @@ class JenkinsCredential(Step):
 
     kv: the value is the leaf's key as KV holds it when the step runs. The step is then an
     activator: a rollback runs it again after the KV undos, which writes the previous value back.
-    staged: the value is the one the plan staged under that name; there is then no undo."""
+    staged: the value is the one the plan staged under that name; there is then no undo, and a
+    failure before the write, or the write refused, reports that the step did not land; one of
+    the write otherwise, or of the re-read after it, counts as landed (Step.no_undo)."""
 
     type = "jenkins.credential"
     mutates = True
@@ -151,10 +159,18 @@ class JenkinsCredential(Step):
         return version.data[key]
 
     def run(self, ctx: Context) -> str:
-        value = self._value(ctx)
-        connect(self.jenkins, ctx)
-        before = self.jenkins.credential_xml(self.credential)
-        self.jenkins.update_credential(self.credential, with_secret(before, value, self.credential))
+        sent = False
+        try:
+            value = self._value(ctx)
+            connect(self.jenkins, ctx)
+            before = self.jenkins.credential_xml(self.credential)
+            xml = with_secret(before, value, self.credential)
+            sent = True
+            self.jenkins.update_credential(self.credential, xml)
+        except Exception as e:
+            if self.kv is None and (not sent or refused(e)):
+                raise not_landed(e) from e
+            raise
         after = self.jenkins.credential_xml(self.credential)
         if _canonical(after) != _canonical(before):
             raise StepFailed(

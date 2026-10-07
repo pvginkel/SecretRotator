@@ -13,10 +13,12 @@ from secret_rotator.contract import STAGING_PREFIX
 from secret_rotator.openbao import OpenBao
 
 # The record's names among the staged ones: the plan's keys, a JSON array, the id of the step the
-# plan is at, and what it derived from the cluster (Derived.dump).
+# plan is at, what it derived from the cluster (Derived.dump), and that step's id once it failed
+# reporting it did not land (model.StepFailed.landed), which the next record drops.
 KEYS = "keys"
 STEP = "step"
 DERIVED = "derived"
+NOT_LANDED = "not-landed"
 
 
 def staging_leaf(kind: str, leaf: str) -> str:
@@ -61,14 +63,14 @@ class Staging:
         return self.data.get(name)
 
     def record(self, keys: tuple[str, ...], step: str, derived: Derived) -> None:
-        """The plan is in flight at this step: written before it runs."""
-        self._write({KEYS: json.dumps(list(keys)), STEP: step, DERIVED: derived.dump()})
+        """The plan is in flight at this step: written before it runs, so it has not failed."""
+        kept = {name: value for name, value in self.data.items() if name != NOT_LANDED}
+        self._write(kept | {KEYS: json.dumps(list(keys)), STEP: step, DERIVED: derived.dump()})
 
     def put(self, name: str, value: str) -> None:
-        self._write({name: value})
+        self._write(self.data | {name: value})
 
-    def _write(self, values: dict[str, str]) -> None:
-        data = self.data | values
+    def _write(self, data: dict[str, str]) -> None:
         self.bao.write(self.path, data)
         self.data = data
         self.exists = True
