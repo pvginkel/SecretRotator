@@ -29,7 +29,7 @@ from secret_rotator.audit import audit
 from secret_rotator.cluster import Cluster, Derived, Ref, Workload
 from secret_rotator.console import Console
 from secret_rotator.contract import MAX_VALUE_BYTES
-from secret_rotator.executor import Executor, Outcome
+from secret_rotator.executor import Abandon, Executor, Outcome
 from secret_rotator.kvsteps import KvStamp
 from secret_rotator.model import Action, Skipped
 from secret_rotator.plan import PlanError, make
@@ -409,4 +409,52 @@ class TestAChangedCluster:
         assert f"✓ again: sync ExternalSecret app-prd/app-token · {gone}" in out
         assert "Rolled back: the rotation of token is undone." in out
         assert bao.data(LEAF)["token"] == f"SECRET-{LEAF}-token"
+        assert flight_of(bao, LEAF) is None
+
+    def exited(self, store):
+        """LEAF's plan left at its first manual: confirm, after kv.write landed."""
+        fake = FakeCluster()
+        bao = fake_of(store)
+        _, outcome = run(bao, plan_of(store, fake), recorder=Recorder(Abandon.EXIT))
+        assert outcome is Outcome.EXITED
+        assert flight_of(bao, LEAF).step == f"operator.confirm:{LEAF}:1"
+        return fake, bao
+
+    def manual_orphaned(self):
+        """LEAF activated by hand, so its plan derives no ExternalSecret, and without its copy, so
+        its ExternalSecret's deletion makes it an orphan."""
+        store = store_of(eso__prd__app__prd__token="manual:restart the app by hand")
+        del store[COPY]
+        fake, bao = self.exited(store)
+        del fake.objects["externalsecrets", "app-prd", "app-token"]
+        assert LEAF in audit(store, Cluster(fake.kube()).referenced()).blocked_leaves
+        return fake, bao
+
+    def test_retry_completes_once_the_external_secret_of_a_plan_that_derived_none_is_deleted(self):
+        fake, bao = self.manual_orphaned()
+        code, out = self.take_up(fake, bao, "r", "d")
+        assert code == 0, out
+        assert f"Done: token of {LEAF} rotated." in out
+        assert state_of(bao, LEAF).status == "ok" and flight_of(bao, LEAF) is None
+
+    def test_abort_completes_once_the_external_secret_of_a_plan_that_derived_none_is_deleted(self):
+        fake, bao = self.manual_orphaned()
+        code, out = self.take_up(fake, bao, "a", "y")
+        assert code == 0, out
+        assert "Rolled back: the rotation of token is undone." in out
+        assert bao.data(LEAF)["token"] == f"SECRET-{LEAF}-token"
+        assert flight_of(bao, LEAF) is None
+
+    def test_abort_completes_once_the_external_secret_of_a_leaf_holding_its_copy_is_deleted(self):
+        store = copied_into_catalog(
+            store_of(eso__prd__app__prd__token="manual:restart the app by hand"),
+            activate="manual:restart the controller by hand",
+        )
+        fake, bao = self.exited(store)
+        del fake.objects["externalsecrets", "kubecoder-prd", "kubecoder-secret-catalog"]
+        assert CATALOG in audit(store, Cluster(fake.kube()).referenced()).blocked_leaves
+        code, out = self.take_up(fake, bao, "a", "y")
+        assert code == 0, out
+        assert "Rolled back: the rotation of token is undone." in out
+        assert bao.data(CATALOG)["app-token"] == f"SECRET-{CATALOG}-app-token"
         assert flight_of(bao, LEAF) is None

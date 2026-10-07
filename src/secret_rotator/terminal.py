@@ -6,7 +6,7 @@ import datetime
 import time
 from collections.abc import Callable, Mapping
 
-from secret_rotator.audit import Audit, Leaf, audit, live_store
+from secret_rotator.audit import Audit, Leaf, audit, copies_in, live_store
 from secret_rotator.cluster import Cluster
 from secret_rotator.console import Console
 from secret_rotator.executor import (
@@ -458,9 +458,13 @@ def run_leaf(
     flight = store[leaf].flight
     referenced = None if cluster is None else cluster.referenced()
     if flight is not None and referenced is not None:
-        # A plan in flight is not blocked by the orphan finding an ExternalSecret it derived raises
-        # once deleted (design §3.3).
-        referenced |= flight.derived.referenced()
+        # A plan in flight is not blocked by the orphan finding of its leaf, or of a leaf holding a
+        # copy of its keys (design §3.3).
+        referenced |= {leaf} | {
+            path
+            for path, other in store.items()
+            if any((leaf, key) in copies_in(other.meta) for key in flight.keys)
+        }
     result = audit(store, referenced)
     plans, unplanned = of_leaf(leaf, store, result, kinds, cluster)
     try:

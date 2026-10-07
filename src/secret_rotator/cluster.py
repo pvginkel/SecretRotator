@@ -70,10 +70,6 @@ class Derived:
     externalsecrets: dict[str, list[Ref]] = field(default_factory=dict)
     workloads: dict[str, list[Workload]] = field(default_factory=dict)
 
-    def referenced(self) -> set[str]:
-        """The leaves an ExternalSecret referenced when the plan derived them."""
-        return {leaf for leaf, found in self.externalsecrets.items() if found}
-
     def dump(self) -> str:
         return json.dumps(
             {
