@@ -238,6 +238,14 @@ class TestContract:
         assert result.blocked(BOT, "telegram-bot-token") and result.blocked(TOKEN_LEAF, "token")
         assert not result.blocked(BOT, "jenkins-token")
 
+    def test_with_the_plugins_args_that_are_no_json_object_are_a_finding_not_a_crash(self):
+        store = compliant_store()
+        edit(store[TOKEN_LEAF].meta, "token", args="x")
+        result = audit(store, plugins=registry.load())
+        assert [str(f) for f in result.findings] == [
+            f"{TOKEN_LEAF}: rotation_token: args: not a JSON object"
+        ]
+
     def test_with_the_plugins_a_type_manual_documents_is_no_finding(self):
         store = compliant_store()
         edit(store[BOT].meta, "telegram-bot-token", args={"type": "telegram-bot-token"})
@@ -414,6 +422,16 @@ class TestLiveAudit:
             "none, or copy:<path>#<key>" in run.lines
         )
         assert "SECRET" not in run.text
+
+    def test_the_plugins_check_each_keys_args(self):
+        bao = annotated_bao()
+        edit(bao.leaves["shared/wifi"]["meta"], "password", args={"type": "fax"})
+        run = Run(bao)
+        assert run("audit") == 1
+        assert (
+            "shared/wifi: rotation_password: args: type: 'fax' is not a credential type manual "
+            "documents"
+        ) in run.lines
 
     def test_it_reads_key_names_never_values_and_writes_nothing(self):
         bao = annotated_bao()

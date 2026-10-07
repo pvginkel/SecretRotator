@@ -362,6 +362,23 @@ class TestCommands:
         assert any("2026-10-15" in line for line in lines), lines
         assert not [line for line in lines if "never rotated" in line]
 
+    def test_run_reads_a_key_whose_args_its_kind_cannot_use_as_blocked(self):
+        store = store_of()
+        edit(store[LEAF].meta, "token", args={"length": 0})
+        con = Console(io.StringIO(), io.StringIO())
+        code = terminal.run_leaf(
+            client(fake_of(store)),
+            LEAF,
+            KINDS,
+            con,
+            holder="run test",
+            today=datetime.date(2026, 10, 5),
+            cluster=Cluster(FakeCluster().kube()),
+        )
+        out = con.stdout.getvalue()
+        assert code == 1, out
+        assert "token: blocked: rotation_token: args: length: not a whole number from 1" in out
+
     def test_run_rolls_out_in_the_terminal(self):
         bao = fake_of(store_of())
         con = Console(io.StringIO("y\n"), io.StringIO())

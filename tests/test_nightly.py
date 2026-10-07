@@ -460,6 +460,14 @@ class TestTheStandingCard:
         night(now=NOW + DAY)
         assert len(night.youtrack.writes()) == before  # nothing changed: nothing touched
 
+    def test_args_the_kinds_plugin_cannot_use_are_a_finding_on_it(self):
+        bao = world(due=())
+        edit(bao.leaves[TRELLO]["meta"], "bearer-token", args={"length": 0})
+        night = Night(bao)
+        night()
+        finding = f"`{TRELLO}`: rotation_bearer-token: args: length: not a whole number from 1"
+        assert f"- {finding}" in night.card()["description"]
+
     def test_youtrack_down_the_rotations_still_run_and_the_run_exits_non_zero(self):
         night = Night(world(due=(LEAF,)))
         night.youtrack.down = True
