@@ -109,6 +109,12 @@ def value_name(key: str) -> str:
     return f"value:{key}"
 
 
+def expiry_name(key: str) -> str:
+    """The staging name of the ISO date the new credential of a plan's data key expires, which
+    kv.stamp writes as the key's expires_at."""
+    return f"expires-at:{key}"
+
+
 class Step(abc.ABC):
     """One unit of work with one target (design R48). The class attributes are its type's
     defaults; an instance may override them, as an operator step whose action cannot be undone

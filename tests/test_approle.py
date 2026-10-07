@@ -1,7 +1,7 @@
 """The approle kind (design §6) over the seed's rows (catalog § rotator/): its args; its plans, one
-per delivery; the mint with its expiry recorded as rotator_expires_at; the proving login; each
-delivery run, failed and rolled back; and the destroy of the accessor the consumer held before,
-told apart or refused. OpenBao's AppRole answers are those witnessed on OpenBao 2.5.4."""
+per delivery; the mint's expiry, which kv.stamp writes as the key's expires_at; the proving login;
+each delivery run, failed and rolled back; and the destroy of the accessor the consumer held
+before, told apart or refused. OpenBao's AppRole answers are those witnessed on OpenBao 2.5.4."""
 
 import base64
 import json
@@ -13,6 +13,7 @@ from fake_cluster import FakeCluster, compliant_objects, pod_spec, secret, workl
 from fake_jenkins import APPROLE as JENKINS_CREDENTIAL
 from fake_jenkins import CREDENTIALS, FakeJenkins
 from fake_openbao import approle
+from fixtures import edit, fields_of
 from plans import NOW, Recorder, client, fake_of, lock, run_state, state_of
 from test_activation import ticking
 from test_kinds import KINDS
@@ -21,12 +22,12 @@ from secret_rotator import annotate as ann
 from secret_rotator.ansiblesteps import Ansible
 from secret_rotator.audit import audit
 from secret_rotator.cluster import Cluster
-from secret_rotator.contract import EXPIRES_AT, MARKER_VALUE, parse_args
+from secret_rotator.contract import MARKER_VALUE
 from secret_rotator.executor import Abandon, AbortRefused, Executor, Outcome
 from secret_rotator.jenkins import credential_path
 from secret_rotator.kinds.approle import AppRole
 from secret_rotator.kinds.approle.steps import NEW, OLD, SECRET, DestroyOldAccessor, Mint
-from secret_rotator.model import StepFailed, value_name
+from secret_rotator.model import StepFailed, expiry_name, value_name
 from secret_rotator.opsteps import ShowRequest
 from secret_rotator.plan import PlanError, make
 
@@ -35,7 +36,7 @@ SEED = ann.load_seed(ann.DEFAULT_SEED)
 ROTATOR = "iac/rotator-approle"  # kv
 ESO = "rotator/approle/eso"  # k8s_secret=external-secrets-prd/openbao-eso-approle
 ESO_DEV = "rotator/approle/eso-dev"  # never
-JENKINS = "rotator/approle/jenkins"  # jenkins_credential=jenkins-vault-approle
+JENKINS = "rotator/approle/jenkins"  # jenkins_credential=<the Vault plugin's credential id>
 BACKUP = "rotator/approle/backup"  # playbook
 IAC_AGENT = "rotator/approle/iac-agent"  # manual, 90d
 ADMIN = "rotator/approle/openbao-admin"  # manual, 90d
@@ -44,6 +45,11 @@ ESO_DEPLOYMENT = "external-secrets-prd/deployment/external-secrets-prd"
 MARKED = f"{MARKER_VALUE}; rotated 2026-10-05T04:30:00+00:00"
 # NOW plus the ttl, as a UTC date: OpenBao reports it as the previous evening in its host's zone.
 IN_90_DAYS, IN_360_DAYS = "2027-01-03", "2027-09-30"
+
+
+def expiry(bao, leaf):
+    """The expires_at of the leaf's secret_id entry; None when it has none."""
+    return fields_of(bao.meta(leaf), "secret_id").get("expires_at")
 
 
 def seed_store():
@@ -104,7 +110,6 @@ class World:
             leaf,
             "approle",
             ["secret_id"],
-            self.store,
             audit(self.store),
             Cluster(self.cluster.kube()) if cluster else None,
             jenkins=self.jenkins.jenkins(),
@@ -160,10 +165,12 @@ def ids(plan):
 
 class TestTheArgs:
     def test_every_approle_row_of_the_seed_is_accepted(self):
-        rows = [m for m in SEED.annotations.values() if m.get("rotation_mechanism") == "approle"]
+        rows = [
+            leaf.default for leaf in SEED.leaves.values() if leaf.default.get("kind") == "approle"
+        ]
         assert len(rows) == 7
-        for meta in rows:
-            assert AppRole().args_problems(parse_args(meta["rotation_args"])) == [], meta
+        for row in rows:
+            assert AppRole().args_problems(row["args"]) == [], row
 
     @pytest.mark.parametrize(
         ("args", "problem"),
@@ -243,8 +250,8 @@ class TestThePlans:
 
     def test_args_the_kind_refuses_refuse_the_plan(self, tmp_path):
         world = World(tmp_path)
-        world.store[ESO].meta["rotation_args"] = '{"role":"eso","delivery":"playbook"}'
-        with pytest.raises(PlanError, match="rotation_args: delivery: playbook delivers"):
+        edit(world.store[ESO].meta, "secret_id", args={"role": "eso", "delivery": "playbook"})
+        with pytest.raises(PlanError, match="rotation_secret_id args: delivery: playbook delivers"):
             world.plan(ESO)
 
     def test_the_ask_and_the_description_say_who_does_what(self, tmp_path):
@@ -274,7 +281,7 @@ class TestTheRuns:
         # The leaf told which one the consumer held: the stray is no business of this plan.
         assert set(world.live("rotator")) == {new, "SECRET-stray-rotator"}
         assert world.minted("rotator") == ["2160h"]
-        assert world.bao.meta(ROTATOR)[EXPIRES_AT] == IN_90_DAYS
+        assert expiry(world.bao, ROTATOR) == IN_90_DAYS
         assert state_of(world.bao, ROTATOR).stamps == {"secret_id": "2026-10-05"}
         assert not any(new in text for text in world.texts())
 
@@ -289,7 +296,7 @@ class TestTheRuns:
         rolled = world.cluster.get("deployments", "external-secrets-prd", "external-secrets-prd")
         assert rolled["metadata"]["generation"] == 2
         assert world.bao.data(ESO) == {"secret_id": MARKED}
-        assert world.bao.meta(ESO)[EXPIRES_AT] == IN_90_DAYS
+        assert expiry(world.bao, ESO) == IN_90_DAYS
 
     def test_jenkins_credential_updates_it_and_destroys_the_role_s_only_other_one(self, tmp_path):
         world = World(tmp_path)
@@ -310,12 +317,12 @@ class TestTheRuns:
         (failure,) = world.recorder.failures()
         assert failure.step.id == "approle.mint"
         assert failure.error == (
-            "AppRole jenkins has 2 secret_ids, and which one Jenkins credential "
-            "jenkins-vault-approle holds cannot be read: destroy the ones no consumer holds first"
+            f"AppRole jenkins has 2 secret_ids, and which one Jenkins credential "
+            f"{JENKINS_CREDENTIAL} holds cannot be read: destroy the ones no consumer holds first"
         )
         assert world.minted("jenkins") == []
         assert executor.abort() is Outcome.ROLLED_BACK
-        assert len(world.live("jenkins")) == 2 and EXPIRES_AT not in world.bao.meta(JENKINS)
+        assert len(world.live("jenkins")) == 2 and expiry(world.bao, JENKINS) is None
         assert world.bao.data(JENKINS) == {"secret_id": MARKER_VALUE}
 
     def test_playbook_hands_the_new_secret_id_over_in_its_extra_vars_file(self, tmp_path):
@@ -397,17 +404,17 @@ class TestTheRuns:
             request.instruction == "Paste it as OPENBAO_SECRET_ID in srviac /etc/iac/secrets.yaml"
         )
         assert world.minted("iac-agent") == ["8640h"]
-        assert world.bao.meta(IAC_AGENT)[EXPIRES_AT] == IN_360_DAYS
+        assert expiry(world.bao, IAC_AGENT) == IN_360_DAYS
         assert world.bao.data(IAC_AGENT) == {"secret_id": MARKED}
 
-    def test_aborted_at_the_show_the_new_secret_id_is_destroyed_and_the_expiry_put_back(
+    def test_aborted_at_the_show_the_new_secret_id_is_destroyed_and_the_expiry_left_as_it_was(
         self, tmp_path
     ):
         world = World(tmp_path)
-        world.bao.leaves[IAC_AGENT]["meta"][EXPIRES_AT] = "2026-12-01"
+        edit(world.bao.leaves[IAC_AGENT]["meta"], "secret_id", expires_at="2026-12-01")
         assert world.run(IAC_AGENT, Abandon.ABORT) is Outcome.ROLLED_BACK
         assert world.live("iac-agent") == {"SECRET-old-iac-agent": "accessor-old-iac-agent"}
-        assert world.bao.meta(IAC_AGENT)[EXPIRES_AT] == "2026-12-01"
+        assert expiry(world.bao, IAC_AGENT) == "2026-12-01"
         assert world.bao.data(IAC_AGENT) == {"secret_id": MARKER_VALUE}
 
     def test_once_put_in_place_a_manual_delivery_cannot_be_aborted(self, tmp_path):
@@ -429,7 +436,7 @@ class TestTheRuns:
         assert world.bao.data(ROTATOR)["secret_id"] == "SECRET-old-rotator"
         assert executor.abort() is Outcome.ROLLED_BACK
         assert set(world.live("rotator")) == {"SECRET-old-rotator", "SECRET-stray-rotator"}
-        assert EXPIRES_AT not in world.bao.meta(ROTATOR)
+        assert expiry(world.bao, ROTATOR) is None
 
     def test_a_rollback_puts_the_secret_back_and_rolls_eso_again(self, tmp_path):
         world = World(tmp_path)
@@ -447,10 +454,10 @@ class TestTheRuns:
 
     def test_the_mount_s_cap_is_the_expiry_recorded(self, tmp_path):
         world = World(tmp_path)
-        world.store[IAC_AGENT].meta["rotation_interval"] = "120d"
+        edit(world.store[IAC_AGENT].meta, "secret_id", interval="120d")
         assert world.run(IAC_AGENT, {}) is Outcome.DONE
         assert world.minted("iac-agent") == ["11520h"]
-        assert world.bao.meta(IAC_AGENT)[EXPIRES_AT] == IN_360_DAYS
+        assert expiry(world.bao, IAC_AGENT) == IN_360_DAYS
 
     def test_a_marker_leaf_that_holds_a_credential_is_not_overwritten(self, tmp_path):
         world = World(tmp_path)
@@ -479,25 +486,26 @@ class TestTheSteps:
 
     def test_a_mint_resumed_after_its_secret_id_was_staged_mints_no_other(self):
         bao = self.bao()
-        mint = Mint("jenkins", JENKINS, SECRET, 90, "Jenkins", None)
+        mint = Mint("jenkins", "secret_id", SECRET, 90, "Jenkins", None)
         ctx = Ctx(bao)
         mint.run(ctx)
         del ctx.values[NEW]
         assert mint.run(ctx) == f"expires {IN_90_DAYS}"
         assert bao.minted == 1 and ctx.staged(NEW) == "accessor-jenkins-new-1"
+        assert ctx.staged(expiry_name("secret_id")) == IN_90_DAYS
 
     def test_a_mint_retried_keeps_the_accessor_it_staged_as_the_consumer_s(self):
         bao = self.bao()
         # A first attempt staged the old accessor, minted, and lost the answer.
         bao.approles["jenkins"]["secret_ids"]["SECRET-lost"] = {"accessor": "lost", "ttl": 7776000}
         ctx = Ctx(bao, {OLD: "accessor-old-jenkins"})
-        Mint("jenkins", JENKINS, SECRET, 90, "Jenkins", None).run(ctx)
+        Mint("jenkins", "secret_id", SECRET, 90, "Jenkins", None).run(ctx)
         assert ctx.staged(OLD) == "accessor-old-jenkins"
 
     def test_a_consumer_holding_a_secret_id_that_is_not_live_leaves_nothing_to_destroy(self):
         bao = self.bao()
         ctx = Ctx(bao)
-        Mint("eso", ESO, SECRET, 90, "Secret", lambda ctx: "SECRET-long-gone").run(ctx)
+        Mint("eso", "secret_id", SECRET, 90, "Secret", lambda ctx: "SECRET-long-gone").run(ctx)
         assert ctx.staged(OLD) == ""
         assert DestroyOldAccessor("eso", "Secret").run(ctx) == (
             "nothing to destroy: it held no live secret_id"
@@ -516,7 +524,7 @@ class TestTheSteps:
         bao = self.bao()
         del bao.approles["jenkins"]
         with pytest.raises(StepFailed, match="OpenBao has no AppRole jenkins"):
-            Mint("jenkins", JENKINS, SECRET, 90, "Jenkins", None).run(Ctx(bao))
+            Mint("jenkins", "secret_id", SECRET, 90, "Jenkins", None).run(Ctx(bao))
 
     def test_the_kv_delivery_stages_the_secret_id_for_its_kv_write(self, tmp_path):
         plan = World(tmp_path).plan(ROTATOR)

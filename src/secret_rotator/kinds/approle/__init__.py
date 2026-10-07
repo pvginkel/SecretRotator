@@ -1,7 +1,7 @@
 """The approle kind (design §6): a new secret_id for one of the seven AppRoles (catalog
 § rotator/). Its plan mints it with an expiry of four times the key's interval and never less than
-90 days, proves it by a login, delivers it as rotation_args says, rewrites the leaf, activates, and
-last destroys the secret_id the consumer held before. With the kv delivery the leaf holds the
+90 days, proves it by a login, delivers it as the key's args say, rewrites the leaf, activates,
+and last destroys the secret_id the consumer held before. With the kv delivery the leaf holds the
 secret_id itself (iac/rotator-approle); with any other it is a marker leaf (rotator/approle/*),
 whose key the plan rewrites with the marker text."""
 
@@ -21,7 +21,6 @@ from secret_rotator.kinds.approle.steps import (
 )
 from secret_rotator.model import Step, value_name
 from secret_rotator.plan import PlanContext, PlanError, Target, tool_part
-from secret_rotator.schedule import interval_of
 
 ARGS = ("role", "delivery")
 ROLE = re.compile(r"[A-Za-z0-9._-]+")
@@ -52,7 +51,7 @@ class Delivery:
 
 
 def delivery_of(text: object) -> Delivery | None:
-    """rotation_args' delivery; None when it is none of DELIVERIES."""
+    """The args' delivery; None when it is none of DELIVERIES."""
     found = DELIVERY.fullmatch(text) if isinstance(text, str) else None
     if found is None:
         return None
@@ -66,9 +65,14 @@ def delivery_of(text: object) -> Delivery | None:
     return delivery
 
 
+def args_of(leaf: Target) -> Mapping:
+    """The args of the plan's one key."""
+    return leaf.entries[leaf.keys[0]].args
+
+
 def expiry_days(leaf: Target) -> int | None:
     """The ttl the plan mints with, in days; None for a key that rotates never."""
-    interval = interval_of(leaf.meta, leaf.keys[0])
+    interval = leaf.entries[leaf.keys[0]].interval
     return None if interval is None else max(EXPIRY_FACTOR * interval, MIN_EXPIRY_DAYS)
 
 
@@ -100,12 +104,14 @@ class AppRole:
         return problems
 
     def ask(self, leaf: Target) -> str:
-        delivery = delivery_of(leaf.args["delivery"])
-        put = [f"put the new {leaf.args['role']} secret_id in place"]
+        args = args_of(leaf)
+        delivery = delivery_of(args["delivery"])
+        put = [f"put the new {args['role']} secret_id in place"]
         return "; ".join([*(put if delivery.how == "manual" else []), *leaf.confirms])
 
     def description(self, leaf: Target) -> str:
-        role, delivery = leaf.args["role"], delivery_of(leaf.args["delivery"])
+        args = args_of(leaf)
+        role, delivery = args["role"], delivery_of(args["delivery"])
         minted = f"The tool mints a new {role} secret_id that expires in {expiry_days(leaf)} days"
         activates = " and activates what reads it" if leaf.activates else ""
         then = f"then destroys the one {consumer(leaf, delivery)} held before"
@@ -127,7 +133,8 @@ class AppRole:
     def plan(self, leaf: Target, ctx: PlanContext) -> list[Step]:
         if len(leaf.keys) != 1:
             raise PlanError(f"{leaf.leaf}: an approle plan rotates one key, not {len(leaf.keys)}")
-        role, delivery = leaf.args["role"], delivery_of(leaf.args["delivery"])
+        args = args_of(leaf)
+        role, delivery = args["role"], delivery_of(args["delivery"])
         days = expiry_days(leaf)
         if days is None:
             raise PlanError(
@@ -140,7 +147,7 @@ class AppRole:
         who = consumer(leaf, delivery)
         return [
             *([] if own else ctx.steps.marker()),
-            Mint(role, leaf.leaf, secret, days, who, held),
+            Mint(role, leaf.keys[0], secret, days, who, held),
             Login(role, secret),
             *deliver,
             *ctx.steps.write(),
@@ -153,7 +160,7 @@ class AppRole:
     ) -> tuple[Held | None, list[Step]]:
         """Where the consumer's secret_id can be read (None: it cannot), and the steps that hand it
         the new one: none for kv, whose kv.write is its delivery."""
-        role = leaf.args["role"]
+        role = args_of(leaf)["role"]
         if delivery.how == "kv":
             return held_in_kv(leaf.leaf, leaf.keys[0]), []
         if delivery.how == "k8s_secret":

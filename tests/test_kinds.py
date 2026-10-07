@@ -6,7 +6,7 @@ import datetime
 from importlib.metadata import EntryPoint
 
 import pytest
-from fixtures import compliant_store
+from fixtures import annotated, compliant_store, edit, set_activate
 from plans import COPY, LEAF, NOW, Recorder, client, fake_of, lock, run_state, state_of
 
 from secret_rotator import registry
@@ -34,19 +34,24 @@ SEAL = "rotator/bootstrap/seal-key"
 
 
 def store_of(**activate):
-    """The compliant store with rotation_activate set per leaf (leaf path with / as __)."""
+    """The compliant store with the activate of every entry of a leaf set (leaf path with / as
+    __)."""
     store = compliant_store()
     for name, value in activate.items():
-        store[name.replace("__", "/")].meta["rotation_activate"] = value
+        set_activate(store[name.replace("__", "/")].meta, value)
     store[SEAL] = Leaf(
         SEAL,
         {"seal-key"},
-        {
-            "rotation_mechanism": "manual",
-            "rotation_interval": "never",
-            "rotation_activate": "none",
-            "notes": "the bootstrap tier, rotated by hand at its source",
-        },
+        annotated(
+            {
+                "seal-key": {
+                    "kind": "manual",
+                    "interval": "never",
+                    "activate": "none",
+                    "notes": "the bootstrap tier, rotated by hand at its source",
+                }
+            }
+        ),
     )
     return store
 
@@ -56,7 +61,7 @@ ACTIVATE_NONE = {"eso__prd__app__prd__token": "none", "eso__prd__trello__prd__tr
 
 def plan_for(leaf, kind, keys, store=None):
     store = store or store_of(**ACTIVATE_NONE)
-    return make(KINDS, leaf, kind, list(keys), store, audit(store))
+    return make(KINDS, leaf, kind, list(keys), audit(store))
 
 
 def run(store, plan, *answers, data=None):
@@ -101,7 +106,6 @@ class TestTheRegistry:
                 "eso/prd/app/prd/oidc",
                 "keycloak-client",
                 ["client_secret"],
-                store,
                 audit(store),
             )
 
@@ -120,27 +124,47 @@ class TestRandom:
             "The tool generates a new 43-character token and writes it to the leaf and its 1 copy."
         )
 
-    def test_rotation_args_set_length_and_charset(self):
+    def test_a_key_s_args_set_its_length_and_charset(self):
         store = store_of(**ACTIVATE_NONE)
-        store[LEAF].meta["rotation_args"] = '{"length":20,"charset":"abc"}'
+        edit(store[LEAF].meta, "token", args={"length": 20, "charset": "abc"})
         bao, outcome, _ = run(store, plan_for(LEAF, "random", ["token"], store))
         assert outcome is Outcome.DONE
         new = bao.data(LEAF)["token"]
         assert len(new) == 20 and set(new) <= set("abc") and bao.data(COPY) == {"token": new}
 
+    def test_each_key_is_generated_to_its_own_args(self):
+        store = store_of(**ACTIVATE_NONE)
+        store[LEAF].keys.add("pin")
+        edit(
+            store[LEAF].meta,
+            "pin",
+            kind="random",
+            activate="none",
+            args={"length": 6, "charset": "0123456789"},
+        )
+        plan = plan_for(LEAF, "random", ["pin", "token"], store)
+        assert plan.description == (
+            "The tool generates a new 6-character pin and a new 43-character token and writes "
+            "it to the leaf and its 1 copy."
+        )
+        bao, outcome, _ = run(store, plan, data={LEAF: {"pin": "000000", "token": "old"}})
+        assert outcome is Outcome.DONE
+        pin, token = bao.data(LEAF)["pin"], bao.data(LEAF)["token"]
+        assert len(pin) == 6 and pin.isdigit() and len(token) == 43
+
     @pytest.mark.parametrize(
         ("args", "problem"),
         [
-            ('{"size":20}', "size: not one of random's length, charset"),
-            ('{"length":0}', "length: not a whole number from 1"),
-            ('{"length":"20"}', "length: not a whole number from 1"),
-            ('{"charset":"aa"}', "charset: not two or more distinct characters"),
+            ({"size": 20}, "size: not one of random's length, charset"),
+            ({"length": 0}, "length: not a whole number from 1"),
+            ({"length": "20"}, "length: not a whole number from 1"),
+            ({"charset": "aa"}, "charset: not two or more distinct characters"),
         ],
     )
-    def test_rotation_args_it_cannot_use_refuse_the_plan(self, args, problem):
+    def test_args_it_cannot_use_refuse_the_plan(self, args, problem):
         store = store_of(**ACTIVATE_NONE)
-        store[LEAF].meta["rotation_args"] = args
-        with pytest.raises(PlanError, match=f"rotation_args: {problem}"):
+        edit(store[LEAF].meta, "token", args=args)
+        with pytest.raises(PlanError, match=f"rotation_token args: {problem}"):
             plan_for(LEAF, "random", ["token"], store)
 
 
@@ -164,7 +188,7 @@ class TestManual:
         ((_, request),) = r.asked
         assert isinstance(request, CredentialRequest)
         assert [f.key for f in request.fields] == ["token"] and request.fields[0].shape is None
-        assert "Notes: api-key and token cannot be rotated" in request.instruction
+        assert "Notes: cannot be rotated" in request.instruction
         data = bao.data(TRELLO)
         assert data["token"] == "NEW-trello-token"
         assert data["api-key"] == f"SECRET-{TRELLO}-api-key"
@@ -173,10 +197,12 @@ class TestManual:
         assert body["data"] == {"token": "NEW-trello-token"}
         assert state_of(bao, TRELLO).stamps == {"token": "2026-10-05"}
 
-    def test_rotation_args_describe_the_credential_and_its_shape(self):
+    def test_args_describe_the_credential_and_its_shape(self):
         store = store_of(**ACTIVATE_NONE)
-        store[WIFI].meta["rotation_args"] = (
-            '{"what":"Wi-Fi PSK","mint":"UniFi → WiFi → Password","prefix":"psk-"}'
+        edit(
+            store[WIFI].meta,
+            "password",
+            args={"what": "Wi-Fi PSK", "mint": "UniFi → WiFi → Password", "prefix": "psk-"},
         )
         plan = plan_for(WIFI, "manual", ["password"], store)
         credential = plan.steps[0]
@@ -188,11 +214,11 @@ class TestManual:
 
     @pytest.mark.parametrize(
         ("args", "problem"),
-        [('{"vendor":"x"}', "vendor: not one of manual's"), ('{"what":""}', "what: not a text")],
+        [({"vendor": "x"}, "vendor: not one of manual's"), ({"what": ""}, "what: not a text")],
     )
-    def test_rotation_args_it_does_not_know_refuse_the_plan(self, args, problem):
+    def test_args_it_does_not_know_refuse_the_plan(self, args, problem):
         store = store_of(**ACTIVATE_NONE)
-        store[WIFI].meta["rotation_args"] = args
+        edit(store[WIFI].meta, "password", args=args)
         with pytest.raises(PlanError, match=problem):
             plan_for(WIFI, "manual", ["password"], store)
 
@@ -268,11 +294,11 @@ class TestActivation:
         [
             (
                 {"eso__prd__app__prd__token": "none", "iac__copy": "github-webhook:pvginkel/X/7"},
-                f"{LEAF}: {COPY}'s rotation_activate github-webhook:pvginkel/X/7: no step",
+                f"{LEAF}: {COPY}'s rotation_token activate github-webhook:pvginkel/X/7: no step",
             ),
             (
                 {"eso__prd__app__prd__token": "argocd-sync:app-prd"},
-                f"{LEAF}: rotation_activate argocd-sync:app-prd: no step",
+                f"{LEAF}: rotation_token activate argocd-sync:app-prd: no step",
             ),
         ],
     )
@@ -335,8 +361,13 @@ class TestOperatorSteps:
 class TestTheLeafsPlans:
     def test_every_other_key_says_why_it_has_none(self):
         store = store_of(**ACTIVATE_NONE)
-        store["eso/prd/kc/prd/catalog"].meta["key_jenkins-user"] = "kubecoder-client"
-        store["eso/prd/kc/prd/catalog"].meta["rotation_interval"] = "14d"
+        edit(
+            store["eso/prd/kc/prd/catalog"].meta,
+            "jenkins-user",
+            kind="kubecoder-client",
+            interval="14d",
+            activate="none",
+        )
         _, unplanned = of_leaf("eso/prd/kc/prd/catalog", store, audit(store), KINDS)
         assert unplanned == {
             "client-id": "a copy of eso/prd/app/prd/oidc#client_id, written by its primary's plan",
@@ -350,16 +381,16 @@ class TestTheLeafsPlans:
 
     def test_a_blocked_key_says_what_blocks_it(self):
         store = store_of(**ACTIVATE_NONE)
-        store[TRELLO].meta["interval_bearer-token"] = "soon"
+        edit(store[TRELLO].meta, "bearer-token", interval="soon")
         plans, unplanned = of_leaf(TRELLO, store, audit(store), KINDS)
         assert unplanned == {
-            "bearer-token": "blocked: interval_bearer-token: 'soon' is not <n>d or never"
+            "bearer-token": "blocked: rotation_bearer-token: interval: 'soon' is not <n>d or never"
         }
         assert [p.keys for p in plans] == [("api-key",), ("token",)]
 
-    def test_a_key_blocked_by_a_leaf_it_is_copied_into_says_so(self):
+    def test_a_key_blocked_by_its_copy_s_entry_says_so(self):
         store = store_of(**ACTIVATE_NONE)
-        del store[COPY].meta["rotation_activate"]
+        edit(store[COPY].meta, "token", activate=None)
         _, unplanned = of_leaf(LEAF, store, audit(store), KINDS)
         assert unplanned == {"token": "blocked: a leaf it is copied into has a finding"}
 

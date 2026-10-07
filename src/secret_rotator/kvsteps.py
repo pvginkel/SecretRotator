@@ -6,8 +6,8 @@ import secrets
 import string
 from collections.abc import Mapping
 
-from secret_rotator.contract import MARKER_VALUE
-from secret_rotator.model import Context, Step, StepFailed, value_name
+from secret_rotator.contract import MARKER_VALUE, dump_entry, entry_name, load_entry
+from secret_rotator.model import Context, Step, StepFailed, expiry_name, value_name
 from secret_rotator.openbao import Version
 from secret_rotator.state import LeafState
 
@@ -145,8 +145,9 @@ class KvCopy(KvPatch):
 
 
 class KvStamp(Step):
-    """Records the rotation once it took effect, in one check-and-set write of the run state
-    (design §3.4): the rotated keys' stamps, the leaf's status ok and last run, the nightly run's
+    """Records the rotation once it took effect (design §3.2, §3.4): first the expiry the plan
+    staged for a rotated key as its expires_at, in its entry; then, in one check-and-set write of
+    the run state, the rotated keys' stamps, the leaf's status ok and last run, the nightly run's
     backoff cleared, and its consumers: what the plan's activation read from the cluster, none when
     it read nothing. The core appends it to every plan (design R20)."""
 
@@ -160,10 +161,22 @@ class KvStamp(Step):
         self.consumers = consumers
 
     def run(self, ctx: Context) -> str:
-        if ctx.bao.metadata(self.leaf) is None:
+        meta = ctx.bao.metadata(self.leaf)
+        if meta is None:
             raise StepFailed(
                 f"no leaf {self.leaf}: it is gone from the store, so nothing is stamped"
             )
+        expiries = {k: d for k in self.keys if (d := ctx.staged(expiry_name(k))) is not None}
+        patch = {}
+        for key, expires in expiries.items():
+            name = entry_name(key)
+            if name not in meta:
+                raise StepFailed(f"{self.leaf} has no entry {name}: its expiry cannot be written")
+            fields = load_entry(meta[name])
+            if fields.get("expires_at") != expires:
+                patch[name] = dump_entry(fields | {"expires_at": expires})
+        if patch:
+            ctx.bao.patch_metadata(self.leaf, patch)
         today = ctx.now.date().isoformat()
 
         def stamp(state: LeafState) -> None:
@@ -175,4 +188,5 @@ class KvStamp(Step):
             state.held_by = None
 
         ctx.state.update(self.leaf, stamp)
-        return f"{', '.join(self.keys)} rotated {today}"
+        expire = "".join(f"; {key} expires {expires}" for key, expires in expiries.items())
+        return f"{', '.join(self.keys)} rotated {today}{expire}"

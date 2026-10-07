@@ -1,5 +1,6 @@
 """The packaged seed over the packaged key-name inventory: every leaf the store holds after the
-go-live resolves, and the seed says what AnsibleSpecs secret-rotation/catalog.md says.
+go-live expands to one compliant entry per key, and the seed says what AnsibleSpecs
+secret-rotation/catalog.md says.
 
 store-keys.json maps each leaf to its data key names (no values): the value-blind inventory of
 2026-10-04 after slice 044's cutover, plus the rotator's own leaves and markers (catalog
@@ -15,7 +16,7 @@ import pytest
 from secret_rotator import annotate as ann
 from secret_rotator import audit as aud
 from secret_rotator import cli
-from secret_rotator.contract import parse_args
+from secret_rotator.contract import MAX_VALUE_BYTES, dump_entry, is_scheduled
 
 APPROLES = ("backup", "eso", "eso-dev", "iac-agent", "jenkins", "openbao-admin")
 BOOTSTRAP = (
@@ -26,6 +27,7 @@ BOOTSTRAP = (
     "jwk-provisioner-password",
     "seal-key",
 )
+CATALOG = "eso/prd/kubecoder/prd/catalog"
 
 
 def audit_offline(keys_file: Path) -> tuple[int, list[str]]:
@@ -44,7 +46,14 @@ def store():
     return json.loads(ann.DEFAULT_KEYS.read_text())
 
 
-def test_every_key_of_every_leaf_resolves(store):
+@pytest.fixture(scope="module")
+def entries(seed):
+    """Each leaf's entries as annotate expands them over the inventory's keys."""
+    keys = json.loads(ann.DEFAULT_KEYS.read_text())
+    return {leaf: ann.expand(seed.leaves[leaf], keys[leaf]) for leaf in seed.leaves}
+
+
+def test_every_key_of_every_leaf_has_its_compliant_entry(store):
     code, lines = audit_offline(Path(str(ann.DEFAULT_KEYS)))
     assert lines[-1].startswith(
         f"0 finding(s) on 0 of {len(store)} leaf(s); blocked: 0 leaf(s), 0 key(s);"
@@ -52,8 +61,19 @@ def test_every_key_of_every_leaf_resolves(store):
     assert code == 0
 
 
-def test_the_seed_covers_exactly_the_stores_leaves(seed, store):
-    assert sorted(seed.annotations) == sorted(store)
+def test_the_seed_covers_exactly_the_stores_leaves_and_keys(seed, store, entries):
+    assert sorted(seed.leaves) == sorted(store)
+    assert {leaf: sorted(e) for leaf, e in entries.items()} == {
+        leaf: sorted(keys) for leaf, keys in store.items()
+    }
+    for leaf, held in seed.leaves.items():
+        assert set(held.keys) <= set(store[leaf]), leaf
+
+
+def test_every_entry_fits_the_metadata_s_512_bytes(entries):
+    for leaf, by_key in entries.items():
+        for key, fields in by_key.items():
+            assert len(dump_entry(fields).encode()) <= MAX_VALUE_BYTES, (leaf, key)
 
 
 def test_it_holds_once_keycloak_da_admin_is_deleted(store):
@@ -68,43 +88,80 @@ def test_it_holds_once_keycloak_da_admin_is_deleted(store):
     assert code == 0
 
 
-def test_the_per_key_cadences_of_ruling_q1(seed):
+def test_the_per_key_cadences_of_ruling_q1(entries):
     want = {
         "eso/prd/trello-mcp/prd/trello": {
-            "rotation_mechanism": "manual",
-            "rotation_interval": "never",
-            "key_bearer-token": "random",
-            "interval_bearer-token": "14d",
+            "api-key": ("manual", "never"),
+            "bearer-token": ("random", "14d"),
+            "token": ("manual", "never"),
         },
         "iac/tf-backend": {
-            "rotation_mechanism": "manual",
-            "rotation_interval": "never",
-            "interval_github_token": "365d",
+            "age_public_key": ("none", None),
+            "age_secret_key": ("manual", "never"),
+            "github_token": ("manual", "365d"),
         },
         "shared/samba/users": {
-            "rotation_mechanism": "samba-user",
-            "key_mvdbovenkamp": "manual",
-            "rotation_interval": "365d",
-            "interval_mvdbovenkamp": "never",
+            "mvdbovenkamp": ("manual", "never"),
+            "pvginkel": ("samba-user", "365d"),
         },
     }
     for leaf, keys in want.items():
-        meta = seed.annotations[leaf]
-        assert {k: meta.get(k) for k in keys} == keys, leaf
-        assert meta.get("notes", "").strip(), leaf
-    assert "cannot be rotated" in seed.annotations["eso/prd/trello-mcp/prd/trello"]["notes"]
+        got = {key: (f["kind"], f.get("interval")) for key, f in entries[leaf].items()}
+        assert got == keys, leaf
+    trello = entries["eso/prd/trello-mcp/prd/trello"]
+    assert (
+        trello["api-key"]["notes"]
+        == trello["token"]["notes"]
+        == ("cannot be rotated (operator, 2026-10-04)")
+    )
 
 
-def test_the_bags_vault_passphrase_is_the_bootstrap_tier_and_never_due(seed):
-    bag = "eso/prd/kubecoder/prd/catalog"
-    meta = seed.annotations[bag]
-    assert meta["interval_ansible-vault-password"] == "never"
-    assert "bootstrap tier" in meta["notes"]
+def test_every_never_key_and_every_manual_key_carries_its_own_notes(entries):
+    for leaf, by_key in entries.items():
+        for key, fields in by_key.items():
+            if fields.get("interval") == "never" or fields["kind"] == "manual":
+                assert fields.get("notes", "").strip(), (leaf, key)
+
+
+def test_a_note_the_catalog_gives_one_key_of_a_leaf_is_that_key_s_alone(entries):
+    noted = {
+        CATALOG: {
+            "ansible-vault-password",
+            "argocd-token",
+            "grafana-api-key",
+            "openai-api-key",
+            "ssh-key-pve",
+        },
+        "iac/tf-backend": {"age_secret_key", "github_token"},
+        "eso/prd/jenkins-mcp/prd/config": {"authorization"},
+        "eso/prd/trello-mcp/prd/trello": {"api-key", "token"},
+        "shared/samba/users": {"mvdbovenkamp"},
+        "eso/prd/jenkins-telegram-bot/prd/config": {"telegram-bot-token"},
+        "eso/prd/newsfilter/prd/telegram": {"bot-token"},
+        "eso/prd/telegram-mcp/prd/telegram": {"bot-token"},
+        "eso/prd/prometheus/prd/telegram": {"bot_token"},
+    }
+    for leaf, keys in noted.items():
+        assert {k for k, f in entries[leaf].items() if "notes" in f} == keys, leaf
+    assert entries[CATALOG]["ansible-vault-password"]["notes"].startswith("the bootstrap tier")
+    assert entries["eso/prd/calendar-support/prd/google-service-account"]["key_json"]["notes"] == (
+        "GCP project calendar-display-437018."
+    )
+
+
+def test_the_elastic_leaves_carry_no_note(entries):
+    # R4: the sweep's notes on them are not the seed's.
+    for leaf in ("eso/prd/filebeat/prd/elastic-credentials", "eso/prd/iot/prd/elastic-credentials"):
+        assert not any("notes" in f for f in entries[leaf].values()), leaf
+
+
+def test_the_bags_vault_passphrase_is_the_bootstrap_tier_and_never_due(seed, entries):
+    assert entries[CATALOG]["ansible-vault-password"]["interval"] == "never"
     store = ann.offline_store(Path(str(ann.DEFAULT_KEYS)), seed, print)
     result = aud.audit(store)
     assert result.findings == []
-    assert (bag, "ansible-vault-password") in result.never
-    due = [s for s in aud.due_keys(store, result, datetime.date(2026, 10, 6)) if s.leaf == bag]
+    assert (CATALOG, "ansible-vault-password") in result.never
+    due = [s for s in aud.due_keys(store, result, datetime.date(2026, 10, 6)) if s.leaf == CATALOG]
     assert "ansible-vault-password" not in {s.key for s in due}
     assert {s.key for s in due if s.kind == "manual"} == {
         "argocd-token",
@@ -114,7 +171,7 @@ def test_the_bags_vault_passphrase_is_the_bootstrap_tier_and_never_due(seed):
     }
 
 
-def test_the_leaves_once_manual_carry_the_kind_the_catalog_gives(seed):
+def test_the_leaves_once_manual_carry_the_kind_the_catalog_gives(entries):
     want = {
         "eso/prd/argocd/prd/webhook": "random",
         "eso/prd/fieldnotes/prd/kubecoder-controller": "kubecoder-client",
@@ -130,42 +187,38 @@ def test_the_leaves_once_manual_carry_the_kind_the_catalog_gives(seed):
         "shared/prd/ceph-rgw/s3": "rgw-admin",
         "shared/samba/users": "samba-user",
     }
-    assert {leaf: seed.annotations[leaf]["rotation_mechanism"] for leaf in want} == want
-    catalog = seed.annotations["eso/prd/kubecoder/prd/catalog"]
+    for leaf, kind in want.items():
+        assert kind in {f["kind"] for f in entries[leaf].values()}, leaf
     for key in ("kubeconfig", "kubeconfig-dev-write", "kubeconfig-prd-write"):
-        assert catalog[f"key_{key}"] == "k8s-sa-token"
+        assert entries[CATALOG][key]["kind"] == "k8s-sa-token"
 
 
-def test_the_catalog_corrections(seed):
-    a = seed.annotations
+def test_the_catalog_corrections(entries):
     assert (
-        a["eso/prd/argocd/prd/oidc"]["rotation_activate"]
+        entries["eso/prd/argocd/prd/oidc"]["client_secret"]["activate"]
         == "k8s-rollout:argocd-prd/deployment/argocd-prd-server"
     )
     assert (
-        a["eso/prd/youtrack/prd/webhook-token"]["rotation_activate"]
+        entries["eso/prd/youtrack/prd/webhook-token"]["token"]["activate"]
         == "jenkins-job:YouTrack/YouTrackConfiguration?ROTATE_TOKEN=true"
     )
     for stage in ("prd", "dev"):
-        assert (
-            a[f"eso/prd/kubecoder/{stage}/catalog"]["rotation_activate"]
-            == f"k8s-rollout:kubecoder-{stage}/deployment/kubecoder-controller"
-        )
+        bag = entries[f"eso/prd/kubecoder/{stage}/catalog"]
+        assert {f.get("activate") for k, f in bag.items() if f["kind"] != "none"} == {
+            f"k8s-rollout:kubecoder-{stage}/deployment/kubecoder-controller"
+        }
 
 
-def test_the_rotators_own_leaves_are_annotated(seed):
-    a = seed.annotations
-    assert a["iac/rotator-approle"]["rotation_mechanism"] == "approle"
-    assert a["iac/rotator-approle"]["key_role_id"] == "none"
-    assert parse_args(a["iac/rotator-approle"]["rotation_args"]) == {
-        "role": "rotator",
-        "delivery": "kv",
-    }
-    assert a["iac/rotator-k8s-token"]["rotation_mechanism"] == "k8s-sa-token"
-    assert a["rotator/telegram"]["rotation_mechanism"] == "manual"
-    assert a["rotator/youtrack"]["rotation_mechanism"] == "youtrack-token"
-    assert a["rotator/jenkins"]["rotation_mechanism"] == "jenkins-token"
-    assert a["rotator/jenkins"]["key_user"] == "none"
+def test_the_rotators_own_leaves_are_annotated(entries):
+    approle = entries["iac/rotator-approle"]
+    assert approle["secret_id"]["kind"] == "approle"
+    assert approle["role_id"] == {"kind": "none"}
+    assert approle["secret_id"]["args"] == {"role": "rotator", "delivery": "kv"}
+    assert entries["iac/rotator-k8s-token"]["token"]["kind"] == "k8s-sa-token"
+    assert entries["rotator/telegram"]["token"]["kind"] == "manual"
+    assert entries["rotator/youtrack"]["token"]["kind"] == "youtrack-token"
+    assert entries["rotator/jenkins"]["token"]["kind"] == "jenkins-token"
+    assert entries["rotator/jenkins"]["user"] == {"kind": "none"}
     for leaf in (
         "iac/rotator-approle",
         "iac/rotator-k8s-token",
@@ -173,7 +226,8 @@ def test_the_rotators_own_leaves_are_annotated(seed):
         "rotator/youtrack",
         "rotator/jenkins",
     ):
-        assert a[leaf]["rotation_activate"] == "none", leaf
+        scheduled = [f for f in entries[leaf].values() if is_scheduled(f["kind"])]
+        assert [f["activate"] for f in scheduled] == ["none"], leaf
 
 
 def test_the_markers_are_the_approles_and_the_bootstrap_tier(seed, store):
@@ -184,28 +238,27 @@ def test_the_markers_are_the_approles_and_the_bootstrap_tier(seed, store):
         assert store[leaf] == [key], leaf
 
 
-def test_every_approle_has_the_one_args_shape(seed):
+def test_every_approle_has_the_one_args_shape(entries):
     roles = {}
-    for leaf, meta in seed.annotations.items():
-        if meta.get("rotation_mechanism") == "approle":
-            args = parse_args(meta["rotation_args"])
-            assert set(args) == {"role", "delivery"}, leaf
-            roles[args["role"]] = args["delivery"]
+    for leaf, by_key in entries.items():
+        for fields in by_key.values():
+            if fields["kind"] == "approle":
+                assert set(fields["args"]) == {"role", "delivery"}, leaf
+                roles[fields["args"]["role"]] = fields["args"]["delivery"]
     assert roles == {
         "rotator": "kv",
         "eso": "k8s_secret=external-secrets-prd/openbao-eso-approle",
         "eso-dev": "k8s_secret=external-secrets/openbao-eso-approle",
-        "jenkins": "jenkins_credential=jenkins-vault-approle",
+        "jenkins": "jenkins_credential=724520d1-a0c1-4fa3-8a9e-a027de7f469a",
         "backup": "playbook",
         "iac-agent": "manual=Paste it as OPENBAO_SECRET_ID in srviac /etc/iac/secrets.yaml",
         "openbao-admin": "manual=Re-vault it as openbao_admin_secret_id in Ansible "
         "inventories/prd/group_vars/openbao.yml and commit",
     }
-    a = seed.annotations
-    assert a["rotator/approle/eso-dev"]["rotation_interval"] == "never"
-    assert a["rotator/approle/iac-agent"]["rotation_interval"] == "90d"
-    assert a["rotator/approle/openbao-admin"]["rotation_interval"] == "90d"
+    assert entries["rotator/approle/eso-dev"]["secret_id"]["interval"] == "never"
+    assert entries["rotator/approle/iac-agent"]["secret_id"]["interval"] == "90d"
+    assert entries["rotator/approle/openbao-admin"]["secret_id"]["interval"] == "90d"
     assert (
-        a["rotator/approle/eso"]["rotation_activate"]
+        entries["rotator/approle/eso"]["secret_id"]["activate"]
         == "k8s-rollout:external-secrets-prd/deployment/external-secrets-prd"
     )

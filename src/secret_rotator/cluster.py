@@ -45,7 +45,7 @@ class Workload:
     name: str
 
     def __str__(self) -> str:
-        """The target as rotation_activate names it."""
+        """The target as an activate names it."""
         return f"{self.namespace}/{self.kind}/{self.name}"
 
     @classmethod

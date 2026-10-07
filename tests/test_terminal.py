@@ -12,6 +12,7 @@ import termios
 import threading
 
 import pytest
+from fixtures import edit
 from plans import COPY, LEAF, client, fake_of, flight_of, state_of
 from test_kinds import ACTIVATE_NONE, KINDS, SEAL, TRELLO, WIFI, store_of
 
@@ -180,7 +181,7 @@ class TestRun:
 
     def test_a_credential_is_hidden_its_size_shown_and_a_shape_mismatch_asks_first(self):
         store = store_of(**ACTIVATE_NONE)
-        store[WIFI].meta["rotation_args"] = '{"what":"PSK","prefix":"psk-"}'
+        edit(store[WIFI].meta, "password", args={"what": "PSK", "prefix": "psk-"})
         bao = fake_of(store)
         answers = ("y", "SECRET-no-prefix", "c", "n", "e", "psk-SECRET", "c")
         code, out = run(bao, WIFI, *answers)
@@ -193,7 +194,7 @@ class TestRun:
 
     def test_a_mismatch_continued_anyway_is_taken(self):
         store = store_of(**ACTIVATE_NONE)
-        store[WIFI].meta["rotation_args"] = '{"prefix":"psk-"}'
+        edit(store[WIFI].meta, "password", args={"prefix": "psk-"})
         bao = fake_of(store)
         assert run(bao, WIFI, "y", "SECRET-odd", "c", "y")[0] == 0
         assert bao.data(WIFI) == {"password": "SECRET-odd"}
@@ -248,7 +249,7 @@ class TestRun:
 
     def test_an_all_silent_plan_shows_working(self):
         store = store_of(**ACTIVATE_NONE)
-        store[WIFI].meta["rotation_mechanism"] = "random"
+        edit(store[WIFI].meta, "password", kind="random")
         bao = fake_of(store)
         code, out = run(bao, WIFI, "y", kinds=kinds_with(Wrapped(silent_only=True)))
         assert code == 0 and "Working…" in out
@@ -502,5 +503,5 @@ class TestConsole:
 
 def test_the_tool_part_names_copies_and_activation():
     store = store_of(**ACTIVATE_NONE)
-    plan = make(KINDS, LEAF, "random", ["token"], store, audit(store))
+    plan = make(KINDS, LEAF, "random", ["token"], audit(store))
     assert tool_part(plan.target) == "writes it to the leaf and its 1 copy"

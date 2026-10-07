@@ -1,6 +1,6 @@
-"""Building a plan (design §4.3): the leaf's annotations resolved into a Target, the kind's steps
-built with the step factory, and kv.stamp appended by the core. A leaf has one plan per kind with
-a plugin, one per key for a per-key kind (manual)."""
+"""Building a plan (design §4.3): the entries of the keys it writes resolved into a Target, the
+kind's steps built with the step factory, and kv.stamp appended by the core. A leaf has one plan
+per kind with a plugin, one per key for a per-key kind (manual)."""
 
 import datetime
 from collections.abc import Iterable, Mapping
@@ -10,14 +10,7 @@ from typing import Protocol
 from secret_rotator.ansiblesteps import Ansible, AnsibleRun, Playbook
 from secret_rotator.audit import Audit, Leaf
 from secret_rotator.cluster import Cluster, Derived, Ref, Workload
-from secret_rotator.contract import (
-    NONE,
-    Activator,
-    copy_target,
-    is_scheduled,
-    parse_activate,
-    parse_args,
-)
+from secret_rotator.contract import NONE, Activator, Entry, copy_target, entry_name, is_scheduled
 from secret_rotator.jenkins import Jenkins
 from secret_rotator.jenkinssteps import JenkinsCredential, JenkinsJob, parse_job
 from secret_rotator.k8ssteps import EsoSync, K8sRollout
@@ -48,33 +41,36 @@ class Copy:
 
 @dataclass(frozen=True)
 class Activation:
-    """One leaf's rotation_activate: the primary's leaf, or a leaf a copy lands in."""
+    """The activate of an entry the plan writes: a rotated key's, or a copy's on its leaf."""
 
     leaf: str
+    key: str
     specs: tuple[Activator, ...]
 
 
 @dataclass(frozen=True)
 class Target:
-    """What a kind plans from: one kind's keys on one leaf, with the annotations they resolve to."""
+    """What a kind plans from: one kind's keys on one leaf, with their entries."""
 
     leaf: str
     kind: str
     keys: tuple[str, ...]  # the keys the plan rotates, sorted
-    args: Mapping  # rotation_args, when the kind is the leaf's rotation_mechanism; else empty
+    entries: Mapping[str, Entry]  # each of those keys' entry
     copies: tuple[Copy, ...]  # every copy of those keys, sorted
-    meta: Mapping[str, str]
-    activations: tuple[Activation, ...]  # the primary's leaf first, then each copy's leaf
+    # Every entry the plan writes: the rotated keys' first, then the copies', leaf by leaf.
+    activations: tuple[Activation, ...]
 
     @property
     def activates(self) -> bool:
-        """Whether a leaf the plan writes names any activation."""
+        """Whether an entry the plan writes names any activation."""
         return any(a.specs for a in self.activations)
 
     @property
     def confirms(self) -> tuple[str, ...]:
-        """The texts of the manual: activators, each an operator.confirm of the plan."""
-        return tuple(s.arg for a in self.activations for s in a.specs if s.name == "manual")
+        """The texts of the manual: activators, each an operator.confirm of the plan: one per text
+        and leaf."""
+        found = ((a.leaf, s.arg) for a in self.activations for s in a.specs if s.name == "manual")
+        return tuple(text for _, text in dict.fromkeys(found))
 
 
 def tool_part(leaf: Target) -> str:
@@ -113,8 +109,8 @@ class StepFactory:
         self.jenkins = jenkins or Jenkins()
         self.ansible = ansible or Ansible()
         # What the activation read from the cluster, for the leaf's consumers in the run state: the
-        # ExternalSecrets it syncs and the workloads it derived; a named target is in
-        # rotation_activate already.
+        # ExternalSecrets it syncs and the workloads it derived; a named target is in an activate
+        # already.
         self.consumers: list[str] = []
 
     def generate(
@@ -182,15 +178,19 @@ class StepFactory:
         return [*syncs, *(K8sRollout(cluster, w) for w in dict.fromkeys(targets))]
 
     def activate(self) -> list[Step]:
-        """The activation of the primary's leaf, then of each copy's leaf: every spec of its
-        rotation_activate as its steps. The Kubernetes specs of all those leaves are one
-        eso_sync_and_rollout, at the first one's place, since a workload may read the Secrets
-        of several of them; a job two leaves name runs once. A spec no step is built for
-        refuses the plan."""
+        """The activation of every entry the plan writes, in the Target's order: each spec of its
+        activate as its steps. The Kubernetes specs of all of them are one eso_sync_and_rollout,
+        at the first one's place, since a workload may read the Secrets of several of their leaves;
+        a job runs once, a manual: text once per leaf. A jenkins-credential: takes the value of the
+        key whose entry names it, and a credential two entries name refuses the plan, as does a
+        spec no step is built for."""
         steps: list[Step] = []
         kubernetes = False
+        credentials: dict[str, Activation] = {}
+        confirms: dict[tuple[str, str], None] = {}
         for activation in self.target.activations:
-            for n, spec in enumerate(activation.specs, 1):
+            leaf = activation.leaf
+            for spec in activation.specs:
                 if spec.name in KUBERNETES:
                     if not kubernetes:
                         steps += self._kubernetes()
@@ -200,42 +200,36 @@ class StepFactory:
                     if job.id not in {step.id for step in steps}:
                         steps.append(job)
                 elif spec.name == "jenkins-credential":
-                    key = self._one_key(activation.leaf, spec)
+                    if other := credentials.get(spec.arg):
+                        raise self._refused(
+                            activation,
+                            spec,
+                            f"{self._entry(other)} names the credential too, and it takes one "
+                            f"value",
+                        )
+                    credentials[spec.arg] = activation
                     steps.append(
-                        JenkinsCredential(self.jenkins, spec.arg, kv=(activation.leaf, key))
+                        JenkinsCredential(self.jenkins, spec.arg, kv=(leaf, activation.key))
                     )
                 elif spec.name == "manual":
+                    if (leaf, spec.arg) in confirms:
+                        continue
+                    confirms[leaf, spec.arg] = None
+                    n = sum(1 for other, _ in confirms if other == leaf)
                     steps.append(
-                        OperatorConfirm(
-                            f"{activation.leaf}:{n}",
-                            spec.arg,
-                            f"for {activation.leaf}",
-                            activator=True,
-                        )
+                        OperatorConfirm(f"{leaf}:{n}", spec.arg, f"for {leaf}", activator=True)
                     )
                 else:
-                    raise self._refused(activation.leaf, spec, "no step is built for it yet")
+                    raise self._refused(activation, spec, "no step is built for it yet")
         return steps
 
-    def _one_key(self, leaf: str, spec: Activator) -> str:
-        """The one key the plan writes to the leaf, whose value a credential takes."""
-        t = self.target
-        written = [
-            *(t.keys if leaf == t.leaf else ()),
-            *(c.key for c in t.copies if c.leaf == leaf),
-        ]
-        if len(written) != 1:
-            raise self._refused(
-                leaf,
-                spec,
-                f"the plan writes {', '.join(written)} to {leaf}, and the spec does not say "
-                f"which one the credential takes",
-            )
-        return written[0]
+    def _entry(self, activation: Activation) -> str:
+        """The entry whose activate it is, in words: its leaf's own unless it is a copy's."""
+        name = entry_name(activation.key)
+        return name if activation.leaf == self.target.leaf else f"{activation.leaf}'s {name}"
 
-    def _refused(self, leaf: str, spec: Activator, why: str) -> PlanError:
-        whose = "" if leaf == self.target.leaf else f"{leaf}'s "
-        return PlanError(f"{self.target.leaf}: {whose}rotation_activate {spec}: {why}")
+    def _refused(self, activation: Activation, spec: Activator, why: str) -> PlanError:
+        return PlanError(f"{self.target.leaf}: {self._entry(activation)} activate {spec}: {why}")
 
     def _cluster(self) -> Cluster:
         if self.cluster is None:
@@ -246,9 +240,9 @@ class StepFactory:
         return self.cluster
 
     def _kubernetes(self) -> list[Step]:
-        """The eso_sync_and_rollout of every written leaf's eso and k8s-rollout specs. eso and a
+        """The eso_sync_and_rollout of every written entry's eso and k8s-rollout specs. eso and a
         k8s-rollout without targets (auto is both) need an ExternalSecret that references the
-        leaf; a named rollout does not."""
+        entry's leaf; a named rollout does not."""
         leaves: list[str] = []
         targets: list[Workload] = []
         for activation in self.target.activations:
@@ -257,14 +251,15 @@ class StepFactory:
                 continue
             leaf = activation.leaf
             found = self._external_secrets(leaf)
-            leaves.append(leaf)
-            self._consumed(f"{es.namespace}/externalsecret/{es.name}" for es in found)
+            if leaf not in leaves:
+                leaves.append(leaf)
+                self._consumed(f"{es.namespace}/externalsecret/{es.name}" for es in found)
             for spec in specs:
                 if spec.targets:
                     targets += [Workload.parse(t) for t in spec.targets]
                     continue
                 if not found:
-                    raise self._refused(leaf, spec, f"no ExternalSecret references {leaf}")
+                    raise self._refused(activation, spec, f"no ExternalSecret references {leaf}")
                 if spec.name == "k8s-rollout":
                     derived = self._consumers(leaf)
                     targets += derived
@@ -295,11 +290,11 @@ class PlanContext:
 class Kind(Protocol):
     """A kind's plugin (design §6, plugin contract), registered under its name."""
 
-    name: str  # the rotation_mechanism or key_<name> value
+    name: str  # the kind an entry names
     per_key: bool  # one plan per key of the kind on a leaf; else one plan of all of them
 
     def args_problems(self, args: Mapping) -> list[str]:
-        """What is wrong with the leaf's rotation_args for this kind; empty when nothing is."""
+        """What is wrong with one key's args for this kind; empty when nothing is."""
 
     def ask(self, leaf: Target) -> str:
         """What the plan asks of the operator, in a few words; empty when it asks nothing."""
@@ -332,11 +327,9 @@ class Plan:
         return next((i for i, step in enumerate(self.steps) if step.id == step_id), None)
 
 
-def target(
-    leaf: str, kind: str, keys: list[str], store: Mapping[str, Leaf], audit: Audit
-) -> Target:
-    """The Target of rotating these keys of the leaf, which must resolve to the kind and be
-    unblocked by the audit of the store."""
+def target(leaf: str, kind: str, keys: list[str], audit: Audit) -> Target:
+    """The Target of rotating these keys of the leaf, which must be of the kind and unblocked by
+    the audit."""
     kinds = audit.kinds.get(leaf)
     if kinds is None:
         raise PlanError(f"{leaf}: no such leaf, or its keys cannot be read")
@@ -350,28 +343,26 @@ def target(
             problems.append(f"{key} is blocked by a finding")
     if problems:
         raise PlanError(f"{leaf}: {'; '.join(problems)}")
-    meta = store[leaf].meta
-    own = kind == meta.get("rotation_mechanism") and "rotation_args" in meta
     copies = sorted(
         Copy(path, key, of[1])
         for path, leaf_kinds in audit.kinds.items()
         for key, k in leaf_kinds.items()
         if (of := copy_target(k)) and of[0] == leaf and of[1] in keys
     )
-    # Unblocked, so every one of these leaves holds a rotation_activate that parses: a leaf a
-    # copy lands in blocks the primary key when it has a leaf-level finding.
-    leaves = [leaf, *sorted({c.leaf for c in copies} - {leaf})]
-    activations = tuple(
-        Activation(path, tuple(parse_activate(store[path].meta["rotation_activate"])))
-        for path in leaves
+    # Unblocked, so every entry the plan writes is the audit's: a finding on a copy's entry, or on
+    # a leaf a copy lands in, blocks the primary key.
+    entries = audit.entries[leaf]
+    written = sorted(copies, key=lambda c: (c.leaf != leaf, c.leaf, c.key))
+    activations = (
+        *(Activation(leaf, key, entries[key].activate) for key in sorted(keys)),
+        *(Activation(c.leaf, c.key, audit.entries[c.leaf][c.key].activate) for c in written),
     )
     return Target(
         leaf,
         kind,
         tuple(sorted(keys)),
-        parse_args(meta["rotation_args"]) if own else {},
+        {key: entries[key] for key in sorted(keys)},
         tuple(copies),
-        dict(meta),
         activations,
     )
 
@@ -386,8 +377,13 @@ def build(
     ansible: Ansible | None = None,
 ) -> Plan:
     """The kind's plan of the Target; derived: a plan in flight's record of what it derived."""
-    if problems := kind.args_problems(leaf.args):
-        raise PlanError(f"{leaf.leaf}: rotation_args: {'; '.join(problems)}")
+    problems = [
+        f"{entry_name(key)} args: {problem}"
+        for key in leaf.keys
+        for problem in kind.args_problems(leaf.entries[key].args)
+    ]
+    if problems:
+        raise PlanError(f"{leaf.leaf}: {'; '.join(problems)}")
     factory = StepFactory(leaf, cluster, derived=derived, jenkins=jenkins, ansible=ansible)
     planned = kind.plan(leaf, PlanContext(factory))
     steps = [*planned, KvStamp(leaf.leaf, leaf.keys, tuple(factory.consumers))]
@@ -402,7 +398,6 @@ def make(
     leaf: str,
     kind: str,
     keys: list[str],
-    store: Mapping[str, Leaf],
     audit: Audit,
     cluster: Cluster | None = None,
     *,
@@ -414,7 +409,7 @@ def make(
     in flight's record of what it derived from the cluster."""
     if kind not in kinds:
         raise PlanError(f"{leaf}: {kind} is not a kind this install has a plugin for")
-    built = target(leaf, kind, keys, store, audit)
+    built = target(leaf, kind, keys, audit)
     return build(kinds[kind], built, cluster, derived=derived, jenkins=jenkins, ansible=ansible)
 
 
@@ -467,15 +462,14 @@ def of_leaf(
             groups.setdefault(kind, []).append(key)
     if not groups:
         return [], unplanned
-    planned = {key: kind for kind, keys in groups.items() for key in keys}
-    held = store[leaf]
-    due = {s.key: s.due_at for s in schedule(leaf, held.meta, planned, held.state.stamps)}
+    planned = {key: audit.entries[leaf][key] for keys in groups.values() for key in keys}
+    due = {s.key: s.due_at for s in schedule(leaf, planned, store[leaf].state.stamps)}
     plans = []
     for kind, keys in groups.items():
         for subset in split(kinds[kind], keys):
             dates = [due[key] for key in subset if due[key] is not None]
             try:
-                built = make(kinds, leaf, kind, list(subset), store, audit, cluster)
+                built = make(kinds, leaf, kind, list(subset), audit, cluster)
                 error = ""
             except PlanError as e:
                 built, error = None, str(e)

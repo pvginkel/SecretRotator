@@ -18,7 +18,7 @@ USER = "admin"
 TOKEN = "SECRET-api-token-of-the-admin"
 CREDENTIALS = {"user": USER, "token": TOKEN}  # rotator/jenkins
 YT = "YouTrack/YouTrackConfiguration"
-APPROLE = "jenkins-vault-approle"
+APPROLE = "724520d1-a0c1-4fa3-8a9e-a027de7f469a"
 REDACTED = "<secret-redacted/>"
 
 VAULT_APPROLE = f"""<com.datapipe.jenkins.vault.credentials.VaultAppRoleCredential plugin="vault">

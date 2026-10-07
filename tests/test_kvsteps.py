@@ -1,17 +1,20 @@
 """The generic KV steps (design §4.2): random.generate's default and shape, kv.write and kv.copy
 as KV v2 patches with read-back and an undo to the version they started from, and kv.stamp's one
-check-and-set write of the run state with ISO-dated per-key stamps."""
+check-and-set write of the run state with ISO-dated per-key stamps, after a staged expiry written
+into its key's entry."""
 
 import pytest
+from fixtures import edit, fields_of
 from plans import COPY, LEAF, NOW, client, fake, put_state, run_state, state_of
 
 from secret_rotator.contract import STATE_LEAF
 from secret_rotator.kvsteps import URLSAFE, KvCopy, KvStamp, KvWrite, RandomGenerate
-from secret_rotator.model import StepFailed, value_name
+from secret_rotator.model import StepFailed, expiry_name, value_name
 from secret_rotator.openbao import OpenBaoError
 from secret_rotator.state import LeafState
 
 TRELLO = "eso/prd/trello/prd/trello"  # api-key, bearer-token, token
+YOUTRACK = "jenkins/youtrack"  # admin-token, expiring 2027-01-31
 
 
 class Ctx:
@@ -197,12 +200,52 @@ class TestKvStamp:
         state = state_of(bao, TRELLO)
         assert state.failed_nights == 0 and state.held_by is None
 
-    def test_it_writes_nothing_on_the_secret_leaf_s_metadata(self):
+    def test_without_a_staged_expiry_it_writes_nothing_on_the_secret_leaf_s_metadata(self):
         bao = fake()
         before = dict(bao.meta(TRELLO))
         KvStamp(TRELLO, ("bearer-token",), ("ns/externalsecret/a",)).run(Ctx(bao))
         assert bao.meta(TRELLO) == before
         assert not [w for w in bao.writes() if w[1].startswith("kv/metadata/")]
+
+    def test_it_writes_the_staged_expiry_into_the_key_s_entry_before_the_run_state(self):
+        bao = fake()
+        token = fields_of(bao.meta(TRELLO), "token")
+        step = KvStamp(TRELLO, ("bearer-token",))
+        detail = step.run(Ctx(bao, **{expiry_name("bearer-token"): "2027-01-03"}))
+        assert detail == "bearer-token rotated 2026-10-05; bearer-token expires 2027-01-03"
+        assert fields_of(bao.meta(TRELLO), "bearer-token") == {
+            "kind": "random",
+            "interval": "14d",
+            "activate": "auto",
+            "expires_at": "2027-01-03",
+        }
+        assert fields_of(bao.meta(TRELLO), "token") == token
+        metadata, state = bao.writes()
+        assert metadata[:2] == ("PATCH", f"kv/metadata/{TRELLO}")
+        assert list(metadata[3]["custom_metadata"]) == ["rotation_bearer-token"]
+        assert state[:2] == ("POST", f"kv/data/{STATE_LEAF}")
+
+    def test_it_replaces_the_expiry_an_entry_held_and_rewrites_none_it_holds_already(self):
+        bao = fake()
+        edit(bao.meta(YOUTRACK), "admin-token", expires_at="2026-10-10")
+        KvStamp(YOUTRACK, ("admin-token",)).run(
+            Ctx(bao, **{expiry_name("admin-token"): "2027-01-03"})
+        )
+        assert fields_of(bao.meta(YOUTRACK), "admin-token")["expires_at"] == "2027-01-03"
+        writes = len(bao.writes())
+        KvStamp(YOUTRACK, ("admin-token",)).run(
+            Ctx(bao, **{expiry_name("admin-token"): "2027-01-03"})
+        )
+        assert [w[1] for w in bao.writes()[writes:]] == [f"kv/data/{STATE_LEAF}"]
+
+    def test_an_entry_gone_mid_plan_fails_before_anything_is_stamped(self):
+        bao = fake()
+        del bao.meta(TRELLO)["rotation_bearer-token"]
+        with pytest.raises(StepFailed, match=f"{TRELLO} has no entry rotation_bearer-token"):
+            KvStamp(TRELLO, ("bearer-token",)).run(
+                Ctx(bao, **{expiry_name("bearer-token"): "2027-01-03"})
+            )
+        assert bao.writes() == [] and state_of(bao, TRELLO) == LeafState()
 
     def test_a_leaf_gone_mid_plan_is_a_failure_not_a_stamp(self):
         bao = fake()

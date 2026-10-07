@@ -479,7 +479,6 @@ def run_leaf(
                     leaf,
                     flight.kind,
                     list(flight.keys),
-                    store,
                     result,
                     cluster,
                     derived=flight.derived,

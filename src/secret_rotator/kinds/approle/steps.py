@@ -8,14 +8,12 @@ import datetime
 from collections.abc import Callable
 
 from secret_rotator.cluster import Cluster
-from secret_rotator.contract import EXPIRES_AT
-from secret_rotator.model import Context, Step, StepFailed
+from secret_rotator.model import Context, Step, StepFailed, expiry_name
 from secret_rotator.openbao import OpenBao, OpenBaoError
 
 # The plan's staging names beside its new secret_id's.
 OLD = "approle:old-accessor"  # the accessor the consumer held before; "" when it held none
 NEW = "approle:new-accessor"
-EXPIRES_FROM = "approle:expires-from"  # the leaf's rotator_expires_at before the mint; "" for none
 # The new secret_id where no kv.write takes it: on a marker leaf, which holds the marker text.
 SECRET = "approle:secret-id"
 # OpenBao's expiration_time of a secret_id that never expires (OpenBao 2.5.4).
@@ -93,23 +91,23 @@ def expiry_date(described: dict) -> datetime.date:
 
 
 class Mint(Step):
-    """Mints a new secret_id with a ttl and records the expiry it reports as the leaf's
-    rotator_expires_at. First it stages the accessor the consumer holds: that of the secret_id
+    """Mints a new secret_id with a ttl and stages the expiry it reports, which kv.stamp writes as
+    the key's expires_at. First it stages the accessor the consumer holds: that of the secret_id
     `held` reads, where the delivery can read it, else the role's only one. A role with more than
     one whose consumer cannot be read fails here, before anything is minted.
 
-    Its undo destroys the new secret_id and puts the previous rotator_expires_at back. A mint whose
-    answer is lost leaves a secret_id no one holds, which expires with its ttl."""
+    Its undo destroys the new secret_id. A mint whose answer is lost leaves a secret_id no one
+    holds, which expires with its ttl."""
 
     type = "approle.mint"
     mutates = True
 
     def __init__(
-        self, role: str, leaf: str, secret: str, days: int, consumer: str, held: Held | None
+        self, role: str, key: str, secret: str, days: int, consumer: str, held: Held | None
     ):
         super().__init__("approle.mint", f"mint a new {role} secret_id that expires in {days} days")
         self.role = role
-        self.leaf = leaf
+        self.key = key  # the data key whose expiry it stages
         self.secret = secret  # the staging name of the new secret_id
         self.days = days
         self.consumer = consumer
@@ -132,11 +130,6 @@ class Mint(Step):
         if ctx.staged(self.secret) is None:
             if ctx.staged(OLD) is None:
                 ctx.stage(OLD, self._old(ctx, ids))
-            if ctx.staged(EXPIRES_FROM) is None:
-                meta = ctx.bao.metadata(self.leaf)
-                if meta is None:
-                    raise StepFailed(f"no leaf {self.leaf}")
-                ctx.stage(EXPIRES_FROM, meta.get(EXPIRES_AT, ""))
             secret_id, accessor = ids.mint(self.days)
             ctx.stage(self.secret, secret_id)
             ctx.stage(NEW, accessor)
@@ -150,23 +143,19 @@ class Mint(Step):
         if described is None:
             raise StepFailed(f"the new secret_id of AppRole {self.role} is gone")
         expires = expiry_date(described).isoformat()
-        ctx.bao.patch_metadata(self.leaf, {EXPIRES_AT: expires})
+        if ctx.staged(expiry_name(self.key)) != expires:
+            ctx.stage(expiry_name(self.key), expires)
         return f"expires {expires}"
 
     def undo(self, ctx: Context) -> str:
         ids = SecretIds(ctx.bao, self.role)
-        done = []
         accessor = ctx.staged(NEW)
         if accessor is None and (secret_id := ctx.staged(self.secret)) is not None:
             accessor = ids.accessor_of(secret_id)
         if accessor is not None and ids.lookup(accessor) is not None:
             ids.destroy(accessor)
-            done.append("the new secret_id destroyed")
-        previous = ctx.staged(EXPIRES_FROM)
-        if previous is not None:
-            ctx.bao.patch_metadata(self.leaf, {EXPIRES_AT: previous or None})
-            done.append(f"{EXPIRES_AT} back to {previous or 'none'}")
-        return "; ".join(done) or "nothing was minted"
+            return "the new secret_id destroyed"
+        return "nothing was minted"
 
 
 class Login(Step):

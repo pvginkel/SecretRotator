@@ -1,4 +1,5 @@
-"""The contract's vocabulary: kinds and the keys they own, activators, intervals, dates."""
+"""The contract's vocabulary: one rotation_<key> entry per data key and its fields, kinds and the
+keys they may rotate, activators, intervals, dates."""
 
 import datetime
 
@@ -51,63 +52,154 @@ def test_every_kind_of_design_6_is_known():
         "jenkins-job:YouTrack/YouTrackConfiguration?ROTATE_TOKEN=true",
     ],
 )
-def test_an_activator_reads_as_rotation_activate_writes_it(spec):
+def test_an_activator_reads_as_an_activate_writes_it(spec):
     (activator,) = c.parse_activate(spec)
     assert str(activator) == spec
 
 
-def test_the_kind_of_every_key_is_resolved_as_design_3_1_says():
-    assert c.resolve({"rotation_mechanism": "keycloak-client"}, ["client_id", "client_secret"]) == {
-        "client_id": "none",
-        "client_secret": "keycloak-client",
-    }
-    assert c.resolve(
+def test_a_kind_that_names_its_keys_may_rotate_those_alone_any_other_any_key():
+    assert c.may_rotate("keycloak-client", "client_secret")
+    assert not c.may_rotate("keycloak-client", "client_id")
+    assert not c.may_rotate("elastic-user", "username")
+    assert c.may_rotate("cephx", "user_key") and c.may_rotate("manual", "anything")
+    assert c.may_rotate("none", "username") and c.may_rotate("copy:eso/prd/a#token", "token")
+
+
+def test_a_key_s_entry_is_rotation_and_its_name_verbatim():
+    assert c.entry_name("telegram-bot-token") == "rotation_telegram-bot-token"
+    meta = {"rotation_token": "{}", "rotation_a,b/c": "{}", "rotation": "coordinated", "notes": "n"}
+    assert c.entries_of(meta) == {"token": "{}", "a,b/c": "{}"}
+
+
+def test_an_entry_is_a_json_object_written_compact_in_the_contract_s_order():
+    text = c.dump_entry(
+        {"notes": "Gr\u00fc\u00dfe — n", "activate": "auto", "kind": "random", "interval": "14d"}
+    )
+    assert text == '{"kind":"random","interval":"14d","activate":"auto","notes":"Grüße — n"}'
+    assert c.load_entry(text)["notes"] == "Grüße — n"
+    for value, problem in (("{kind: random}", "not JSON"), ('["random"]', "not a JSON object")):
+        with pytest.raises(c.ContractError, match=problem):
+            c.load_entry(value)
+
+
+def test_a_none_key_takes_its_kind_and_notes_a_copy_its_activate_too_a_scheduled_key_all():
+    assert c.takes("none") == ("kind", "notes")
+    assert c.takes("copy:eso/prd/a#token") == ("kind", "activate", "notes")
+    assert (
+        c.takes("random")
+        == c.FIELDS
+        == (
+            "kind",
+            "interval",
+            "args",
+            "activate",
+            "expires_at",
+            "notes",
+        )
+    )
+
+
+def test_a_compliant_entry_has_no_problem():
+    assert c.entry_problems({"kind": "none"}) == []
+    assert (
+        c.entry_problems({"kind": "copy:eso/prd/a#token", "activate": "auto", "notes": "n"}) == []
+    )
+    assert (
+        c.entry_problems(
+            {
+                "kind": "approle",
+                "interval": "90d",
+                "args": {"role": "eso"},
+                "activate": "k8s-rollout:ns/deployment/a,manual:say so",
+                "expires_at": "2027-01-31",
+                "notes": "n",
+            }
+        )
+        == []
+    )
+    assert (
+        c.entry_problems({"kind": "manual", "interval": "never", "activate": "none", "notes": "n"})
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    ("fields", "problems"),
+    [
+        ({}, ["kind: missing"]),
+        ({"kind": 3}, ["kind: not a string"]),
+        (
+            {"kind": "keycloak", "activate": "auto"},
+            ["kind: unknown kind 'keycloak': not a kind of design §6, none, or copy:<path>#<key>"],
+        ),
+        ({"kind": "random"}, ["activate: missing"]),
+        ({"kind": "copy:eso/prd/a#token"}, ["activate: missing"]),
+        (
+            {"kind": "none", "activate": "auto", "interval": "14d"},
+            ["interval: a none key takes none", "activate: a none key takes none"],
+        ),
+        (
+            {
+                "kind": "copy:eso/prd/a#token",
+                "activate": "none",
+                "args": {},
+                "expires_at": "2027-01-31",
+            },
+            ["args: a copy takes none", "expires_at: a copy takes none"],
+        ),
+        (
+            {"kind": "random", "activate": "auto", "mechanism": "random"},
+            ["mechanism: not a field of the entry"],
+        ),
+        (
+            {"kind": "random", "activate": "auto", "interval": "soon"},
+            ["interval: 'soon' is not <n>d or never"],
+        ),
+        ({"kind": "random", "activate": "auto", "interval": 14}, ["interval: not a string"]),
+        (
+            {"kind": "manual", "activate": "none", "interval": "never"},
+            ["interval: never without notes"],
+        ),
+        (
+            {"kind": "manual", "activate": "none", "interval": "never", "notes": " "},
+            ["interval: never without notes"],
+        ),
+        (
+            {"kind": "random", "activate": "auto", "args": '{"length":20}'},
+            ["args: not a JSON object"],
+        ),
+        (
+            {"kind": "random", "activate": "restart,eso:x"},
+            ["activate: unknown activator 'restart'", "activate: eso takes no argument"],
+        ),
+        (
+            {"kind": "random", "activate": "auto", "expires_at": "2027-13-01"},
+            ["expires_at: '2027-13-01' is not an ISO date (YYYY-MM-DD)"],
+        ),
+        ({"kind": "random", "activate": "auto", "notes": ["n"]}, ["notes: not a string"]),
+    ],
+)
+def test_an_entry_s_problems_each_name_their_field(fields, problems):
+    assert c.entry_problems(fields) == problems
+
+
+def test_an_entry_reads_with_its_defaults():
+    entry = c.Entry.load({"kind": "random", "activate": "auto"})
+    assert entry == c.Entry(
+        "random", 14, {}, (c.Activator("eso"), c.Activator("k8s-rollout")), None, ""
+    )
+    entry = c.Entry.load(
         {
-            "rotation_mechanism": "jenkins-token",
-            "key_telegram-bot-token": "manual",
-            "key_telegram-chat-id": "none",
-        },
-        ["jenkins-token", "telegram-bot-token", "telegram-chat-id"],
-    ) == {
-        "jenkins-token": "jenkins-token",
-        "telegram-bot-token": "manual",
-        "telegram-chat-id": "none",
-    }
-    assert c.resolve({"rotation_mechanism": "copy:eso/prd/a#token"}, ["token"]) == {
-        "token": "copy:eso/prd/a#token"
-    }
-    assert c.resolve(
-        {"rotation_mechanism": "manual", "key_bearer-token": "random"},
-        ["api-key", "bearer-token", "token"],
-    ) == {"api-key": "manual", "bearer-token": "random", "token": "manual"}
-    assert c.resolve({"rotation_mechanism": "none"}, ["a", "b"]) == {"a": "none", "b": "none"}
-
-
-def test_a_one_key_kind_owns_the_single_unnamed_key_and_none_of_two():
-    assert c.resolve(
-        {"rotation_mechanism": "cephx", "key_user_id": "none"}, ["user_id", "user_key"]
-    ) == {"user_id": "none", "user_key": "cephx"}
-    assert c.resolve({"rotation_mechanism": "cephx"}, ["user_id", "user_key"]) == {
-        "user_id": None,
-        "user_key": None,
-    }
-
-
-def test_an_override_naming_the_leafs_one_key_kind_claims_it_alone():
-    # A7: the single-unnamed-key fallback applies only while no override names the kind.
-    meta = {"rotation_mechanism": "jenkins-token", "key_token": "jenkins-token"}
-    assert c.resolve(meta, ["token", "user"]) == {"token": "jenkins-token", "user": None}
-    meta = {"rotation_mechanism": "jenkins-token", "key_tokn": "jenkins-token"}
-    assert c.resolve(meta, ["token"]) == {"token": None}
-
-
-def test_a_key_the_kind_does_not_own_resolves_to_nothing():
-    assert c.resolve({"rotation_mechanism": "elastic-user"}, ["password", "username"]) == {
-        "password": "elastic-user",
-        "username": None,
-    }
-    assert c.resolve({}, ["token"]) == {"token": None}
-    assert c.resolve({"rotation_mechanism": "bogus"}, ["token"]) == {"token": None}
+            "kind": "manual",
+            "interval": "never",
+            "args": {"what": "PSK"},
+            "activate": "none",
+            "expires_at": "2027-01-31",
+            "notes": "n",
+        }
+    )
+    assert entry == c.Entry("manual", None, {"what": "PSK"}, (), datetime.date(2027, 1, 31), "n")
+    assert c.Entry.load({"kind": "none"}).activate == ()
 
 
 def test_scheduled_kinds_are_neither_copies_nor_none():
@@ -142,13 +234,6 @@ def test_dates_are_iso_days():
             c.parse_date(value)
 
 
-def test_args_are_a_small_json_object():
-    assert c.parse_args('{"role":"eso","delivery":"kv"}') == {"role": "eso", "delivery": "kv"}
-    for value in ("{realm: homelab}", '["a"]', '{"x": "' + "y" * 520 + '"}'):
-        with pytest.raises(c.ContractError):
-            c.parse_args(value)
-
-
 def test_activate_parses_into_specs():
     A = c.Activator
     assert c.parse_activate("auto") == [A("eso"), A("k8s-rollout")]
@@ -161,8 +246,8 @@ def test_activate_parses_into_specs():
     assert c.parse_activate("jenkins-job:YouTrack/YouTrackConfiguration?ROTATE_TOKEN=true") == [
         A("jenkins-job", "YouTrack/YouTrackConfiguration?ROTATE_TOKEN=true")
     ]
-    assert c.parse_activate("jenkins-credential:jenkins-vault-approle") == [
-        A("jenkins-credential", "jenkins-vault-approle")
+    assert c.parse_activate("jenkins-credential:724520d1-a0c1-4fa3-8a9e-a027de7f469a") == [
+        A("jenkins-credential", "724520d1-a0c1-4fa3-8a9e-a027de7f469a")
     ]
 
 

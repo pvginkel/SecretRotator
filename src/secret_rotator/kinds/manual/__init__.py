@@ -12,8 +12,8 @@ from secret_rotator.plan import PlanContext, Target, tool_part
 
 # The manual kind's marker leaves (catalog § rotator/).
 MARKERS = "rotator/bootstrap/"
-# rotation_args, each optional and describing every manual key of the leaf: the credential in
-# words (`GitHub PAT`), where to mint it and with which scopes, and the prefix its values have.
+# A key's args, each optional: the credential in words (`GitHub PAT`), where to mint it and with
+# which scopes, and the prefix its values have.
 ARGS = ("what", "mint", "prefix")
 
 
@@ -21,8 +21,13 @@ def _marker(leaf: Target) -> bool:
     return leaf.leaf.startswith(MARKERS)
 
 
+def _entry(leaf: Target):
+    """The entry of the plan's one key."""
+    return leaf.entries[leaf.keys[0]]
+
+
 def _what(leaf: Target) -> str:
-    return leaf.args.get("what") or ", ".join(leaf.keys)
+    return _entry(leaf).args.get("what") or ", ".join(leaf.keys)
 
 
 class Manual:
@@ -49,7 +54,7 @@ class Manual:
         return f"You mint a new {_what(leaf)} and enter it. The tool {tool_part(leaf)}."
 
     def plan(self, leaf: Target, ctx: PlanContext) -> list[Step]:
-        notes = leaf.meta.get("notes", "")
+        notes = _entry(leaf).notes
         if _marker(leaf):
             return [
                 *ctx.steps.marker(),
@@ -62,10 +67,11 @@ class Manual:
                 *ctx.steps.write(),
                 *ctx.steps.activate(),
             ]
-        instruction = leaf.args.get("mint") or (
+        args = _entry(leaf).args
+        instruction = args.get("mint") or (
             f"Mint a new {', '.join(leaf.keys)} for {leaf.leaf} where it is issued."
         )
-        prefix = leaf.args.get("prefix")
+        prefix = args.get("prefix")
         return [
             *ctx.steps.credential(
                 f"Mint a new {_what(leaf)} and enter it",

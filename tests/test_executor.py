@@ -3,7 +3,7 @@ its outcome in the run state; a failure stops it, Retry and a new process resume
 it back or cancels it, and a dry run touches nothing."""
 
 import pytest
-from fixtures import compliant_store, data_of
+from fixtures import AUTO, annotated, compliant_store, data_of, edit
 from plans import (
     COPY,
     LEAF,
@@ -168,7 +168,7 @@ class TestARun:
         store = compliant_store()
         bag = store["eso/prd/kc/prd/catalog"]
         bag.keys.add("app-token")
-        bag.meta["key_app-token"] = f"copy:{LEAF}#token"
+        edit(bag.meta, "app-token", kind=f"copy:{LEAF}#token", activate="auto")
         outcome, _ = run(bao, plan_of(store=store))
         assert outcome is Outcome.DONE
         new = bao.data(LEAF)["token"]
@@ -285,7 +285,7 @@ class TestTheLeafsPlanInFlight:
 
     def test_a_plan_for_a_due_set_that_grew_is_refused(self):
         store = compliant_store()
-        store[TRELLO].meta["key_token"] = "random"
+        edit(store[TRELLO].meta, "token", kind="random")
         bao = fake()
         grown = {"leaf": TRELLO, "keys": ("bearer-token", "token"), "store": store}
         first = plan_of(
@@ -312,6 +312,7 @@ class TestTheLeafsPlanInFlight:
     def test_its_record_keeps_a_key_named_with_a_comma_or_a_slash(self):
         store = compliant_store()
         store[LEAF].keys |= {"a,b", "c/d"}
+        store[LEAF].meta |= annotated({key: {"kind": "random", **AUTO} for key in ("a,b", "c/d")})
         bao = fake()
         keys = {"store": store, "keys": ("a,b", "c/d")}
         assert run(bao, plan_of(Tool("act", Journal(), fail=1), **keys))[0] is Outcome.FAILED

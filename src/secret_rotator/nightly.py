@@ -268,7 +268,6 @@ class Night:
                 due.leaf,
                 due.kind,
                 list(due.keys),
-                self.store,
                 self.result,
                 self.cluster,
             )
@@ -407,7 +406,6 @@ class Night:
                 due.leaf,
                 due.kind,
                 list(due.keys),
-                self.store,
                 self.result,
                 self.cluster,
             )

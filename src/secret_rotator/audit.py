@@ -1,8 +1,9 @@
-"""The compliance check of design §3.3: every leaf held to the annotation contract (§5).
+"""The compliance check of design §3.3: every leaf held to the annotation contract (§5), one
+rotation_<key> entry per data key.
 
-A finding blocks only what it touches: a key-level finding blocks that data key, a leaf-level one
-blocks the leaf and every primary key copied into it, since that primary's plan would write and
-activate the blocked leaf."""
+A finding blocks only what it touches: a finding on a key's entry blocks that key and every
+primary it copies, since that primary's plan would write and activate it; a leaf-level one blocks
+the leaf and every primary key copied into it; a stale entry blocks nothing."""
 
 import datetime
 from collections import defaultdict
@@ -10,17 +11,18 @@ from dataclasses import dataclass, field
 
 from secret_rotator.contract import (
     ContractError,
+    Entry,
     copy_target,
+    entries_of,
+    entry_name,
+    entry_problems,
     is_scheduled,
-    kind_error,
-    parse_activate,
-    parse_args,
-    parse_date,
-    parse_interval,
-    resolve,
+    kind_in,
+    load_entry,
+    may_rotate,
 )
 from secret_rotator.openbao import OpenBao
-from secret_rotator.schedule import KeySchedule, interval_of, schedule
+from secret_rotator.schedule import KeySchedule, schedule
 from secret_rotator.staging import InFlight, flights
 from secret_rotator.state import LeafState
 from secret_rotator.state import read as read_state
@@ -28,6 +30,9 @@ from secret_rotator.state import read as read_state
 # The leaves the prd cluster's ESO reads: the orphan check's, since the rotator reads no other
 # cluster. eso/dev/ is the dev cluster's.
 ESO_PRD = "eso/prd/"
+
+# Finding.blocks of a finding that blocks nothing: a stale entry.
+NOTHING = ""
 
 
 @dataclass
@@ -44,7 +49,7 @@ class Finding:
     leaf: str
     key: str  # the metadata key or data key at fault
     message: str
-    blocks: str | None = None  # the data key it blocks; None: the whole leaf
+    blocks: str | None = None  # the data key it blocks; None: the whole leaf; NOTHING: nothing
 
     def __str__(self) -> str:
         return f"{self.leaf}: {self.key}: {self.message}"
@@ -53,7 +58,10 @@ class Finding:
 @dataclass
 class Audit:
     findings: list[Finding]
-    kinds: dict[str, dict[str, str | None]]  # per leaf whose keys could be read
+    # Per leaf whose keys could be read, each key's kind as its entry names it; None: none does.
+    kinds: dict[str, dict[str, str | None]]
+    # Per leaf whose keys could be read, the entry of each key no finding is on.
+    entries: dict[str, dict[str, Entry]] = field(default_factory=dict)
     blocked_leaves: set[str] = field(default_factory=set)
     blocked_keys: set[tuple[str, str]] = field(default_factory=set)
     never: list[tuple[str, str]] = field(default_factory=list)  # scheduled keys at never
@@ -63,98 +71,49 @@ class Audit:
 
 
 def check_leaf(leaf: Leaf, store: dict[str, Leaf], kinds_of: dict) -> list[Finding]:
-    m = leaf.meta
     findings = []
 
     def find(key: str, message: str, blocks: str | None = None) -> None:
         findings.append(Finding(leaf.path, key, message, blocks))
 
-    kind = m.get("rotation_mechanism")
-    has_notes = bool(m.get("notes", "").strip())
-    kinds = kinds_of.get(leaf.path)
     if leaf.keys is None:
         find("(data)", "its current version is deleted or destroyed: its keys cannot be read")
-
-    if kind is None:
-        find("rotation_mechanism", "missing")
-    elif err := kind_error(kind):
-        find("rotation_mechanism", err)
-    if "rotation_activate" not in m:
-        find("rotation_activate", "missing")
-    if (
-        "rotation_interval" not in m
-        and kinds is not None
-        and not all(k is not None and not is_scheduled(k) for k in kinds.values())
-    ):
-        find("rotation_interval", "missing (a key of the leaf is neither a copy nor none)")
-
-    for meta_key, value in sorted(m.items()):
-        if meta_key.startswith("key_"):
-            name = meta_key[len("key_") :]
-            if err := kind_error(value):
-                find(meta_key, err, name)
-            if leaf.keys is not None and name not in leaf.keys:
-                find(meta_key, f"stale override: the leaf has no key {name!r}", name)
-        elif meta_key.startswith("interval_"):
-            name = meta_key[len("interval_") :]
-            try:
-                if parse_interval(value) is None and not has_notes:
-                    find(meta_key, "never without the leaf's notes", name)
-            except ContractError as e:
-                find(meta_key, str(e), name)
-            if leaf.keys is not None and name not in leaf.keys:
-                find(meta_key, f"the leaf has no key {name!r}", name)
-            elif kinds is not None and (k := kinds.get(name)) is not None and not is_scheduled(k):
-                find(meta_key, f"key {name!r} is {k}, which takes no interval", name)
-
-    if kinds is not None and kind is not None and kind_error(kind) is None:
-        for key, k in kinds.items():
-            if k is None and not (f"key_{key}" in m and kind_error(m[f"key_{key}"])):
-                find(
-                    key,
-                    f"no kind resolves it: {kind} does not own it and no key_{key} names one",
-                    key,
-                )
-    for key, k in (kinds or {}).items():
-        target = copy_target(k)
+    texts = entries_of(leaf.meta)
+    held = leaf.keys if leaf.keys is not None else set(texts)
+    for key in sorted(held | set(texts)):
+        name = entry_name(key)
+        if key not in texts:
+            find(name, "missing", key)
+            continue
+        if key not in held:
+            find(name, f"stale: the leaf has no key {key!r}", NOTHING)
+            continue
+        try:
+            fields = load_entry(texts[key])
+        except ContractError as e:
+            find(name, str(e), key)
+            continue
+        for problem in entry_problems(fields):
+            find(name, problem, key)
+        kind = kind_in(texts[key])
+        if kind is None:
+            continue
+        if not may_rotate(kind, key):
+            find(name, f"kind: {kind} does not rotate {key}", key)
+        target = copy_target(kind)
         if target is None:
             continue
         primary, primary_key = target
-        source = f"key_{key}" if f"key_{key}" in m else "rotation_mechanism"
         if primary not in store:
-            find(source, f"copy of {primary}#{primary_key}: no leaf {primary}", key)
+            find(name, f"copy of {primary}#{primary_key}: no leaf {primary}", key)
         elif store[primary].keys is not None and primary_key not in store[primary].keys:
             find(
-                source,
+                name,
                 f"copy of {primary}#{primary_key}: {primary} has no key {primary_key!r}",
                 key,
             )
         elif copy_target(kinds_of.get(primary, {}).get(primary_key)):
-            find(source, f"copy of {primary}#{primary_key}, which is itself a copy", key)
-
-    if "rotation_interval" in m:
-        try:
-            if parse_interval(m["rotation_interval"]) is None and not has_notes:
-                find("rotation_interval", "never without notes")
-        except ContractError as e:
-            find("rotation_interval", str(e))
-    if "rotation_activate" in m:
-        try:
-            parse_activate(m["rotation_activate"])
-        except ContractError as e:
-            for problem in e.problems:
-                find("rotation_activate", problem)
-    if "rotation_args" in m:
-        try:
-            parse_args(m["rotation_args"])
-        except ContractError as e:
-            find("rotation_args", str(e))
-    for meta_key in ("rotation_expires_at", "rotator_expires_at"):
-        if meta_key in m:
-            try:
-                parse_date(m[meta_key])
-            except ContractError as e:
-                find(meta_key, str(e))
+            find(name, f"copy of {primary}#{primary_key}, which is itself a copy", key)
     return findings
 
 
@@ -190,16 +149,18 @@ def orphans(
 
 
 def copies_in(meta: dict[str, str]) -> set[tuple[str, str]]:
-    """Every primary key the leaf's annotations copy."""
-    values = [v for k, v in meta.items() if k == "rotation_mechanism" or k.startswith("key_")]
-    return {target for v in values if (target := copy_target(v))}
+    """Every primary key the leaf's entries copy."""
+    kinds = (kind_in(text) for text in entries_of(meta).values())
+    return {target for kind in kinds if (target := copy_target(kind))}
 
 
 def audit(store: dict[str, Leaf], referenced: set[str] | None = None) -> Audit:
     """The compliance check of the store; with referenced, the leaves the prd cluster's
     ExternalSecrets reference, the orphan check too."""
     kinds = {
-        path: resolve(leaf.meta, leaf.keys) for path, leaf in store.items() if leaf.keys is not None
+        path: {key: kind_in(entries_of(leaf.meta).get(key)) for key in leaf.keys}
+        for path, leaf in store.items()
+        if leaf.keys is not None
     }
     orphaned = {} if referenced is None else orphans(store, kinds, referenced)
     findings = [
@@ -209,13 +170,23 @@ def audit(store: dict[str, Leaf], referenced: set[str] | None = None) -> Audit:
     ]
     result = Audit(findings, kinds)
     result.blocked_leaves = {f.leaf for f in findings if f.blocks is None}
-    result.blocked_keys = {(f.leaf, f.blocks) for f in findings if f.blocks is not None}
+    flagged = {(f.leaf, f.blocks) for f in findings if f.blocks}
+    result.blocked_keys = set(flagged)
     for path in result.blocked_leaves:
         result.blocked_keys |= copies_in(store[path].meta)
-    for path in sorted(kinds):
-        for key, kind in kinds[path].items():
-            unblocked = is_scheduled(kind) and not result.blocked(path, key)
-            if unblocked and interval_of(store[path].meta, key) is None:
+    for path, key in flagged:
+        if target := copy_target(kinds.get(path, {}).get(key)):
+            result.blocked_keys.add(target)
+    for path, leaf_kinds in kinds.items():
+        texts = entries_of(store[path].meta)
+        result.entries[path] = {
+            key: Entry.load(load_entry(texts[key]))
+            for key in sorted(leaf_kinds)
+            if key in texts and (path, key) not in flagged
+        }
+        for key, entry in result.entries[path].items():
+            unblocked = is_scheduled(entry.kind) and not result.blocked(path, key)
+            if unblocked and entry.interval is None:
                 result.never.append((path, key))
     return result
 
@@ -223,12 +194,11 @@ def audit(store: dict[str, Leaf], referenced: set[str] | None = None) -> Audit:
 def due_keys(store: dict[str, Leaf], result: Audit, today: datetime.date) -> list[KeySchedule]:
     """The keys due today that the audit leaves unblocked, oldest first."""
     due = []
-    for path, kinds in result.kinds.items():
+    for path, entries in result.entries.items():
         if path in result.blocked_leaves:
             continue
-        unblocked = {key: kind for key, kind in kinds.items() if not result.blocked(path, key)}
-        leaf = store[path]
-        due += [s for s in schedule(path, leaf.meta, unblocked, leaf.state.stamps) if s.due(today)]
+        unblocked = {key: e for key, e in entries.items() if not result.blocked(path, key)}
+        due += [s for s in schedule(path, unblocked, store[path].state.stamps) if s.due(today)]
     return sorted(due, key=lambda s: (s.due_at, s.leaf, s.key))
 
 

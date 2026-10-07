@@ -8,6 +8,7 @@ import datetime
 import pytest
 from fake_jenkins import APPROLE, CREDENTIALS, TOKEN, YT, FakeJenkins, string_credential
 from fake_openbao import FakeOpenBao
+from fixtures import edit
 from plans import (
     COPY,
     LEAF,
@@ -312,7 +313,7 @@ def store_and_bao(**activate):
 
 
 def plan_of(store, fake, leaf=LEAF):
-    return make(KINDS, leaf, "random", ["token"], store, audit(store), jenkins=fake.jenkins())
+    return make(KINDS, leaf, "random", ["token"], audit(store), jenkins=fake.jenkins())
 
 
 class TestTheYouTrackWebhookToken:
@@ -393,34 +394,46 @@ class TestActivators:
         plan = plan_of(store, FakeJenkins())
         assert [s.id for s in plan.steps][3:] == [
             "jenkins.job:Plain/Job",
-            f"operator.confirm:{LEAF}:2",
+            f"operator.confirm:{LEAF}:1",
             "jenkins.job:Other/Job",
             "kv.stamp",
         ]
 
-    def test_a_credential_takes_the_one_key_the_plan_writes_to_its_leaf(self):
+    def test_a_credential_takes_the_key_whose_entry_names_it(self):
         store, _ = store_and_bao(
             eso__prd__app__prd__token="jenkins-credential:app-token",
             iac__copy="jenkins-credential:copy-token",
+        )
+        store[COPY].keys.add("token2")
+        edit(
+            store[COPY].meta,
+            "token2",
+            kind=f"copy:{LEAF}#token",
+            activate="jenkins-credential:copy-token2",
         )
         steps = plan_of(store, FakeJenkins()).steps
         creds = [s for s in steps if isinstance(s, JenkinsCredential)]
         assert [(s.id, s.kv) for s in creds] == [
             ("jenkins.credential:app-token", (LEAF, "token")),
             ("jenkins.credential:copy-token", (COPY, "token")),
+            ("jenkins.credential:copy-token2", (COPY, "token2")),
         ]
 
-    def test_a_credential_on_a_leaf_the_plan_writes_two_keys_to_refuses_the_plan(self):
+    def test_a_credential_two_entries_name_refuses_the_plan(self):
         store, _ = store_and_bao(
             eso__prd__app__prd__token="none", iac__copy="jenkins-credential:copy-token"
         )
         store[COPY].keys.add("token2")
-        store[COPY].meta["key_token2"] = f"copy:{LEAF}#token"
+        edit(
+            store[COPY].meta,
+            "token2",
+            kind=f"copy:{LEAF}#token",
+            activate="jenkins-credential:copy-token",
+        )
         with pytest.raises(
             PlanError,
-            match=f"{LEAF}: {COPY}'s rotation_activate jenkins-credential:copy-token: the plan "
-            f"writes token, token2 to {COPY}, and the spec does not say which one the credential "
-            f"takes",
+            match=f"{LEAF}: {COPY}'s rotation_token2 activate jenkins-credential:copy-token: "
+            f"{COPY}'s rotation_token names the credential too, and it takes one value",
         ):
             plan_of(store, FakeJenkins())
 
@@ -444,9 +457,7 @@ class TestTheFactory:
     def test_it_builds_a_staged_credential_and_a_job_for_a_kind(self):
         store, _ = store_and_bao()
         fake = FakeJenkins()
-        steps = StepFactory(
-            target(LEAF, "random", ["token"], store, audit(store)), jenkins=fake.jenkins()
-        )
+        steps = StepFactory(target(LEAF, "random", ["token"], audit(store)), jenkins=fake.jenkins())
         [cred] = steps.jenkins_credential(APPROLE, "value:secret_id")
         assert (cred.staged, cred.undo, cred.activator) == ("value:secret_id", None, False)
         [job] = steps.jenkins_job("Plain/Job", {"A": "1"})

@@ -5,7 +5,7 @@ import urllib.error
 
 import pytest
 from fake_openbao import ROLE_ID, SECRET_ID, TOKEN, FakeOpenBao, approle
-from fixtures import COMPLIANT, data_of
+from fixtures import COMPLIANT, data_of, fields_of
 
 from secret_rotator.openbao import ADDR, RELOGIN_MARGIN, OpenBao, OpenBaoError, Version
 
@@ -75,7 +75,7 @@ def test_subkeys_are_names_only_and_none_for_a_deleted_version_or_no_leaf():
 
 def test_metadata_is_the_custom_metadata_or_none_for_no_leaf():
     c = client(fake())
-    assert c.metadata("shared/wifi")["notes"] == "PSK in every device"
+    assert fields_of(c.metadata("shared/wifi"), "password")["notes"] == "PSK in every device"
     assert c.metadata("no/such/leaf") is None
 
 

@@ -154,7 +154,7 @@ class Executor:
         if at is None:
             raise PlanMismatch(
                 f"{self.leaf} is in flight at step {flight.step}, which the {self.plan.name} "
-                f"rebuilt from its annotations does not have: they changed mid-rotation"
+                f"rebuilt from its entries does not have: they changed mid-rotation"
             )
         self.at = at
         failed = (self.state.of(self.leaf).status or "").startswith("failed")

@@ -10,6 +10,7 @@ import io
 
 import pytest
 from fake_cluster import FakeCluster, externalsecret, pod_spec, workload
+from fixtures import edit
 from plans import (
     COPY,
     LEAF,
@@ -42,15 +43,14 @@ DERIVED = ["k8s.rollout:app-prd/deployment/app", "k8s.rollout:app-prd/statefulse
 def copied_into_catalog(store, activate=CONTROLLER):
     """LEAF's token copied into the KubeCoder-like catalog too, activated by its controller."""
     store[CATALOG].keys.add("app-token")
-    store[CATALOG].meta["key_app-token"] = f"copy:{LEAF}#token"
-    store[CATALOG].meta["rotation_activate"] = activate
+    edit(store[CATALOG].meta, "app-token", kind=f"copy:{LEAF}#token", activate=activate)
     return store
 
 
 def plan_of(store=None, fake=None, leaf=LEAF):
     store = store or store_of()
     cluster = Cluster((fake or FakeCluster()).kube())
-    return make(KINDS, leaf, "random", ["token"], store, audit(store), cluster)
+    return make(KINDS, leaf, "random", ["token"], audit(store), cluster)
 
 
 def ids(plan):
@@ -88,13 +88,16 @@ class TestAuto:
         fake = FakeCluster()
         del fake.objects["externalsecrets", "app-prd", "app-token"]
         with pytest.raises(
-            PlanError, match=f"{LEAF}: rotation_activate eso: no ExternalSecret references {LEAF}"
+            PlanError,
+            match=f"{LEAF}: rotation_token activate eso: no ExternalSecret references {LEAF}",
         ):
             plan_of(fake=fake)
         store = store_of(eso__prd__app__prd__token="none", iac__copy="auto")
         with pytest.raises(
             PlanError,
-            match=f"{LEAF}: {COPY}'s rotation_activate eso: no ExternalSecret references {COPY}",
+            match=(
+                f"{LEAF}: {COPY}'s rotation_token activate eso: no ExternalSecret references {COPY}"
+            ),
         ):
             plan_of(store)
 
@@ -177,6 +180,57 @@ class TestComposition:
             f"operator.confirm:{LEAF}:1",
             "eso.sync:app-prd/app-token",
             *DERIVED,
+            f"operator.confirm:{COPY}:1",
+            "kv.stamp",
+        ]
+
+
+class TestEntriesCombined:
+    """A plan that writes several keys runs every spec of their entries, each once where they
+    repeat (design §4.3)."""
+
+    def two_keys(self, first, second):
+        store = store_of()
+        store[LEAF].keys.add("second")
+        edit(store[LEAF].meta, "token", activate=first)
+        edit(store[LEAF].meta, "second", kind="random", interval="14d", activate=second)
+        return store
+
+    def plan_of(self, store):
+        cluster = Cluster(FakeCluster().kube())
+        return make(KINDS, LEAF, "random", ["second", "token"], audit(store), cluster)
+
+    def test_the_kubernetes_specs_of_both_entries_are_one_sync_and_rollout(self):
+        plan = self.plan_of(self.two_keys("auto", "k8s-rollout:es-prd/deployment/a"))
+        assert ids(plan)[4:] == [
+            "eso.sync:app-prd/app-token",
+            "k8s.rollout:es-prd/deployment/a",
+            *DERIVED,
+            "kv.stamp",
+        ]
+
+    def test_a_job_runs_once_and_a_confirm_text_once_per_leaf(self):
+        job = "jenkins-job:YouTrack/YouTrackConfiguration?ROTATE_TOKEN=true"
+        plan = self.plan_of(
+            self.two_keys(f"{job},manual:say so", f"manual:say so,{job},manual:and this")
+        )
+        # second's entry first: the rotated keys' entries go in key order.
+        assert ids(plan)[4:] == [
+            f"operator.confirm:{LEAF}:1",
+            "jenkins.job:YouTrack/YouTrackConfiguration?ROTATE_TOKEN=true",
+            f"operator.confirm:{LEAF}:2",
+            "kv.stamp",
+        ]
+        assert plan.target.confirms == ("say so", "and this")
+        assert [s.title for s in plan.steps if s.type == "operator.confirm"] == [
+            "say so",
+            "and this",
+        ]
+
+    def test_a_confirm_text_on_two_leaves_is_confirmed_for_each(self):
+        store = store_of(eso__prd__app__prd__token="manual:say so", iac__copy="manual:say so")
+        assert ids(plan_of(store))[3:] == [
+            f"operator.confirm:{LEAF}:1",
             f"operator.confirm:{COPY}:1",
             "kv.stamp",
         ]
@@ -354,9 +408,7 @@ class TestAChangedCluster:
         store = store_of()
         empty = FakeCluster([])
         cluster = Cluster(empty.kube())
-        plan = make(
-            KINDS, LEAF, "random", ["token"], store, audit(store), cluster, derived=self.DERIVED
-        )
+        plan = make(KINDS, LEAF, "random", ["token"], audit(store), cluster, derived=self.DERIVED)
         assert ids(plan) == ids(plan_of(store))
         assert plan.derived == self.DERIVED and empty.requests == []
 

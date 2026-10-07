@@ -1,6 +1,6 @@
-"""The random kind (design §6): the tool generates the new value — 32 random bytes, URL-safe (43
-characters), unless rotation_args sets its length and charset — then the write, the copies and the
-activation. It needs the operator only for a manual: activator."""
+"""The random kind (design §6): the tool generates each key's new value — 32 random bytes, URL-safe
+(43 characters), unless the key's args set its length and charset — then the write, the copies and
+the activation. It needs the operator only for a manual: activator."""
 
 from collections.abc import Mapping
 
@@ -29,19 +29,17 @@ class Random:
         return "; ".join(leaf.confirms)
 
     def description(self, leaf: Target) -> str:
-        length = leaf.args.get("length", DEFAULT_LENGTH)
-        text = (
-            f"The tool generates a new {length}-character {', '.join(leaf.keys)} and "
-            f"{tool_part(leaf)}."
-        )
+        lengths: dict[int, list[str]] = {}
+        for key in leaf.keys:
+            lengths.setdefault(leaf.entries[key].args.get("length", DEFAULT_LENGTH), []).append(key)
+        generated = " and a new ".join(f"{n}-character {', '.join(k)}" for n, k in lengths.items())
+        text = f"The tool generates a new {generated} and {tool_part(leaf)}."
         return text + (" You confirm what only you can do." if leaf.confirms else "")
 
     def plan(self, leaf: Target, ctx: PlanContext) -> list[Step]:
-        length = leaf.args.get("length", DEFAULT_LENGTH)
-        charset = leaf.args.get("charset", URLSAFE)
-        generate = [
-            step
-            for key in leaf.keys
-            for step in ctx.steps.generate(key, length=length, charset=charset)
-        ]
+        generate = []
+        for key in leaf.keys:
+            args = leaf.entries[key].args
+            length = args.get("length", DEFAULT_LENGTH)
+            generate += ctx.steps.generate(key, length=length, charset=args.get("charset", URLSAFE))
         return [*generate, *ctx.steps.write(), *ctx.steps.activate()]

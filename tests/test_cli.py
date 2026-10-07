@@ -19,7 +19,7 @@ from fake_openbao import TOKEN as BAO_TOKEN
 from fake_telegram import CHAT, FakeTelegram
 from fake_telegram import TOKEN as BOT
 from fake_youtrack import TAG, FakeYouTrack
-from fixtures import COMPLIANT
+from fixtures import COMPLIANT, fields_of
 from plans import LEAF, client, fake_of, put_state, state_of
 from test_kinds import ACTIVATE_NONE, WIFI, store_of
 from test_nightly import TRELLO, WEBHOOK
@@ -430,7 +430,11 @@ class TestOffline:
         self.seed, self.keys = d / "seed.yaml", d / "keys.json"
         self.seed.write_text(
             yaml.safe_dump(
-                {path: dict(meta) for path, (_, meta) in COMPLIANT.items()}, sort_keys=False
+                {
+                    path: {"keys": {key: fields_of(meta, key) for key in keys}}
+                    for path, (keys, meta) in COMPLIANT.items()
+                },
+                sort_keys=False,
             )
         )
         self.names = {path: keys for path, (keys, _) in COMPLIANT.items()}
@@ -453,20 +457,22 @@ class TestOffline:
     def test_a_leaf_the_seed_does_not_cover_is_a_finding(self):
         self.names["eso/prd/new/prd/thing"] = ["token"]
         assert self.check() == 1
-        assert "eso/prd/new/prd/thing: rotation_mechanism: missing" in self.lines
+        assert "eso/prd/new/prd/thing: rotation_token: missing" in self.lines
 
     def test_a_seed_leaf_missing_from_the_key_file_is_reported_not_failed(self):
         del self.names["shared/wifi"]
         assert self.check() == 0, self.lines
         assert "seed leaf not in the key file: shared/wifi" in self.lines
 
+    def test_a_seed_key_missing_from_the_key_file_is_reported_not_failed(self):
+        self.names["shared/ceph"] = ["user_key"]
+        assert self.check() == 0, self.lines
+        assert "seed key not in the key file: shared/ceph#user_id" in self.lines
+
     def test_a_key_the_seed_does_not_resolve_is_a_finding(self):
         self.names["eso/prd/app/prd/oidc"] = ["client_id", "client_secret", "url"]
         assert self.check() == 1
-        assert (
-            "eso/prd/app/prd/oidc: url: no kind resolves it: keycloak-client does not own "
-            "it and no key_url names one"
-        ) in self.lines
+        assert "eso/prd/app/prd/oidc: rotation_url: missing" in self.lines
 
     def plan(self, leaf):
         self.keys.write_text(json.dumps(self.names))

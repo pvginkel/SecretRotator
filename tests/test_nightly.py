@@ -14,6 +14,7 @@ from fake_telegram import CHAT, FakeTelegram
 from fake_telegram import TOKEN as BOT
 from fake_youtrack import TAG, FakeYouTrack
 from fake_youtrack import TOKEN as JEEVES
+from fixtures import annotated, edit
 from plans import (
     COPY,
     LEAF,
@@ -42,7 +43,7 @@ BOT_LEAF = "eso/prd/bot/prd/config"  # manual telegram-bot-token, 365 d
 WEBHOOK = "eso/prd/yt/prd/webhook"  # random, activated by a Jenkins job
 STRAY = "shared/stray"
 DAY = datetime.timedelta(days=1)
-NOT_ANNOTATED = {"rotation_activate": "none", "rotation_interval": "14d"}
+NOT_ANNOTATED = {}
 
 
 def world(*, due=(LEAF, TRELLO)):
@@ -57,7 +58,7 @@ def world(*, due=(LEAF, TRELLO)):
     for leaf, data in own.items():
         bao.leaves[leaf] = {
             "data": data,
-            "meta": {"rotation_mechanism": "none", "rotation_activate": "none"},
+            "meta": annotated({key: {"kind": "none"} for key in data}),
         }
     for leaf, key in ((LEAF, "token"), (TRELLO, "bearer-token"), (WEBHOOK, "token")):
         if leaf not in due:
@@ -201,7 +202,7 @@ class TestDryRun:
         night(dry_run=True)
         issue = night.card()
         assert issue["description"].startswith("Open as of 2026-10-05 (dry run).")
-        assert f"- `{STRAY}`: rotation_mechanism: missing" in issue["description"]
+        assert f"- `{STRAY}`: rotation_x: missing" in issue["description"]
         assert bao.writes() == []
 
 
@@ -418,13 +419,13 @@ class TestFailure:
 
     def test_a_plan_that_cannot_be_built_goes_on_the_card(self):
         bao = world(due=(LEAF,))
-        bao.meta(LEAF)["rotation_activate"] = "argocd-sync:app-prd"
+        edit(bao.meta(LEAF), "token", activate="argocd-sync:app-prd")
         night = Night(bao)
         assert night() == 0
         assert night.telegram.messages == []
         assert (
-            f"- `{LEAF}`: its random plan of token: rotation_activate argocd-sync:app-prd: no "
-            "step is built for it yet"
+            f"- `{LEAF}`: its random plan of token: rotation_token activate argocd-sync:app-prd: "
+            "no step is built for it yet"
         ) in night.card()["description"]
 
 
@@ -444,17 +445,17 @@ class TestTheStandingCard:
         bao.leaves[STRAY] = {"data": {"x": "SECRET-stray"}, "meta": dict(NOT_ANNOTATED)}
         night = Night(bao)
         old = card.render(
-            [card.Section("Findings", ("`gone/leaf`: rotation_activate: missing",))],
+            [card.Section("Findings", ("`gone/leaf`: rotation_token: missing",))],
             TODAY - DAY,
             dry_run=False,
         )
         night.youtrack.card(old)
         night()
         issue = night.card()
-        assert f"- `{STRAY}`: rotation_mechanism: missing" in issue["description"]
+        assert f"- `{STRAY}`: rotation_x: missing" in issue["description"]
         (comment,) = issue["comments"]
         assert comment.startswith("2026-10-05: 1 new, 1 resolved.\n\nNew:\n")
-        assert "Resolved:\n- `gone/leaf`: rotation_activate: missing" in comment
+        assert "Resolved:\n- `gone/leaf`: rotation_token: missing" in comment
         before = len(night.youtrack.writes())
         night(now=NOW + DAY)
         assert len(night.youtrack.writes()) == before  # nothing changed: nothing touched
