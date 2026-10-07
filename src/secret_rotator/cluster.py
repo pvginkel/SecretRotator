@@ -6,7 +6,8 @@ One match serves auto, the sync before every rollout and the orphan check (desig
 ExternalSecret references a leaf when a data[].remoteRef.key or a dataFrom[].extract.key names it.
 The KubeCoder catalogs are extracted whole, by dataFrom[].extract alone."""
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 
 from secret_rotator.contract import WORKLOAD
 from secret_rotator.kube import Kube
@@ -57,6 +58,44 @@ class Workload:
     @property
     def path(self) -> str:
         return f"{APPS}/namespaces/{self.namespace}/{RESOURCES[self.kind]}/{self.name}"
+
+
+@dataclass
+class Derived:
+    """What a plan derived from the cluster, by leaf (design §4.5): the ExternalSecrets that
+    reference the leaf, and the workloads that read their Secrets where a rollout's targets are
+    derived. A plan in flight keeps it in its record and is rebuilt from it, not from the
+    cluster."""
+
+    externalsecrets: dict[str, list[Ref]] = field(default_factory=dict)
+    workloads: dict[str, list[Workload]] = field(default_factory=dict)
+
+    def referenced(self) -> set[str]:
+        """The leaves an ExternalSecret referenced when the plan derived them."""
+        return {leaf for leaf, found in self.externalsecrets.items() if found}
+
+    def dump(self) -> str:
+        return json.dumps(
+            {
+                "externalsecrets": {
+                    leaf: [str(es) for es in found] for leaf, found in self.externalsecrets.items()
+                },
+                "workloads": {
+                    leaf: [str(w) for w in found] for leaf, found in self.workloads.items()
+                },
+            }
+        )
+
+    @classmethod
+    def load(cls, text: str) -> "Derived":
+        doc = json.loads(text)
+        return cls(
+            {
+                leaf: [Ref(*es.split("/")) for es in found]
+                for leaf, found in doc["externalsecrets"].items()
+            },
+            {leaf: [Workload.parse(w) for w in found] for leaf, found in doc["workloads"].items()},
+        )
 
 
 def leaves_of(es: dict) -> set[str]:

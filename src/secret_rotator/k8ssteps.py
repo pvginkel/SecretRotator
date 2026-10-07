@@ -1,13 +1,16 @@
 """The generic Kubernetes steps of design §4.2, eso.sync and k8s.rollout: activators with one target
-each, whose undo is to run again after a rollback's undos (design §4.5)."""
+each, whose undo is to run again after a rollback's undos (design §4.5). A target that does not
+exist when the step starts counts as done, forward and in a rollback, with a line saying so."""
 
 from secret_rotator.cluster import Cluster, Ref, Workload, condition, owning_app
+from secret_rotator.kube import KubeError
 from secret_rotator.model import Context, Step, StepFailed, wait
 
 FORCE_SYNC = "force-sync"
 RESTARTED_AT = "kubectl.kubernetes.io/restartedAt"
 SYNC_BOUND, SYNC_POLL = 120, 2  # seconds
 ROLLOUT_BOUND, ROLLOUT_POLL = 300, 5
+GONE = "does not exist: nothing to {}, counted as done"
 
 
 def _mark(ctx: Context) -> str:
@@ -37,7 +40,10 @@ class EsoSync(Step):
         return es
 
     def run(self, ctx: Context) -> str:
-        before = (self._read().get("status") or {}).get("syncedResourceVersion")
+        es = self.cluster.kube.get(self.es.path)
+        if es is None:
+            return GONE.format("sync")
+        before = (es.get("status") or {}).get("syncedResourceVersion")
         annotations = {"metadata": {"annotations": {FORCE_SYNC: _mark(ctx)}}}
         self.cluster.kube.merge_patch(self.es.path, annotations)
 
@@ -70,7 +76,12 @@ class K8sRollout(Step):
 
     def run(self, ctx: Context) -> str:
         restart = {"spec": {"template": {"metadata": {"annotations": {RESTARTED_AT: _mark(ctx)}}}}}
-        patched = self.cluster.kube.merge_patch(self.workload.path, restart)
+        try:
+            patched = self.cluster.kube.merge_patch(self.workload.path, restart)
+        except KubeError as e:
+            if e.status != 404:
+                raise
+            return GONE.format("roll out")
 
         def why_not() -> str | None:
             return self.cluster.health(self.workload)

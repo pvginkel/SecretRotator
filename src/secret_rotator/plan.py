@@ -4,12 +4,12 @@ a plugin, one per key for a per-key kind (manual)."""
 
 import datetime
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from secret_rotator.ansiblesteps import Ansible, AnsibleRun, Playbook
 from secret_rotator.audit import Audit, Leaf
-from secret_rotator.cluster import Cluster, Workload
+from secret_rotator.cluster import Cluster, Derived, Ref, Workload
 from secret_rotator.contract import (
     NONE,
     Activator,
@@ -91,19 +91,25 @@ KUBERNETES = ("eso", "k8s-rollout")
 
 class StepFactory:
     """The patterns a plan is built from, named by what they do (design §4.3). Without a cluster,
-    as offline, it builds no Kubernetes step. Jenkins and Ansible are reached only when a step
-    runs: by default the real ones."""
+    as offline, it builds no Kubernetes step. What derived holds of a leaf is not read from the
+    cluster again: a plan in flight is rebuilt from what it derived when it started (design §4.5).
+    Jenkins and Ansible are reached only when a step runs: by default the real ones."""
 
     def __init__(
         self,
         target: Target,
         cluster: Cluster | None = None,
         *,
+        derived: Derived | None = None,
         jenkins: Jenkins | None = None,
         ansible: Ansible | None = None,
     ):
         self.target = target
         self.cluster = cluster
+        # What the plan derived from the cluster, each leaf read once: its record.
+        self.derived = Derived()
+        if derived is not None:
+            self.derived = Derived(dict(derived.externalsecrets), dict(derived.workloads))
         self.jenkins = jenkins or Jenkins()
         self.ansible = ansible or Ansible()
         # What the activation read from the cluster, for the leaf's consumers in the run state: the
@@ -169,10 +175,11 @@ class StepFactory:
     ) -> list[Step]:
         """An eso.sync of every ExternalSecret that references the leaves (the plan's leaf by
         default), then a k8s.rollout of each target: every sync before every rollout."""
+        cluster = self._cluster()
         leaves = (self.target.leaf,) if leaves is None else tuple(leaves)
-        found = [es for leaf in leaves for es in self._cluster().external_secrets(leaf)]
-        syncs = [EsoSync(self.cluster, es) for es in dict.fromkeys(found)]
-        return [*syncs, *(K8sRollout(self.cluster, w) for w in dict.fromkeys(targets))]
+        found = [es for leaf in leaves for es in self._external_secrets(leaf)]
+        syncs = [EsoSync(cluster, es) for es in dict.fromkeys(found)]
+        return [*syncs, *(K8sRollout(cluster, w) for w in dict.fromkeys(targets))]
 
     def activate(self) -> list[Step]:
         """The activation of the primary's leaf, then of each copy's leaf: every spec of its
@@ -249,7 +256,7 @@ class StepFactory:
             if not specs:
                 continue
             leaf = activation.leaf
-            found = self._cluster().external_secrets(leaf)
+            found = self._external_secrets(leaf)
             leaves.append(leaf)
             self._consumed(f"{es.namespace}/externalsecret/{es.name}" for es in found)
             for spec in specs:
@@ -259,10 +266,22 @@ class StepFactory:
                 if not found:
                     raise self._refused(leaf, spec, f"no ExternalSecret references {leaf}")
                 if spec.name == "k8s-rollout":
-                    derived = self._cluster().consumers(leaf)
+                    derived = self._consumers(leaf)
                     targets += derived
                     self._consumed(str(w) for w in derived)
         return self.eso_sync_and_rollout(targets, leaves)
+
+    def _external_secrets(self, leaf: str) -> list[Ref]:
+        """The ExternalSecrets that reference the leaf."""
+        if leaf not in self.derived.externalsecrets:
+            self.derived.externalsecrets[leaf] = self._cluster().external_secrets(leaf)
+        return self.derived.externalsecrets[leaf]
+
+    def _consumers(self, leaf: str) -> list[Workload]:
+        """auto's rollout targets for the leaf (Cluster.consumers)."""
+        if leaf not in self.derived.workloads:
+            self.derived.workloads[leaf] = self._cluster().consumers(leaf)
+        return self.derived.workloads[leaf]
 
     def _consumed(self, items: Iterable[str]) -> None:
         self.consumers += [item for item in items if item not in self.consumers]
@@ -299,6 +318,7 @@ class Plan:
     steps: tuple[Step, ...]
     ask: str = ""
     description: str = ""
+    derived: Derived = field(default_factory=Derived)  # what it derived from the cluster
 
     @property
     def name(self) -> str:
@@ -361,18 +381,20 @@ def build(
     leaf: Target,
     cluster: Cluster | None = None,
     *,
+    derived: Derived | None = None,
     jenkins: Jenkins | None = None,
     ansible: Ansible | None = None,
 ) -> Plan:
+    """The kind's plan of the Target; derived: a plan in flight's record of what it derived."""
     if problems := kind.args_problems(leaf.args):
         raise PlanError(f"{leaf.leaf}: rotation_args: {'; '.join(problems)}")
-    factory = StepFactory(leaf, cluster, jenkins=jenkins, ansible=ansible)
+    factory = StepFactory(leaf, cluster, derived=derived, jenkins=jenkins, ansible=ansible)
     planned = kind.plan(leaf, PlanContext(factory))
     steps = [*planned, KvStamp(leaf.leaf, leaf.keys, tuple(factory.consumers))]
     ids = [step.id for step in steps]
     if dupes := sorted({i for i in ids if ids.count(i) > 1}):
         raise PlanError(f"{leaf.leaf}: the {kind.name} plan repeats step id(s) {', '.join(dupes)}")
-    return Plan(leaf, tuple(steps), kind.ask(leaf), kind.description(leaf))
+    return Plan(leaf, tuple(steps), kind.ask(leaf), kind.description(leaf), factory.derived)
 
 
 def make(
@@ -384,14 +406,16 @@ def make(
     audit: Audit,
     cluster: Cluster | None = None,
     *,
+    derived: Derived | None = None,
     jenkins: Jenkins | None = None,
     ansible: Ansible | None = None,
 ) -> Plan:
-    """The plan of rotating these keys of the leaf, built by the kind's plugin."""
+    """The plan of rotating these keys of the leaf, built by the kind's plugin; derived: a plan
+    in flight's record of what it derived from the cluster."""
     if kind not in kinds:
         raise PlanError(f"{leaf}: {kind} is not a kind this install has a plugin for")
     built = target(leaf, kind, keys, store, audit)
-    return build(kinds[kind], built, cluster, jenkins=jenkins, ansible=ansible)
+    return build(kinds[kind], built, cluster, derived=derived, jenkins=jenkins, ansible=ansible)
 
 
 def split(kind: Kind, keys: Iterable[str]) -> list[tuple[str, ...]]:

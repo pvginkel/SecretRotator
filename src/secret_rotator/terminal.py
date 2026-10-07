@@ -455,9 +455,14 @@ def run_leaf(
     if leaf not in store:
         console.line(f"error: no leaf {leaf}")
         return 1
-    result = audit(store, None if cluster is None else cluster.referenced())
-    plans, unplanned = of_leaf(leaf, store, result, kinds, cluster)
     flight = store[leaf].flight
+    referenced = None if cluster is None else cluster.referenced()
+    if flight is not None and referenced is not None:
+        # A plan in flight is not blocked by the orphan finding an ExternalSecret it derived raises
+        # once deleted (design §3.3).
+        referenced |= flight.derived.referenced()
+    result = audit(store, referenced)
+    plans, unplanned = of_leaf(leaf, store, result, kinds, cluster)
     try:
         if flight is None:
             plan = choose(console, leaf, plans, unplanned, today)
@@ -465,7 +470,16 @@ def run_leaf(
                 return 0 if any(p.plan for p in plans) else 1
         else:
             try:
-                plan = make(kinds, leaf, flight.kind, list(flight.keys), store, result, cluster)
+                plan = make(
+                    kinds,
+                    leaf,
+                    flight.kind,
+                    list(flight.keys),
+                    store,
+                    result,
+                    cluster,
+                    derived=flight.derived,
+                )
             except PlanError as e:
                 console.line(f"error: its plan in flight cannot be built again: {e}")
                 return 1

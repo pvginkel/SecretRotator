@@ -329,7 +329,7 @@ class TestOperatorSteps:
         bao, outcome, _ = run(store, plan_for(WIFI, "manual", ["password"], store), Abandon.EXIT)
         assert outcome is Outcome.EXITED
         # The staging leaf holds the plan's record, in flight at the credential, and no value.
-        assert set(bao.data("rotator/staging/manual/shared/wifi")) == {"keys", "step"}
+        assert set(bao.data("rotator/staging/manual/shared/wifi")) == {"keys", "step", "derived"}
 
 
 class TestTheLeafsPlans:

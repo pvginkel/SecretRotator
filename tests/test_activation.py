@@ -1,7 +1,8 @@
 """The Kubernetes activation of a plan (design §4.3): auto derived live, the named specs built, the
 leaf's ExternalSecrets synced before every rollout, named rollouts included, one step per target
-and each once, every sync before every rollout; the consumers the stamp records; and such a plan
-run, failed, rolled back and dry run by the executor."""
+and each once, every sync before every rollout; the consumers the stamp records; such a plan run,
+failed, rolled back and dry run by the executor; and a plan in flight rebuilt from what it derived
+when it started, so Retry and Abort complete once its targets are gone (design §4.5, 045's B10)."""
 
 import dataclasses
 import datetime
@@ -25,7 +26,7 @@ from test_kinds import KINDS, store_of
 
 from secret_rotator import cli, terminal
 from secret_rotator.audit import audit
-from secret_rotator.cluster import Cluster
+from secret_rotator.cluster import Cluster, Derived, Ref, Workload
 from secret_rotator.console import Console
 from secret_rotator.contract import MAX_VALUE_BYTES
 from secret_rotator.executor import Executor, Outcome
@@ -302,3 +303,110 @@ class TestCommands:
         assert code == 0, out
         assert "✓ roll out app-prd/deployment/app · Ready, Application app-prd Healthy" in out
         assert "✓ sync ExternalSecret app-prd/app-token · synced, Ready" in out
+
+
+class TestAChangedCluster:
+    """LEAF's plan stopped at its StatefulSet's rollout after kv.write and kv.copy landed (045's
+    B10); then the cluster changes, and `run <path>` takes the plan up from its record."""
+
+    TODAY = datetime.date(2026, 10, 5)
+    DERIVED = Derived(
+        {LEAF: [Ref("app-prd", "app-token")]},
+        {
+            LEAF: [
+                Workload("app-prd", "deployment", "app"),
+                Workload("app-prd", "statefulset", "app-db"),
+            ]
+        },
+    )
+
+    def stopped(self, store=None):
+        fake = FakeCluster()
+        fake.stuck.add("app-prd/app-db")
+        bao = fake_of(store or store_of())
+        _, outcome = run(bao, plan_of(store, fake))
+        assert outcome is Outcome.FAILED
+        assert flight_of(bao, LEAF).step == "k8s.rollout:app-prd/statefulset/app-db"
+        fake.stuck.clear()
+        return fake, bao
+
+    def take_up(self, fake, bao, *answers):
+        con = Console(io.StringIO("".join(f"{a}\n" for a in answers)), io.StringIO())
+        code = terminal.run_leaf(
+            client(bao),
+            LEAF,
+            KINDS,
+            con,
+            holder="run test",
+            today=self.TODAY,
+            cluster=Cluster(fake.kube()),
+        )
+        return code, con.stdout.getvalue()
+
+    def test_its_record_holds_the_external_secrets_and_workloads_it_derived(self):
+        fake = FakeCluster()
+        plan = plan_of(fake=fake)
+        assert plan.derived == self.DERIVED
+        _, bao = self.stopped()
+        assert flight_of(bao, LEAF).derived == self.DERIVED
+
+    def test_a_plan_built_from_the_record_reads_none_of_it_from_the_cluster(self):
+        store = store_of()
+        empty = FakeCluster([])
+        cluster = Cluster(empty.kube())
+        plan = make(
+            KINDS, LEAF, "random", ["token"], store, audit(store), cluster, derived=self.DERIVED
+        )
+        assert ids(plan) == ids(plan_of(store))
+        assert plan.derived == self.DERIVED and empty.requests == []
+
+    def test_retry_completes_once_its_workload_is_deleted(self):
+        fake, bao = self.stopped()
+        old = bao.data(LEAF)["token"]
+        del fake.objects["statefulsets", "app-prd", "app-db"]
+        code, out = self.take_up(fake, bao, "r")
+        assert code == 0, out
+        gone = "does not exist: nothing to roll out, counted as done"
+        assert f"✓ roll out app-prd/statefulset/app-db · {gone}" in out
+        assert f"Done: token of {LEAF} rotated." in out
+        assert state_of(bao, LEAF).status == "ok" and flight_of(bao, LEAF) is None
+        assert bao.data(LEAF)["token"] == old
+
+    def test_abort_completes_once_its_workload_is_deleted(self):
+        fake, bao = self.stopped()
+        del fake.objects["statefulsets", "app-prd", "app-db"]
+        code, out = self.take_up(fake, bao, "a", "y")
+        assert code == 0, out
+        gone = "does not exist: nothing to roll out, counted as done"
+        assert f"✓ again: roll out app-prd/statefulset/app-db · {gone}" in out
+        assert "Rolled back: the rotation of token is undone." in out
+        assert bao.data(LEAF)["token"] == f"SECRET-{LEAF}-token"
+        assert bao.data(COPY)["token"] == f"SECRET-{COPY}-token"
+        assert flight_of(bao, LEAF) is None
+
+    def orphaned(self):
+        """LEAF without its copy, so its ExternalSecret's deletion makes it an orphan."""
+        store = store_of()
+        del store[COPY]
+        fake, bao = self.stopped(store)
+        del fake.objects["externalsecrets", "app-prd", "app-token"]
+        referenced = Cluster(fake.kube()).referenced()
+        assert LEAF in audit(store, referenced).blocked_leaves
+        return fake, bao
+
+    def test_retry_completes_once_its_external_secret_is_deleted(self):
+        fake, bao = self.orphaned()
+        code, out = self.take_up(fake, bao, "r")
+        assert code == 0, out
+        assert "✓ roll out app-prd/statefulset/app-db · Ready" in out
+        assert state_of(bao, LEAF).status == "ok" and flight_of(bao, LEAF) is None
+
+    def test_abort_completes_once_its_external_secret_is_deleted(self):
+        fake, bao = self.orphaned()
+        code, out = self.take_up(fake, bao, "a", "y")
+        assert code == 0, out
+        gone = "does not exist: nothing to sync, counted as done"
+        assert f"✓ again: sync ExternalSecret app-prd/app-token · {gone}" in out
+        assert "Rolled back: the rotation of token is undone." in out
+        assert bao.data(LEAF)["token"] == f"SECRET-{LEAF}-token"
+        assert flight_of(bao, LEAF) is None

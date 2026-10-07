@@ -1,6 +1,7 @@
 """eso.sync and k8s.rollout (design §4.2): activators with one target each; eso.sync verifies the
 ExternalSecret Ready with a new syncedResourceVersion within 2 min, k8s.rollout every pod Ready and
-the owning Argo Application Healthy within 5 min."""
+the owning Argo Application Healthy within 5 min; a target that does not exist counts as done, with
+a line saying so (design §4.5)."""
 
 import datetime
 
@@ -67,10 +68,11 @@ class TestEsoSync:
         )
         assert 120 <= fake.now < 125
 
-    def test_an_external_secret_that_is_gone_fails_it(self):
-        _, cluster = cluster_of()
-        with pytest.raises(StepFailed, match="ExternalSecret app-prd/gone does not exist"):
-            EsoSync(cluster, Ref("app-prd", "gone")).run(Ctx())
+    def test_an_external_secret_that_is_gone_counts_as_done_with_a_line_saying_so(self):
+        fake, cluster = cluster_of()
+        detail = EsoSync(cluster, Ref("app-prd", "gone")).run(Ctx())
+        assert detail == "does not exist: nothing to sync, counted as done"
+        assert fake.patches() == []
 
 
 class TestK8sRollout:
@@ -119,7 +121,14 @@ class TestK8sRollout:
         )
         assert fake.get("statefulsets", "app-prd", "app-db")["status"]["currentRevision"] == "rev-2"
 
-    def test_a_workload_that_is_gone_fails_it_with_the_refusal(self):
-        _, cluster = cluster_of()
-        with pytest.raises(KubeError, match="HTTP 404: no such object"):
-            K8sRollout(cluster, Workload("app-prd", "deployment", "gone")).run(Ctx())
+    def test_a_workload_that_is_gone_counts_as_done_with_a_line_saying_so(self):
+        fake, cluster = cluster_of()
+        ctx = Ctx()
+        detail = K8sRollout(cluster, Workload("app-prd", "deployment", "gone")).run(ctx)
+        assert detail == "does not exist: nothing to roll out, counted as done"
+        assert ctx.progressed == [] and fake.now == 0
+
+    def test_any_other_refusal_fails_it(self):
+        fake = FakeCluster()
+        with pytest.raises(KubeError, match="HTTP 401: Unauthorized"):
+            K8sRollout(Cluster(fake.kube("not-the-token")), APP).run(Ctx())

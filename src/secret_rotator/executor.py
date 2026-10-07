@@ -3,12 +3,13 @@ the plan's staging leaf (§3.4), so a plan resumes where it stopped, in this pro
 talks to its front end, the nightly log, the terminal or the UI, through a Renderer: events out,
 the operator's answers in.
 
-Where a plan stands lives in OpenBao: its staging leaf records the plan's keys and the step it is
-at, written before that step runs, so every step before it finished, and exists exactly while the
-plan is in flight; the leaf's status in the run state says whether it failed. A leaf has one plan
-in flight. Step ids repeat across plans, and a leaf's plans differ by kind or by keys: only the
-plan of the kind and keys recorded resumes it. The staging leaf also holds the values the plan's
-steps produced, what their undos need, and, while a rollback runs, how far it got."""
+Where a plan stands lives in OpenBao: its staging leaf records the plan's keys, the step it is at
+and what it derived from the cluster, written before that step runs, so every step before it
+finished, and exists exactly while the plan is in flight; the leaf's status in the run state says
+whether it failed. A leaf has one plan in flight. Step ids repeat across plans, and a leaf's plans
+differ by kind or by keys: only the plan of the kind and keys recorded resumes it. The staging leaf
+also holds the values the plan's steps produced, what their undos need, and, while a rollback runs,
+how far it got."""
 
 import datetime
 import traceback
@@ -244,7 +245,7 @@ class Executor:
             step = self.plan.steps[at]
             self.renderer.event(Started(step))
             try:
-                self.staging.record(self.plan.target.keys, step.id)
+                self.staging.record(self.plan.target.keys, step.id, self.plan.derived)
                 detail = step.run(_RunContext(self, step, Action.RUN))
             except _Abandoned as a:
                 return Outcome.EXITED if a.choice is Abandon.EXIT else self._abort()
