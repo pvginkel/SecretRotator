@@ -465,7 +465,7 @@ def run_leaf(
             for path, other in store.items()
             if any((leaf, key) in copies_in(other.meta) for key in flight.keys)
         }
-    result = audit(store, referenced)
+    result = audit(store, referenced, kinds)
     plans, unplanned = of_leaf(leaf, store, result, kinds, cluster)
     try:
         if flight is None:

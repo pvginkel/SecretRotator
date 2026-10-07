@@ -2,19 +2,56 @@
 then the write, the copies and the activation; with its operator step it never runs nightly. One
 plan per key. On a marker leaf of the bootstrap tier the operator rotates the credential at its
 source and confirms it, and the plan rewrites the marker key: the credential never enters
-OpenBao."""
+OpenBao.
 
+A key's one arg, `type`, names its credential type: one document in types/ each, `<type>.md`, the
+type's standard instructions for minting it under a YAML front matter of what the credential is,
+the shape a pasted value has, and whether it expires. The instructions are the same for every key
+of the type; the key's own notes show below them."""
+
+import re
 from collections.abc import Mapping
+from dataclasses import dataclass
+from importlib import resources
+
+import yaml
 
 from secret_rotator.model import Step
-from secret_rotator.opsteps import starts_with
+from secret_rotator.opsteps import Shape
 from secret_rotator.plan import PlanContext, Target, tool_part
 
 # The manual kind's marker leaves (catalog § rotator/).
 MARKERS = "rotator/bootstrap/"
-# A key's args, each optional: the credential in words (`GitHub PAT`), where to mint it and with
-# which scopes, and the prefix its values have.
-ARGS = ("what", "mint", "prefix")
+DOCUMENT = re.compile(r"---\n(.*?)\n---\n(.*)", re.DOTALL)
+
+
+@dataclass(frozen=True)
+class CredentialType:
+    """A credential type's document."""
+
+    credential: str  # what it is, after `a new`: `GitHub personal access token`
+    instructions: str
+    shape: Shape
+    expires: bool  # whether the credential carries an expiry
+
+
+def load_type(text: str) -> CredentialType:
+    front, body = DOCUMENT.fullmatch(text).groups()
+    fields = yaml.safe_load(front)
+    pattern = re.compile(fields["shape"]["pattern"], re.DOTALL)
+    return CredentialType(
+        fields["credential"],
+        body.strip(),
+        Shape(fields["shape"]["words"], lambda value: pattern.fullmatch(value) is not None),
+        fields["expires"],
+    )
+
+
+TYPES = {
+    doc.name.removesuffix(".md"): load_type(doc.read_text())
+    for doc in (resources.files(__package__) / "types").iterdir()
+    if doc.name.endswith(".md")
+}
 
 
 def _marker(leaf: Target) -> bool:
@@ -26,8 +63,13 @@ def _entry(leaf: Target):
     return leaf.entries[leaf.keys[0]]
 
 
+def _type(leaf: Target) -> CredentialType | None:
+    return TYPES.get(_entry(leaf).args.get("type"))
+
+
 def _what(leaf: Target) -> str:
-    return _entry(leaf).args.get("what") or ", ".join(leaf.keys)
+    known = _type(leaf)
+    return known.credential if known else ", ".join(leaf.keys)
 
 
 class Manual:
@@ -35,12 +77,10 @@ class Manual:
     per_key = True
 
     def args_problems(self, args: Mapping) -> list[str]:
-        problems = [f"{k}: not one of manual's {', '.join(ARGS)}" for k in args if k not in ARGS]
-        return problems + [
-            f"{k}: not a text"
-            for k in ARGS
-            if k in args and (not isinstance(args[k], str) or not args[k].strip())
-        ]
+        problems = [f"{k}: not manual's; its one arg is type" for k in args if k != "type"]
+        if "type" in args and not (isinstance(args["type"], str) and args["type"] in TYPES):
+            problems.append(f"type: {args['type']!r} is not a credential type manual documents")
+        return problems
 
     def ask(self, leaf: Target) -> str:
         return "rotate it at its source" if _marker(leaf) else f"paste a new {_what(leaf)}"
@@ -67,16 +107,17 @@ class Manual:
                 *ctx.steps.write(),
                 *ctx.steps.activate(),
             ]
-        args = _entry(leaf).args
-        instruction = args.get("mint") or (
-            f"Mint a new {', '.join(leaf.keys)} for {leaf.leaf} where it is issued."
+        known = _type(leaf)
+        instruction = (
+            known.instructions
+            if known
+            else f"Mint a new {', '.join(leaf.keys)} for {leaf.leaf} where it is issued."
         )
-        prefix = args.get("prefix")
         return [
             *ctx.steps.credential(
                 f"Mint a new {_what(leaf)} and enter it",
-                instruction + (f"\nNotes: {notes}" if notes else ""),
-                starts_with(prefix) if prefix else None,
+                instruction + (f"\n\nNotes: {notes}" if notes else ""),
+                known.shape if known else None,
             ),
             *ctx.steps.write(),
             *ctx.steps.activate(),

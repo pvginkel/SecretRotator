@@ -192,13 +192,15 @@ def test_an_entry_reads_with_its_defaults():
         {
             "kind": "manual",
             "interval": "never",
-            "args": {"what": "PSK"},
+            "args": {"type": "github-pat"},
             "activate": "none",
             "expires_at": "2027-01-31",
             "notes": "n",
         }
     )
-    assert entry == c.Entry("manual", None, {"what": "PSK"}, (), datetime.date(2027, 1, 31), "n")
+    assert entry == c.Entry(
+        "manual", None, {"type": "github-pat"}, (), datetime.date(2027, 1, 31), "n"
+    )
     assert c.Entry.load({"kind": "none"}).activate == ()
 
 

@@ -3,6 +3,7 @@ args, ask and description, manual one plan per key and on a marker leaf, the ope
 the activation the primary's plan composes for its leaf and its copies' leaves (design §4.3)."""
 
 import datetime
+import re
 from importlib.metadata import EntryPoint
 
 import pytest
@@ -14,7 +15,7 @@ from secret_rotator.audit import Leaf, audit
 from secret_rotator.contract import MARKER_VALUE
 from secret_rotator.executor import Abandon, AbortRefused, Executor, Outcome
 from secret_rotator.kinds.approle import AppRole
-from secret_rotator.kinds.manual import Manual
+from secret_rotator.kinds.manual import TYPES, Manual, load_type
 from secret_rotator.kinds.random import Random
 from secret_rotator.model import StepFailed, value_name
 from secret_rotator.opsteps import (
@@ -168,6 +169,91 @@ class TestRandom:
             plan_for(LEAF, "random", ["token"], store)
 
 
+class TestCredentialTypes:
+    """manual's documents (design §6, ruling 054 D1): one per credential type of the catalog."""
+
+    def test_the_plugin_documents_the_catalogs_ten_types(self):
+        assert set(TYPES) == {
+            "argocd-token",
+            "github-pat",
+            "grafana-api-key",
+            "jenkins-basic-auth",
+            "mouser-api-key",
+            "openai-api-key",
+            "ssh-private-key",
+            "telegram-bot-token",
+            "torguard-wireguard",
+            "tvdb-api-key",
+        }
+
+    def test_every_document_says_what_the_credential_is_how_to_mint_it_and_its_shape(self):
+        for name, doc in TYPES.items():
+            assert doc.credential.strip() and doc.shape.words.strip(), name
+            assert doc.instructions.strip() and not doc.instructions.startswith("---"), name
+
+    def test_the_types_that_carry_an_expiry(self):
+        assert {name for name, doc in TYPES.items() if doc.expires} == {
+            "argocd-token",
+            "github-pat",
+            "grafana-api-key",
+        }
+
+    @pytest.mark.parametrize(
+        ("name", "matches", "mismatches"),
+        [
+            ("github-pat", ["ghp_" + "a1" * 18, "github_pat_11AAB_x9"], ["gho_abc", "token"]),
+            ("telegram-bot-token", ["123456789:AAH-x_9"], ["AAH-x_9", "123456789"]),
+            ("openai-api-key", ["sk-proj-abc_9", "sk-abc"], ["pk-abc", "sk-"]),
+            (
+                "mouser-api-key",
+                ["0f8fad5b-d9cb-469f-a165-70867728950e"],
+                ["0f8fad5bd9cb469fa16570867728950e", "key"],
+            ),
+            ("jenkins-basic-auth", ["Basic dXNlcjp0b2tlbg=="], ["dXNlcjp0b2tlbg==", "Bearer x"]),
+            (
+                "tvdb-api-key",
+                ["0F8FAD5B-D9CB-469F-A165-70867728950E"],
+                ["0f8fad5b-d9cb-469f-a165", "key"],
+            ),
+            (
+                "torguard-wireguard",
+                ["[Interface]\nPrivateKey = x=\nAddress = 10.0.0.2/32\n\n[Peer]\nPublicKey = y=\n"],
+                ["PrivateKey = x=", "[Peer]\n[Interface]\nPrivateKey = x="],
+            ),
+            ("argocd-token", ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln"], ["eyJhbGc", "a.b.c"]),
+            ("grafana-api-key", ["glsa_AbC123_0a1b2c3d"], ["eyJrIjoi", "glsa"]),
+            (
+                "ssh-private-key",
+                [
+                    "-----BEGIN OPENSSH PRIVATE KEY-----\nb3\n-----END OPENSSH PRIVATE KEY-----\n",
+                    "-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----",
+                ],
+                ["ssh-ed25519 AAAAC3 pve-root", "-----BEGIN OPENSSH PRIVATE KEY-----\nb3Bl"],
+            ),
+        ],
+    )
+    def test_each_shape_tells_a_pasted_value_of_the_type_from_another(
+        self, name, matches, mismatches
+    ):
+        shape = TYPES[name].shape
+        assert [shape.test(v) for v in matches] == [True] * len(matches)
+        assert [shape.test(v) for v in mismatches] == [False] * len(mismatches)
+
+    def test_the_live_mint_facts_are_in_their_types_documents(self):
+        assert "TorGuard control panel" in TYPES["torguard-wireguard"].instructions
+        assert "TheTVDB's dashboard" in TYPES["tvdb-api-key"].instructions
+
+    def test_a_document_is_its_front_matter_then_its_instructions(self):
+        doc = load_type(
+            "---\ncredential: Wi-Fi PSK\nshape:\n  words: starts with psk-\n  pattern: psk-.+\n"
+            "expires: false\n---\nUniFi → WiFi → Password.\n\n---\nNot front matter.\n"
+        )
+        assert doc.credential == "Wi-Fi PSK" and doc.expires is False
+        assert doc.instructions == "UniFi → WiFi → Password.\n\n---\nNot front matter."
+        assert doc.shape.words == "starts with psk-"
+        assert doc.shape.test("psk-1\n2") and not doc.shape.test("1psk-")
+
+
 class TestManual:
     def test_a_leaf_with_several_manual_keys_has_one_plan_per_key(self):
         store = store_of(**ACTIVATE_NONE)
@@ -188,7 +274,9 @@ class TestManual:
         ((_, request),) = r.asked
         assert isinstance(request, CredentialRequest)
         assert [f.key for f in request.fields] == ["token"] and request.fields[0].shape is None
-        assert "Notes: cannot be rotated" in request.instruction
+        assert request.instruction == (
+            f"Mint a new token for {TRELLO} where it is issued.\n\nNotes: cannot be rotated"
+        )
         data = bao.data(TRELLO)
         assert data["token"] == "NEW-trello-token"
         assert data["api-key"] == f"SECRET-{TRELLO}-api-key"
@@ -197,29 +285,54 @@ class TestManual:
         assert body["data"] == {"token": "NEW-trello-token"}
         assert state_of(bao, TRELLO).stamps == {"token": "2026-10-05"}
 
-    def test_args_describe_the_credential_and_its_shape(self):
+    def test_a_type_shows_its_documents_instructions_with_the_key_s_notes_below(self):
         store = store_of(**ACTIVATE_NONE)
-        edit(
-            store[WIFI].meta,
-            "password",
-            args={"what": "Wi-Fi PSK", "mint": "UniFi → WiFi → Password", "prefix": "psk-"},
-        )
+        edit(store[WIFI].meta, "password", args={"type": "github-pat"})
         plan = plan_for(WIFI, "manual", ["password"], store)
         credential = plan.steps[0]
-        assert credential.title == "Mint a new Wi-Fi PSK and enter it"
-        assert credential.instruction.startswith("UniFi → WiFi → Password")
-        assert credential.shape.words == "starts with psk-"
-        assert credential.shape.test("psk-1") and not credential.shape.test("1")
-        assert plan.ask == "paste a new Wi-Fi PSK"
+        github = TYPES["github-pat"]
+        assert credential.title == "Mint a new GitHub personal access token and enter it"
+        assert credential.instruction == f"{github.instructions}\n\nNotes: PSK in every device"
+        assert credential.shape is github.shape
+        assert plan.ask == "paste a new GitHub personal access token"
+        assert plan.description.startswith("You mint a new GitHub personal access token and enter")
+
+    def test_every_key_of_a_type_shows_the_same_instructions_untemplated(self):
+        store = store_of(**ACTIVATE_NONE)
+        for key in ("api-key", "token"):
+            edit(store[TRELLO].meta, key, args={"type": "openai-api-key"}, notes=f"{key} notes")
+        steps = [plan_for(TRELLO, "manual", [k], store).steps[0] for k in ("api-key", "token")]
+        assert [s.instruction for s in steps] == [
+            f"{TYPES['openai-api-key'].instructions}\n\nNotes: {key} notes"
+            for key in ("api-key", "token")
+        ]
+
+    def test_without_notes_the_instructions_stand_alone(self):
+        store = store_of(**ACTIVATE_NONE)
+        edit(
+            store[TRELLO].meta,
+            "token",
+            args={"type": "openai-api-key"},
+            interval="365d",
+            notes=None,
+        )
+        credential = plan_for(TRELLO, "manual", ["token"], store).steps[0]
+        assert credential.instruction == TYPES["openai-api-key"].instructions
 
     @pytest.mark.parametrize(
         ("args", "problem"),
-        [({"vendor": "x"}, "vendor: not one of manual's"), ({"what": ""}, "what: not a text")],
+        [
+            ({"vendor": "x"}, "vendor: not manual's; its one arg is type"),
+            ({"type": "github-pat", "prefix": "ghp_"}, "prefix: not manual's; its one arg is type"),
+            ({"what": "PSK"}, "what: not manual's; its one arg is type"),
+            ({"type": "fax"}, "type: 'fax' is not a credential type manual documents"),
+            ({"type": ["github-pat"]}, "type: ['github-pat'] is not a credential type"),
+        ],
     )
     def test_args_it_does_not_know_refuse_the_plan(self, args, problem):
         store = store_of(**ACTIVATE_NONE)
         edit(store[WIFI].meta, "password", args=args)
-        with pytest.raises(PlanError, match=problem):
+        with pytest.raises(PlanError, match=re.escape(f"rotation_password args: {problem}")):
             plan_for(WIFI, "manual", ["password"], store)
 
     def test_on_a_marker_leaf_it_confirms_at_the_source_and_rewrites_the_marker_key(self):

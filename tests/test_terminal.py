@@ -181,20 +181,20 @@ class TestRun:
 
     def test_a_credential_is_hidden_its_size_shown_and_a_shape_mismatch_asks_first(self):
         store = store_of(**ACTIVATE_NONE)
-        edit(store[WIFI].meta, "password", args={"what": "PSK", "prefix": "psk-"})
+        edit(store[WIFI].meta, "password", args={"type": "openai-api-key"})
         bao = fake_of(store)
-        answers = ("y", "SECRET-no-prefix", "c", "n", "e", "psk-SECRET", "c")
+        answers = ("y", "SECRET-no-prefix", "c", "n", "e", "sk-SECRET", "c")
         code, out = run(bao, WIFI, *answers)
         assert code == 0
-        assert "16 characters  ⚠ expected: starts with psk-" in out
-        assert "The password does not look as expected: it starts with psk-." in out
-        assert "10 characters  ✓ starts with psk-" in out
-        assert bao.data(WIFI) == {"password": "psk-SECRET"}
+        assert "16 characters  ⚠ expected: starts with sk-" in out
+        assert "The password does not look as expected: it starts with sk-." in out
+        assert "9 characters  ✓ starts with sk-" in out
+        assert bao.data(WIFI) == {"password": "sk-SECRET"}
         assert "SECRET" not in out
 
     def test_a_mismatch_continued_anyway_is_taken(self):
         store = store_of(**ACTIVATE_NONE)
-        edit(store[WIFI].meta, "password", args={"prefix": "psk-"})
+        edit(store[WIFI].meta, "password", args={"type": "openai-api-key"})
         bao = fake_of(store)
         assert run(bao, WIFI, "y", "SECRET-odd", "c", "y")[0] == 0
         assert bao.data(WIFI) == {"password": "SECRET-odd"}

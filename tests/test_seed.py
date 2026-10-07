@@ -17,6 +17,7 @@ from secret_rotator import annotate as ann
 from secret_rotator import audit as aud
 from secret_rotator import cli
 from secret_rotator.contract import MAX_VALUE_BYTES, dump_entry, is_scheduled
+from secret_rotator.kinds.manual import TYPES
 
 APPROLES = ("backup", "eso", "eso-dev", "iac-agent", "jenkins", "openbao-admin")
 BOOTSTRAP = (
@@ -191,6 +192,47 @@ def test_the_leaves_once_manual_carry_the_kind_the_catalog_gives(entries):
         assert kind in {f["kind"] for f in entries[leaf].values()}, leaf
     for key in ("kubeconfig", "kubeconfig-dev-write", "kubeconfig-prd-write"):
         assert entries[CATALOG][key]["kind"] == "k8s-sa-token"
+
+
+def test_every_scheduled_manual_key_names_the_type_the_catalog_gives_it(entries):
+    want = {
+        ("eso/prd/argocd-hooks/git", "token"): "github-pat",
+        ("eso/prd/argocd/prd/git", "token"): "github-pat",
+        ("eso/prd/fieldnotes/prd/store-token", "token"): "github-pat",
+        ("eso/prd/git-sync/prd/github", "token"): "github-pat",
+        ("eso/prd/kubecoder/dev/github-token", "token"): "github-pat",
+        ("eso/prd/kubecoder/prd/github-token", "token"): "github-pat",
+        ("iac/tf-backend", "github_token"): "github-pat",
+        ("eso/prd/jenkins-telegram-bot/prd/config", "telegram-bot-token"): "telegram-bot-token",
+        ("eso/prd/kubecoder/dev/bot-token", "token"): "telegram-bot-token",
+        ("eso/prd/kubecoder/prd/bot-token", "token"): "telegram-bot-token",
+        ("eso/prd/newsfilter/prd/telegram", "bot-token"): "telegram-bot-token",
+        ("eso/prd/prometheus/prd/telegram", "bot_token"): "telegram-bot-token",
+        ("eso/prd/telegram-mcp/prd/telegram", "bot-token"): "telegram-bot-token",
+        ("rotator/telegram", "token"): "telegram-bot-token",
+        ("eso/prd/electronics-inventory/prd/openai", "api_key"): "openai-api-key",
+        ("eso/prd/intercom/prd/openai", "api_key"): "openai-api-key",
+        ("eso/prd/newsfilter/prd/openai", "api_key"): "openai-api-key",
+        (CATALOG, "openai-api-key"): "openai-api-key",
+        ("jenkins/openai-ci-cd", "api_key"): "openai-api-key",
+        ("eso/prd/electronics-inventory/prd/mouser", "search_api_key"): "mouser-api-key",
+        ("eso/prd/jenkins-mcp/prd/config", "authorization"): "jenkins-basic-auth",
+        ("eso/prd/media/prd/mydownloads-tvdb", "tvdb-api-key"): "tvdb-api-key",
+        ("eso/prd/media/prd/gluetun-wg", "config"): "torguard-wireguard",
+        (CATALOG, "argocd-token"): "argocd-token",
+        (CATALOG, "grafana-api-key"): "grafana-api-key",
+        (CATALOG, "ssh-key-pve"): "ssh-private-key",
+    }
+    manual = {
+        (leaf, key): fields
+        for leaf, by_key in entries.items()
+        for key, fields in by_key.items()
+        if fields["kind"] == "manual"
+    }
+    scheduled = {at: f for at, f in manual.items() if f.get("interval") != "never"}
+    assert {at: f.get("args", {}).get("type") for at, f in scheduled.items()} == want
+    assert set(want.values()) == set(TYPES)
+    assert [at for at, f in manual.items() if f.get("interval") == "never" and "args" in f] == []
 
 
 def test_the_catalog_corrections(entries):

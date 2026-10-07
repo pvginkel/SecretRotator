@@ -469,6 +469,16 @@ class TestOffline:
         assert self.check() == 0, self.lines
         assert "seed key not in the key file: shared/ceph#user_id" in self.lines
 
+    def test_a_manual_key_of_a_type_the_plugin_does_not_document_is_a_finding(self):
+        seed = yaml.safe_load(self.seed.read_text())
+        seed["shared/wifi"]["keys"]["password"]["args"] = {"type": "fax"}
+        self.seed.write_text(yaml.safe_dump(seed, sort_keys=False))
+        assert self.check() == 1
+        assert (
+            "shared/wifi: rotation_password: args: type: 'fax' is not a credential type manual "
+            "documents"
+        ) in self.lines
+
     def test_a_key_the_seed_does_not_resolve_is_a_finding(self):
         self.names["eso/prd/app/prd/oidc"] = ["client_id", "client_secret", "url"]
         assert self.check() == 1

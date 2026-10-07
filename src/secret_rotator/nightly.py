@@ -191,7 +191,7 @@ class Night:
             self.locked_out(holder, "it ran nothing tonight")
             return 1 if self.broken else 0
         self.store.update(live_store(self.bao, runs=True))
-        self.result = audit(self.store, self.cluster.referenced())
+        self.result = audit(self.store, self.cluster.referenced(), self.kinds)
         report(self.result, self.store, self.out)
         self.find_card()
         horizon = due_keys(self.store, self.result, self.today + HORIZON)

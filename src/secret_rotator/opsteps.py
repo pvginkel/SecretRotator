@@ -13,12 +13,8 @@ class Shape:
     """What an entered value is expected to look like; a value that does not match it asks before
     it is taken, and is never refused (design R53)."""
 
-    words: str  # `starts with github_pat_`
+    words: str  # after `it`: `starts with ghp_ or github_pat_`
     test: Callable[[str], bool]
-
-
-def starts_with(prefix: str) -> Shape:
-    return Shape(f"starts with {prefix}", lambda value: value.startswith(prefix))
 
 
 @dataclass(frozen=True)

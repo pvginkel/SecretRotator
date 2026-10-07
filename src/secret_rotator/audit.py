@@ -7,7 +7,9 @@ the leaf and every primary key copied into it; a stale entry blocks nothing."""
 
 import datetime
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from secret_rotator.contract import (
     ContractError,
@@ -26,6 +28,9 @@ from secret_rotator.schedule import KeySchedule, schedule
 from secret_rotator.staging import InFlight, flights
 from secret_rotator.state import LeafState
 from secret_rotator.state import read as read_state
+
+if TYPE_CHECKING:
+    from secret_rotator.plan import Kind
 
 # The leaves the prd cluster's ESO reads: the orphan check's, since the rotator reads no other
 # cluster. eso/dev/ is the dev cluster's.
@@ -70,7 +75,9 @@ class Audit:
         return leaf in self.blocked_leaves or (leaf, key) in self.blocked_keys
 
 
-def check_leaf(leaf: Leaf, store: dict[str, Leaf], kinds_of: dict) -> list[Finding]:
+def check_leaf(
+    leaf: Leaf, store: dict[str, Leaf], kinds_of: dict, plugins: "Mapping[str, Kind]"
+) -> list[Finding]:
     findings = []
 
     def find(key: str, message: str, blocks: str | None = None) -> None:
@@ -93,11 +100,15 @@ def check_leaf(leaf: Leaf, store: dict[str, Leaf], kinds_of: dict) -> list[Findi
         except ContractError as e:
             find(name, str(e), key)
             continue
-        for problem in entry_problems(fields):
+        problems = entry_problems(fields)
+        for problem in problems:
             find(name, problem, key)
         kind = kind_in(texts[key])
         if kind is None:
             continue
+        if not problems and kind in plugins:
+            for problem in plugins[kind].args_problems(fields.get("args", {})):
+                find(name, f"args: {problem}", key)
         if not may_rotate(kind, key):
             find(name, f"kind: {kind} does not rotate {key}", key)
         target = copy_target(kind)
@@ -154,9 +165,14 @@ def copies_in(meta: dict[str, str]) -> set[tuple[str, str]]:
     return {target for kind in kinds if (target := copy_target(kind))}
 
 
-def audit(store: dict[str, Leaf], referenced: set[str] | None = None) -> Audit:
+def audit(
+    store: dict[str, Leaf],
+    referenced: set[str] | None = None,
+    plugins: "Mapping[str, Kind] | None" = None,
+) -> Audit:
     """The compliance check of the store; with referenced, the leaves the prd cluster's
-    ExternalSecrets reference, the orphan check too."""
+    ExternalSecrets reference, the orphan check too; with plugins, the kinds by name, each key's
+    args as its kind's plugin checks them (a manual key's credential type, design §6)."""
     kinds = {
         path: {key: kind_in(entries_of(leaf.meta).get(key)) for key in leaf.keys}
         for path, leaf in store.items()
@@ -166,7 +182,7 @@ def audit(store: dict[str, Leaf], referenced: set[str] | None = None) -> Audit:
     findings = [
         f
         for path in sorted(store)
-        for f in [*check_leaf(store[path], store, kinds), *orphaned.get(path, [])]
+        for f in [*check_leaf(store[path], store, kinds, plugins or {}), *orphaned.get(path, [])]
     ]
     result = Audit(findings, kinds)
     result.blocked_leaves = {f.leaf for f in findings if f.blocks is None}

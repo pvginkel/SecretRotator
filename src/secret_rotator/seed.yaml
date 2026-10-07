@@ -42,6 +42,7 @@ eso/dev/postgres-pas/terraform-admin:
 
 eso/prd/argocd-hooks/git:
   kind: manual
+  args: {"type":"github-pat"}
   interval: 365d
   activate: none
   notes: "The Argo CD hooks' own classic PAT on pvginkel, not argocd/prd/git's: the PreSync and
@@ -50,6 +51,7 @@ eso/prd/argocd-hooks/git:
 
 eso/prd/argocd/prd/git:
   kind: manual
+  args: {"type":"github-pat"}
   interval: 365d
   activate: none
   notes: "Argo CD's own repository credential for https://github.com/pvginkel/ (ArgoCDDeploy and
@@ -123,6 +125,7 @@ eso/prd/electronics-inventory/prd/drain-auth:
 
 eso/prd/electronics-inventory/prd/mouser:
   kind: manual
+  args: {"type":"mouser-api-key"}
   interval: 365d
   activate: auto
   notes: "ElectronicsInventory's Mouser Search API key (part-number and keyword search)."
@@ -134,6 +137,7 @@ eso/prd/electronics-inventory/prd/oidc:
 
 eso/prd/electronics-inventory/prd/openai:
   kind: manual
+  args: {"type":"openai-api-key"}
   interval: 365d
   activate: auto
   notes: "ElectronicsInventory's backend."
@@ -170,6 +174,7 @@ eso/prd/fieldnotes/prd/oidc:
 
 eso/prd/fieldnotes/prd/store-token:
   kind: manual
+  args: {"type":"github-pat"}
   interval: 365d
   activate: auto
   notes: "Fieldnotes' store remote: every write commits and pushes pvginkel/Fieldnotes on main."
@@ -193,6 +198,7 @@ eso/prd/filebeat/prd/elastic-credentials:
 
 eso/prd/git-sync/prd/github:
   kind: manual
+  args: {"type":"github-pat"}
   interval: 365d
   activate: none
   notes: "git-sync's daily mirror into Gitblit: lists and fetches every repo of the owners pvginkel,
@@ -233,6 +239,7 @@ eso/prd/intercom/prd/mqtt:
 
 eso/prd/intercom/prd/openai:
   kind: manual
+  args: {"type":"openai-api-key"}
   interval: 365d
   activate: auto
   notes: "IntercomServer: the Realtime API and web search."
@@ -287,6 +294,7 @@ eso/prd/jenkins-mcp/prd/config:
   keys:
     authorization:
       kind: manual
+      args: {"type":"jenkins-basic-auth"}
       interval: 365d
       notes: "An upstream Basic <user:token> header that jenkins-mcp's mcp-filter sends to Jenkins'
         /mcp-server/stateless, kept as is by slice 044; the Jenkins-token kind's slice turns it into
@@ -299,6 +307,7 @@ eso/prd/jenkins-telegram-bot/prd/config:
   keys:
     telegram-bot-token:
       kind: manual
+      args: {"type":"telegram-bot-token"}
       interval: 365d
       notes: "The Jenkins build bot: posts one message per build and edits it in place, in the chat
         of telegram-chat-id."
@@ -306,6 +315,7 @@ eso/prd/jenkins-telegram-bot/prd/config:
 
 eso/prd/kubecoder/dev/bot-token:
   kind: manual
+  args: {"type":"telegram-bot-token"}
   interval: 365d
   activate: auto
   notes: "KubeCoder's bot, one per stage: dev's posts to the operator's DM, prd's to the homelab
@@ -338,6 +348,7 @@ eso/prd/kubecoder/dev/client-token-mcp:
 
 eso/prd/kubecoder/dev/github-token:
   kind: manual
+  args: {"type":"github-pat"}
   interval: 365d
   activate: auto
   notes: "KubeCoder's classic PAT on pvginkel (KubeCoder docs/conventions/secrets.md): the stage's
@@ -355,6 +366,7 @@ eso/prd/kubecoder/dev/step-ca-provisioner-password:
 
 eso/prd/kubecoder/prd/bot-token:
   kind: manual
+  args: {"type":"telegram-bot-token"}
   interval: 365d
   activate: auto
   notes: "KubeCoder's bot, one per stage: dev's posts to the operator's DM, prd's to the homelab
@@ -371,6 +383,7 @@ eso/prd/kubecoder/prd/catalog:
       interval: never
       notes: "the bootstrap tier, rotated by hand at its source and never asked for (R78)"
     argocd-token:
+      args: {"type":"argocd-token"}
       notes: "Argo CD's local account kubecoder (role:readonly), for every prd environment: argocd
         account generate-token --account kubecoder, as admin (Ansible docs/runbooks/argocd.md)."
     backup-server-token: {kind: "copy:eso/prd/storage/prd/backup-server#management_token"}
@@ -380,6 +393,7 @@ eso/prd/kubecoder/prd/catalog:
     fieldnotes-skills-token: {kind: "copy:eso/prd/fieldnotes/prd/client-token-skills#token"}
     github-rw: {kind: "copy:eso/prd/kubecoder/prd/github-token#token"}
     grafana-api-key:
+      args: {"type":"grafana-api-key"}
       notes: "The FieldnotesApp environment's GRAFANA_TOKEN: posts dashboards (overwrite) and
         queries datasources through Grafana's proxy."
     iotsupport-keycloak-admin-client-id: {kind: "copy:jenkins/keycloak-iotsupport-admin#client_id"}
@@ -391,11 +405,13 @@ eso/prd/kubecoder/prd/catalog:
     kubeconfig-dev-write: {kind: k8s-sa-token}
     kubeconfig-prd-write: {kind: k8s-sa-token}
     openai-api-key:
+      args: {"type":"openai-api-key"}
       notes: "The environments whose manifest asks for it (NewsFilter, ElectronicsInventory,
         DesignAssistant), whose suites call the live API; the dev bag copies it."
     proxmox-password: {kind: "copy:iac/proxmox#password"}
     ssh-key-ansible: {kind: "copy:iac/ansible-ssh-key#private"}
     ssh-key-pve:
+      args: {"type":"ssh-private-key"}
       notes: "Logs in as root on the PVE nodes pve, pve1 and pve2 and on the UDM Pro (router.home);
         its public half is Ansible ansible/files/pve.pub (comment pve-root); the Ansible environment
         writes it to ~/.ssh/id_ed25519_pve."
@@ -419,6 +435,7 @@ eso/prd/kubecoder/prd/client-token-mcp:
 
 eso/prd/kubecoder/prd/github-token:
   kind: manual
+  args: {"type":"github-pat"}
   interval: 365d
   activate: auto
   notes: "KubeCoder's classic PAT on pvginkel (KubeCoder docs/conventions/secrets.md): the stage's
@@ -437,6 +454,7 @@ eso/prd/kubecoder/prd/step-ca-provisioner-password:
 
 eso/prd/media/prd/gluetun-wg:
   kind: manual
+  args: {"type":"torguard-wireguard"}
   interval: 365d
   activate: auto
   notes: "gluetun's WireGuard config for mydownloads, mounted whole as wg0.conf."
@@ -448,6 +466,7 @@ eso/prd/media/prd/mydownloads-firebase:
 
 eso/prd/media/prd/mydownloads-tvdb:
   kind: manual
+  args: {"type":"tvdb-api-key"}
   interval: 365d
   activate: auto
   notes: "mydownloads' TheTVDB API key."
@@ -467,12 +486,14 @@ eso/prd/media/prd/mydownloads-users:
 
 eso/prd/newsfilter/prd/openai:
   kind: manual
+  args: {"type":"openai-api-key"}
   interval: 365d
   activate: none
   notes: "The hourly newsfilter CronJob's article scorer."
 
 eso/prd/newsfilter/prd/telegram:
   kind: manual
+  args: {"type":"telegram-bot-token"}
   interval: 365d
   activate: none
   keys:
@@ -509,6 +530,7 @@ eso/prd/prometheus/prd/healthchecks:
 
 eso/prd/prometheus/prd/telegram:
   kind: manual
+  args: {"type":"telegram-bot-token"}
   interval: 365d
   activate: k8s-rollout:prometheus-prd/statefulset/prometheus-prd-alertmanager
   keys:
@@ -535,6 +557,7 @@ eso/prd/storage/prd/s3-mirror:
 
 eso/prd/telegram-mcp/prd/telegram:
   kind: manual
+  args: {"type":"telegram-bot-token"}
   interval: 365d
   activate: auto
   keys:
@@ -617,6 +640,7 @@ iac/tf-backend:
       notes: "it encrypts every Terraform state, and re-encrypting them all is a project, not a
         rotation"
     github_token:
+      args: {"type":"github-pat"}
       interval: 365d
       notes: "The break-glass terraform-backend-git on the operator workstation (Ansible
         scripts/tf-backend.sh): pushes pvginkel/TerraformState on main."
@@ -676,6 +700,7 @@ jenkins/mydownloads-android-keystore:
 
 jenkins/openai-ci-cd:
   kind: manual
+  args: {"type":"openai-api-key"}
   interval: 365d
   activate: none
   notes: "DesignAssistant's UAT deploy job (Jenkinsfile.deploy-uat), which regenerates the canon
@@ -757,6 +782,7 @@ rotator/jenkins:
 
 rotator/telegram:
   kind: manual
+  args: {"type":"telegram-bot-token"}
   interval: 365d
   activate: none
   notes: "The Secret Rotator bot: posts in the Homelab Alerts group."

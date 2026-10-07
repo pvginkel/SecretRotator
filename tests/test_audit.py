@@ -17,7 +17,7 @@ from fixtures import (
     messages,
 )
 
-from secret_rotator import cli
+from secret_rotator import cli, registry
 from secret_rotator.audit import Leaf, audit, due_keys
 from secret_rotator.cluster import Cluster
 
@@ -25,6 +25,7 @@ ENV = {cli.ROLE_ID_ENV: ROLE_ID, cli.SECRET_ID_ENV: SECRET_ID, cli.K8S_TOKEN_ENV
 OIDC = "eso/prd/app/prd/oidc"
 TOKEN_LEAF = "eso/prd/app/prd/token"
 TRELLO = "eso/prd/trello/prd/trello"
+BOT = "eso/prd/bot/prd/config"
 
 
 class TestContract:
@@ -223,6 +224,24 @@ class TestContract:
             assert messages(store) == [
                 f"{OIDC}: rotation_client_secret: args: not a JSON object"
             ], value
+
+    def test_with_the_plugins_args_its_kind_cannot_use_are_a_finding_that_blocks_the_key(self):
+        store = compliant_store()
+        edit(store[BOT].meta, "telegram-bot-token", args={"type": "fax"})
+        edit(store[TOKEN_LEAF].meta, "token", args={"length": 0})
+        result = audit(store, plugins=registry.load())
+        assert [str(f) for f in result.findings] == [
+            f"{TOKEN_LEAF}: rotation_token: args: length: not a whole number from 1",
+            f"{BOT}: rotation_telegram-bot-token: args: type: 'fax' is not a credential type "
+            "manual documents",
+        ]
+        assert result.blocked(BOT, "telegram-bot-token") and result.blocked(TOKEN_LEAF, "token")
+        assert not result.blocked(BOT, "jenkins-token")
+
+    def test_with_the_plugins_a_type_manual_documents_is_no_finding(self):
+        store = compliant_store()
+        edit(store[BOT].meta, "telegram-bot-token", args={"type": "telegram-bot-token"})
+        assert audit(store, plugins=registry.load()).findings == []
 
     def test_an_expiry_that_is_not_an_iso_date(self):
         for value in ("2027-13-01", "20270131", "soon", "2027-01-31T00:00:00", 20270131):

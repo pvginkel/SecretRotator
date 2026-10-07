@@ -197,12 +197,13 @@ def main(
     try:
         if args.command == "run" and args.path is None:
             return run_nightly(environ, opener, out, kube, switches(), youtrack, telegram, clock)
-        kinds = registry.load() if args.command in ("plan", "run") else {}
+        kinds = registry.load() if args.command in ("audit", "plan", "run") else {}
         if offline:
             store = ann.offline_store(args.keys, ann.load_seed(seed_path), out)
             if args.command == "plan":
-                return terminal.print_leaf(out, args.path, store, aud.audit(store), kinds, today)
-            return aud.report(aud.audit(store), store, out)
+                result = aud.audit(store, plugins=kinds)
+                return terminal.print_leaf(out, args.path, store, result, kinds, today)
+            return aud.report(aud.audit(store, plugins=kinds), store, out)
         seed = ann.load_seed(seed_path) if args.command == "annotate" else None
         bao = connect(environ, opener, clock)
         if seed is not None:
@@ -223,7 +224,7 @@ def main(
                 notify=notifier(bao, switches().telegram_chat_id, telegram, con),
             )
         store = aud.live_store(bao, runs=args.command == "plan")
-        result = aud.audit(store, cluster.referenced())
+        result = aud.audit(store, cluster.referenced(), kinds)
         if args.command == "plan":
             return terminal.print_leaf(out, args.path, store, result, kinds, today, cluster)
         return aud.report(result, store, out)
