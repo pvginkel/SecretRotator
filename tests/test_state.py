@@ -90,6 +90,16 @@ class TestAWrite:
         assert set(bao.data(STATE_LEAF)) == {WIFI, LEAF}
         assert not [w for w in bao.writes() if w[0] == "DELETE"]
 
+    def test_it_keeps_the_state_of_a_leaf_made_since_its_process_read_the_store(self):
+        bao = fake()
+        nightly = run_state(bao)
+        new = "eso/prd/newapp/prd/token"
+        bao.leaves[new] = {"data": {"token": "v"}, "meta": {}}
+        run_state(bao).update(new, mark(stamps={"token": "2026-10-01"}))
+        nightly.update(LEAF, mark(status="ok"))
+        assert state_of(bao, new).stamps == {"token": "2026-10-01"}
+        assert state_of(bao, LEAF).status == "ok"
+
     def test_it_keeps_the_leaf_it_writes_and_drops_a_state_left_empty(self):
         bao = fake()
         put_state(bao, WIFI, held_by="ANS-1")

@@ -2,7 +2,7 @@
 metadata. Each of its data keys is a secret leaf's path, its value that leaf's state as a JSON
 object. Every write is a KV v2 check-and-set, started again from a fresh read when another write
 came first, so the nightly run and an operator's `run <path>` never lose each other's writes. A
-write drops the state of every leaf the store no longer holds; the state leaf itself is never
+write drops the state of a leaf it finds gone from the store; the state leaf itself is never
 deleted, since the rotator's policy grants no delete there."""
 
 import dataclasses
@@ -50,8 +50,9 @@ def read(bao: OpenBao) -> tuple[int, dict[str, LeafState]]:
 
 
 class State:
-    """The run state as a process reads and writes it. leaves: the secret leaves the store holds,
-    as the process read them; a write keeps the state of these and of the leaf it writes."""
+    """The run state as a process reads and writes it. leaves: the secret leaves the store held
+    when the process read it, taken as still held. A write keeps the state of these and of the
+    leaf it writes, and drops another leaf's only when the store no longer holds that leaf."""
 
     def __init__(self, bao: OpenBao, leaves: Collection[str]):
         self.bao = bao
@@ -75,7 +76,7 @@ class State:
             data = {
                 path: state.dump()
                 for path, state in sorted(states.items())
-                if (path == leaf or path in self.leaves) and state != LeafState()
+                if state != LeafState() and (path == leaf or self.holds(path))
             }
             try:
                 self.bao.write(STATE_LEAF, data, cas=number)
@@ -86,3 +87,8 @@ class State:
                 tried, refused = number, e
                 continue
             return mine
+
+    def holds(self, path: str) -> bool:
+        # Checked after the state was read: state written for a leaf made since then moves the
+        # state leaf's version, and the check-and-set refuses the write.
+        return path in self.leaves or self.bao.metadata(path) is not None
