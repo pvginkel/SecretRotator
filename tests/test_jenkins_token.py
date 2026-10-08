@@ -22,7 +22,7 @@ from secret_rotator.audit import audit
 from secret_rotator.cluster import Cluster
 from secret_rotator.contract import KINDS
 from secret_rotator.executor import AbortRefused, Executor, Outcome
-from secret_rotator.jenkins import JenkinsError
+from secret_rotator.jenkins import Jenkins, JenkinsError
 from secret_rotator.kinds.jenkins_token import JenkinsToken, token_name, tokens
 from secret_rotator.kinds.jenkins_token.steps import UUID, Login, Mint
 from secret_rotator.model import Finished, StepFailed, value_name
@@ -627,12 +627,21 @@ class TestTheSteps:
         assert login.run(ctx) == "logged in as admin"
 
     def test_jenkins_s_own_refusal_of_a_mint_is_its_message(self):
-        jenkins = FakeJenkins().jenkins()
+        fake = FakeJenkins()
+
+        def expired(req):
+            """The one mint Jenkins answers with status error: a custom expiration in the past."""
+            if req.full_url.endswith(GENERATE):
+                req.data += b"&expirationDuration=custom&tokenExpiration=2000-01-01"
+            return fake(req)
+
+        jenkins = Jenkins(opener=expired, sleep=fake.sleep, clock=fake.clock)
         jenkins.authenticate(USER, TOKEN)
         with pytest.raises(JenkinsError) as e:
-            tokens.generate(jenkins, USER, " ")
-        assert str(e.value) == f"POST {GENERATE}: Jenkins answers a name is wanted"
+            tokens.generate(jenkins, USER, f"{MCP}#token")
+        assert str(e.value) == f"POST {GENERATE}: Jenkins answers Expiration date is in the past."
         assert e.value.status == 200
+        assert fake.minted == 0
 
 
 class TestTheSecurityPage:

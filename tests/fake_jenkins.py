@@ -7,6 +7,7 @@ queued build starts and ends once the fake clock, which the client's sleep advan
 its lag."""
 
 import base64
+import datetime
 import email.message
 import html
 import io
@@ -274,9 +275,15 @@ class FakeJenkins:
         return self.error(404)
 
     def generate(self, form):
-        name = form.get("newTokenName", "").strip()
-        if not name:
-            return self.json({"status": "error", "message": "a name is wanted"})
+        """As Jenkins 2.568.3's doGenerateNewToken (ApiTokenProperty.java): a blank name is minted
+        as 'Token created on <now>', and the one mint it answers with status error is one whose
+        custom expiration is in the past. The kind sends no expiration."""
+        name = form.get("newTokenName", "")
+        if not name.strip():
+            name = f"Token created on {datetime.datetime.now().astimezone().isoformat()}"
+        custom = form.get("expirationDuration", "").strip() == "custom"
+        if custom and datetime.date.fromisoformat(form["tokenExpiration"]) < datetime.date.today():
+            return self.json({"status": "error", "message": "Expiration date is in the past."})
         self.minted += 1
         value = f"SECRET-minted-token-{self.minted}"
         key = self.add_token(name, value, self.mint_as)
