@@ -8,7 +8,7 @@ OpenBao, its tool steps the test double's, which fail on cues from test code (A3
 from plans import LEAF, fake, flight_of, put_flight, put_state, state_of
 from sim import REVOKED, Cue, Held, again
 from sim import vendor as vendor_rotation
-from test_listing import PAT, SEAL
+from test_listing import PAT, SEAL, listing
 from test_ui import (
     FAILED,
     ON_EITHER_LOOP,
@@ -176,7 +176,9 @@ async def test_a_failed_box_holds_focus_on_retry_on_a_slow_event_loop():
 
 async def test_details_shows_the_technical_detail_over_the_box_and_the_arrows_reach_it():
     cue = Cue()
-    bao, app, _ = vendor_run(Held("rollout", ROLLOUT, cue=cue))
+    bao = fake()
+    listed = vendor_rotation(Held("rollout", ROLLOUT, cue=cue))
+    app = app_of(bao, rotations=[listed, *listing(bao)])  # a box below, which down would select
     async with app.run_test(size=SIZE) as pilot:
         await failed(pilot, app, cue)
         await pilot.press("right", "right")
