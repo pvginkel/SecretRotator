@@ -408,16 +408,27 @@ class TestTheRuns:
         assert executor.abort() is Outcome.CANCELLED
         assert world.keycloak.regenerated == 0
 
-    def test_a_regenerate_whose_answer_is_lost_cannot_be_aborted_and_retry_regenerates(self):
+    @pytest.mark.parametrize(
+        ("hook", "failure", "regenerated"),
+        [
+            # Keycloak regenerated, and its answer is a 5xx
+            ("lost", 502, 2),
+            # a transport error: whether Keycloak regenerated is not known
+            ("broken", OSError("connection reset"), 1),
+        ],
+    )
+    def test_a_regenerate_whose_answer_is_lost_cannot_be_aborted_and_retry_regenerates(
+        self, hook, failure, regenerated
+    ):
         world = World()
-        world.keycloak.lost["POST", SECRET_PATH.format("iotsupport-pipeline")] = 502
+        getattr(world.keycloak, hook)["POST", SECRET_PATH.format("iotsupport-pipeline")] = failure
         executor = world.executor(PIPELINE)
         assert executor.run() is Outcome.FAILED
         with pytest.raises(AbortRefused, match="Keycloak ended the secret the leaf's client held"):
             executor.abort()
-        world.keycloak.lost.clear()
+        getattr(world.keycloak, hook).clear()
         assert world.executor(PIPELINE).run() is Outcome.DONE
-        assert world.keycloak.regenerated == 2
+        assert world.keycloak.regenerated == regenerated
         assert world.bao.data(PIPELINE)["client_secret"] == world.keycloak.secret(
             "homelab", "iotsupport-pipeline"
         )
