@@ -271,7 +271,9 @@ def main(
         if args.command in ("ui", "run"):
             notify = notifier(bao, switches().telegram_chat_id, telegram)
             if args.command == "ui":
-                return ui.main(bao, kinds, cluster, today, notify)
+                code = ui.main(bao, kinds, cluster, today, notify)
+                metrics.push_state(bao, kinds, cluster.kube, out)
+                return code
             code = terminal.run_leaf(
                 bao,
                 args.path,

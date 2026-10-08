@@ -21,6 +21,7 @@ from secret_rotator.audit import Audit, Finding
 from secret_rotator.console import Console
 from secret_rotator.contract import LOCK_LEAF
 from secret_rotator.openbao import OpenBaoError
+from secret_rotator.ui.app import RotatorApp
 
 ES = "eso/prd/es/prd/creds"  # elastic-user password, 14 d
 YOUTRACK = "jenkins/youtrack"  # youtrack-token admin-token, 14 d, with an expiry
@@ -273,7 +274,17 @@ class TestTheNightlyRun:
 
 
 class TestAnOperatorsProcess:
-    """`run <path>` and `stamp` push the state group alone, over the whole store."""
+    """`run <path>`, `stamp` and the UI push the state group alone, over the whole store."""
+
+    def test_the_ui_pushes_the_state_when_it_ends(self, monkeypatch):
+        monkeypatch.setattr(RotatorApp, "run", lambda app: None)  # the operator quits at once
+        monkeypatch.setenv("COLORTERM", "truecolor")
+        bao = fake_of(store_of(**ACTIVATE_NONE))
+        cluster = FakeCluster()
+        code = cli.main(["ui"], opener=bao, out=pytest.fail, environ=ENV, kube=cluster.kube)
+        assert code == 0
+        assert cluster.pushes() == ["state"]
+        assert (LEAF, "token") in keys_in(cluster.pushgateway, "secret_rotation_key_info")
 
     def test_run_path_pushes_the_state_its_plan_left(self):
         bao = fake_of(store_of(**ACTIVATE_NONE))

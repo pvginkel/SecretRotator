@@ -62,13 +62,12 @@ ssh -t ansible@srviac "sudo iac -c 'secret-rotator run <leaf>'"
 
 ## Metrics and the dashboard
 
-At its end, the nightly run, `run <path>` and `stamp` each PUT the group `state` to the Pushgateway
-in `prometheus-prd`, through the Kubernetes API's service
+At its end, the nightly run, `run <path>`, `stamp` and `ui` each PUT the group `state` to the
+Pushgateway in `prometheus-prd`, through the Kubernetes API's service
 proxy with the `SECRET_ROTATOR_K8S_TOKEN` token: each key's due day and rotation stamp, and each
 leaf's status. The nightly run adds `audit`, the findings, and `nightly`, its run health; a night
 that found the lock held or that `paused` stopped pushes `nightly` alone. A group not pushed is one
-line, `metrics: the <group> group is not pushed: <error>`, and changes nothing else. `ui` pushes
-nothing, so what it changes shows at the next of those pushes. The series are
+line, `metrics: the <group> group is not pushed: <error>`, and changes nothing else. The series are
 AnsibleSpecs design §3.4's. PrometheusDeploy's rule group `secret-rotator` alerts on them:
 `SecretRotatorStale`, `SecretRotationFailed` and `SecretRotationOverdue`.
 
