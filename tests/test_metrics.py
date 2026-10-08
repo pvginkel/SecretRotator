@@ -14,6 +14,7 @@ from fixtures import edit
 from plans import COPY, LEAF, NOW, client, fake, fake_of, put_state, state_of
 from test_kinds import ACTIVATE_NONE, KINDS, WIFI, store_of
 from test_nightly import BOT_LEAF, DAY, STRAY, TODAY, TRELLO, Night, world
+from test_terminal import CHECK, Flaky, Wrapped, kinds_with
 
 from secret_rotator import cli, metrics
 from secret_rotator.audit import Audit, Finding
@@ -294,6 +295,27 @@ class TestAnOperatorsProcess:
             "state", "secret_rotation_last_rotated_timestamp", **key
         ) == day(stamp)
         assert (LEAF, "token") in keys_in(cluster.pushgateway, "secret_rotation_key_info")
+
+    def test_run_path_that_fails_still_pushes_the_failed_status_it_left(self, monkeypatch):
+        monkeypatch.setattr(cli.registry, "load", lambda: kinds_with(Wrapped(Flaky(), CHECK)))
+        bao = fake_of(store_of(**ACTIVATE_NONE))
+        cluster = FakeCluster()
+        code = cli.main(
+            ["run", LEAF],
+            opener=bao,
+            out=lambda line: None,
+            environ=ENV,
+            console=lambda: Console(io.StringIO("y\nx\n"), io.StringIO()),
+            kube=cluster.kube,
+            source=lambda: "commit c0ffee",
+        )
+        assert code == 1
+        assert state_of(bao, LEAF).status == "failed"
+        assert cluster.pushes() == ["state"]
+        assert (
+            cluster.pushgateway.value("state", "secret_rotation_status", leaf=LEAF, status="failed")
+            == 1
+        )
 
     def stamp(self, bao, *argv, env=ENV, cluster=None):
         cluster = cluster or FakeCluster()
