@@ -8,7 +8,7 @@ from enum import Enum
 
 from secret_rotator.executor import Stand
 from secret_rotator.listing import Rotation
-from secret_rotator.model import Action, Step
+from secret_rotator.model import Action, Actor, Step
 from secret_rotator.ui.collate import Screen, collate, screen_of
 
 # The kind whose box shows its one confirm with Done, and no wizard (R81).
@@ -100,12 +100,15 @@ class Item:
         return sum(step.estimate for step in self.rotation.plan.steps[self.at :])
 
     def visible(self) -> list[Line]:
-        """The step log of its screen, in plan order: a silent step's line only once it failed."""
+        """The step log of its screen, in plan order: its tool steps' lines, a silent one's only
+        once it failed."""
         lines = (self.lines.get((step.id, Action.RUN)) for step in self.screen.steps)
         return [
             line
             for line in lines
-            if line is not None and (not line.step.silent or line.state is LineState.FAILED)
+            if line is not None
+            and line.step.actor is Actor.TOOL
+            and (not line.step.silent or line.state is LineState.FAILED)
         ]
 
     def waits_on_you(self, today: datetime.date) -> bool:

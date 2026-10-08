@@ -31,7 +31,7 @@ from secret_rotator.kinds.manual import TYPES
 from secret_rotator.lock import Lock
 from secret_rotator.model import Action
 from secret_rotator.ui.app import BUSY, BUSY_DONE, WAITS
-from secret_rotator.ui.item import Line, LineState, Phase
+from secret_rotator.ui.item import Item, Line, LineState, Phase
 from secret_rotator.ui.widgets import (
     ActionButton,
     ButtonBar,
@@ -483,6 +483,35 @@ async def test_a_log_shows_at_most_eight_lines_the_earliest_folded():
         assert rows[1].startswith("✓ sync ExternalSecret app/s2") and "roll out" in rows[-1]
         cue.go()
         await until(pilot, lambda: phase(app, VENDOR) is Phase.WAITING)
+
+
+async def test_an_operator_screen_logs_no_line_of_its_own_step():
+    """The log is the tool's (§7.4): the credential and confirm screens show none, typing
+    included."""
+    cue = Cue()
+    bao, app = vendor_app(Held("rollout", "roll out app/deployment/app", cue=cue))
+    async with app.run_test(size=SIZE) as pilot:
+        await at_credential(pilot, app, VENDOR)
+        await pilot.press(*"vpat_1")
+        await pilot.pause(0.05)
+        assert [log.lines for log in app.box(VENDOR).area.of(StepLog)] == [[]]
+        await pilot.press(*TOKEN[6:])
+        await submit(pilot, app)
+        await until(pilot, lambda: cue.holding.is_set())
+        cue.go()
+        await until(pilot, lambda: phase(app, VENDOR) is Phase.WAITING and in_box(app))
+        assert [log.lines for log in app.box(VENDOR).area.of(StepLog)] == [[]]
+
+
+def test_an_answered_operator_screen_shows_only_a_failed_silent_step_s_line():
+    item = Item.of(vendor())
+    item.at = 3  # the confirm, answered: its stamp runs
+    revoke, stamp = item.rotation.plan.steps[3:]
+    item.lines[(revoke.id, Action.RUN)] = Line(revoke, Action.RUN, 0.0, LineState.OK)
+    item.lines[(stamp.id, Action.RUN)] = Line(stamp, Action.RUN, 0.0)
+    assert item.visible() == []
+    item.lines[(stamp.id, Action.RUN)].state = LineState.FAILED
+    assert [line.step for line in item.visible()] == [stamp]
 
 
 def test_a_failed_line_has_its_error_under_it_on_top_of_the_eight():
