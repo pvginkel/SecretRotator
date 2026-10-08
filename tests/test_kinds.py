@@ -15,6 +15,7 @@ from secret_rotator.audit import Leaf, audit
 from secret_rotator.contract import MARKER_VALUE
 from secret_rotator.executor import Abandon, AbortRefused, Executor, Outcome
 from secret_rotator.kinds.approle import AppRole
+from secret_rotator.kinds.cnpg_role import CnpgRole
 from secret_rotator.kinds.keycloak_client import KeycloakClient
 from secret_rotator.kinds.manual import TYPES, Manual, load_type
 from secret_rotator.kinds.random import Random
@@ -78,10 +79,11 @@ def run(store, plan, *answers, data=None):
 
 class TestTheRegistry:
     def test_it_finds_the_kinds_this_distribution_ships_through_their_entry_points(self):
-        assert set(KINDS) == {"random", "manual", "approle", "keycloak-client"}
+        assert set(KINDS) == {"random", "manual", "approle", "keycloak-client", "cnpg-role"}
         assert isinstance(KINDS["random"], Random) and isinstance(KINDS["manual"], Manual)
         assert isinstance(KINDS["approle"], AppRole)
         assert isinstance(KINDS["keycloak-client"], KeycloakClient)
+        assert isinstance(KINDS["cnpg-role"], CnpgRole)
 
     @pytest.mark.parametrize(
         ("found", "problem"),
