@@ -7,7 +7,8 @@ once the fake clock, which the client's sleep advances, has passed their lag.
 The compliant cluster references every eso/prd/ leaf of fixtures.COMPLIANT but
 eso/prd/yt/prd/webhook, whose copy in jenkins/youtrack is its consumer, and holds the KubeCoder
 pattern: an ExternalSecret that extracts its leaf whole by dataFrom alone, a controller Deployment
-and bare environment pods that read its Secret."""
+and bare environment pods that read its Secret. Its Pushgateway is reached through the apiserver's
+service proxy."""
 
 import base64
 import copy
@@ -15,6 +16,8 @@ import io
 import json
 import urllib.error
 import urllib.parse
+
+from fake_pushgateway import PUSHGATEWAY, FakePushgateway
 
 from secret_rotator.kube import ADDR, Kube
 
@@ -297,6 +300,7 @@ class FakeCluster:
         self.stuck = set()  # "<ns>/<name>": its rollouts never get a pod Ready
         self.syncs = 0
         self.broken = {}  # (method, path) -> the OSError it raises
+        self.pushgateway = FakePushgateway()
 
     def kube(self, token=TOKEN):
         return Kube(token, opener=self, sleep=self.sleep, clock=self.clock)
@@ -321,12 +325,21 @@ class FakeCluster:
         url = urllib.parse.urlsplit(req.full_url)
         assert f"{url.scheme}://{url.netloc}" == ADDR, url
         method, path = req.get_method(), url.path
-        body = json.loads(req.data) if req.data else None
+        proxied = path.startswith(PUSHGATEWAY)
+        decode = bytes.decode if proxied else json.loads
+        body = None if req.data is None else decode(req.data)
         self.requests.append((method, path, body))
         if (method, path) in self.broken:
             raise self.broken[method, path]
         if req.get_header("Authorization") != f"Bearer {TOKEN}":
             return self.answer(401, {"kind": "Status", "message": "Unauthorized"})
+        if proxied:
+            assert method == "PUT", method
+            assert req.get_header("Content-type") == "text/plain; version=0.0.4"
+            status, raw = self.pushgateway.put(path, body)
+            if status >= 400:
+                raise urllib.error.HTTPError(ADDR, status, "err", {}, io.BytesIO(raw))
+            return FakeResponse(status, raw)
         parts = path.strip("/").split("/")
         if parts[0] == "api":  # the core group: /api/<version>/...
             parts.insert(1, "")
@@ -386,3 +399,11 @@ class FakeCluster:
 
     def patches(self):
         return [(path, body) for method, path, body in self.requests if method == "PATCH"]
+
+    def pushes(self):
+        """The groups pushed, in order."""
+        return [
+            path.rsplit("/", 1)[1]
+            for method, path, _ in self.requests
+            if method == "PUT" and path.startswith(PUSHGATEWAY)
+        ]

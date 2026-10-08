@@ -10,7 +10,7 @@ from pathlib import Path
 
 from secret_rotator import annotate as ann
 from secret_rotator import audit as aud
-from secret_rotator import nightly, provenance, registry, terminal
+from secret_rotator import metrics, nightly, provenance, registry, terminal
 from secret_rotator.cluster import Cluster
 from secret_rotator.console import Console
 from secret_rotator.contract import (
@@ -47,8 +47,10 @@ DESCRIPTION = """\
 Rotates the secrets of OpenBao's kv mount by their annotations (AnsibleSpecs
 secret-rotation/design.md). Live commands log in with the rotator's AppRole from
 SECRET_ROTATOR_ROLE_ID and SECRET_ROTATOR_SECRET_ID; but annotate and stamp, they read the
-prd cluster with the ServiceAccount token in SECRET_ROTATOR_K8S_TOKEN. No output carries a
-secret value. Exit status: 0 on success, 1 on a finding or a failure, 2 on a usage error."""
+prd cluster with the ServiceAccount token in SECRET_ROTATOR_K8S_TOKEN. run and stamp push their
+metrics to the Pushgateway with that token; stamp without it stamps all the same. No output
+carries a secret value. Exit status: 0 on success, 1 on a finding or a failure, 2 on a usage
+error."""
 
 
 def iso_date(text: str) -> datetime.date:
@@ -124,7 +126,7 @@ def parser() -> argparse.ArgumentParser:
         "outside a rotation, as the go-live writes the rotator's own leaves. Sets or clears the "
         "expires_at in the key's rotation_<key> entry, the date its current credential stops "
         "working: the key falls due 7 days before it. Once the entry exists, only a rotation and "
-        "this command write its expires_at.",
+        "this command write its expires_at. Then pushes the run state's metrics.",
     )
     stamp.add_argument("path", help="the leaf, a path of the kv mount")
     stamp.add_argument("key", help="a data key of the leaf")
@@ -222,7 +224,7 @@ def main(
     try:
         if args.command == "run" and args.path is None:
             return run_nightly(environ, opener, out, kube, switches(), youtrack, telegram, clock)
-        kinds = registry.load() if args.command in ("audit", "plan", "run") else {}
+        kinds = registry.load() if args.command in ("audit", "plan", "run", "stamp") else {}
         if offline:
             store = ann.offline_store(args.keys, ann.load_seed(seed_path), out)
             if args.command == "plan":
@@ -234,7 +236,7 @@ def main(
         if seed is not None:
             return ann.run_apply(bao, seed, args.apply, out)
         if args.command == "stamp":
-            return run_stamp(
+            code = run_stamp(
                 bao,
                 args.path,
                 args.key,
@@ -243,10 +245,16 @@ def main(
                 expires_at=args.expires_at,
                 clear_expiry=args.clear_expires_at,
             )
+            if code == 0:
+                if environ.get(K8S_TOKEN_ENV):
+                    metrics.push_state(bao, kinds, kube(environ[K8S_TOKEN_ENV]), out)
+                else:
+                    out(f"metrics: the state group is not pushed: {K8S_TOKEN_ENV} is not set")
+            return code
         cluster = Cluster(kube(environ[K8S_TOKEN_ENV]))
         if args.command == "run":
             con = console()
-            return terminal.run_leaf(
+            code = terminal.run_leaf(
                 bao,
                 args.path,
                 kinds,
@@ -256,6 +264,8 @@ def main(
                 cluster=cluster,
                 notify=notifier(bao, switches().telegram_chat_id, telegram, con),
             )
+            metrics.push_state(bao, kinds, cluster.kube, out)
+            return code
         store = aud.live_store(bao, runs=args.command == "plan")
         result = aud.audit(store, cluster.referenced(), kinds)
         if args.command == "plan":
@@ -332,9 +342,22 @@ def run_nightly(
     telegram: Callable[[str, int], Telegram],
     clock: Callable[[], float],
 ) -> int:
-    """`run` without a path. paused stops it before it does anything (design §8)."""
+    """`run` without a path. paused stops it before it does anything (design §8) but push its run
+    health, with secret_rotator_paused 1 (design §3.4)."""
     if switches.paused:
+        began = clock()
         out("paused: the switches stop the nightly run before it does anything")
+        health = metrics.run_health(
+            ended=utcnow(),
+            duration=clock() - began,
+            success=True,
+            rotations=0,
+            deferred=0,
+            switches=switches,
+        )
+        groups = {metrics.NIGHTLY: lambda: health}
+        if pushed := metrics.push(kube(environ[K8S_TOKEN_ENV]), groups, out):
+            out(f"metrics: pushed {', '.join(pushed)}")
         return 0
     bao = connect(environ, opener, clock)
     return nightly.run(

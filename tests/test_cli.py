@@ -143,14 +143,14 @@ def switches(**changes):
 
 
 class TestTheNightlyRun:
-    def test_paused_stops_it_before_it_does_anything(self):
-        lines = []
+    def test_paused_stops_it_before_it_does_anything_but_push_its_run_health(self):
+        cluster, lines = FakeCluster(), []
         code = cli.main(
             ["run"],
             opener=lambda req: pytest.fail("a request"),
             out=lines.append,
             environ=ENV,
-            kube=lambda token: pytest.fail("a cluster client"),
+            kube=cluster.kube,
             switches=switches(paused=True),
             source=lambda: SOURCE,
         )
@@ -158,7 +158,10 @@ class TestTheNightlyRun:
         assert lines == [
             f"secret-rotator run, {SOURCE}",
             "paused: the switches stop the nightly run before it does anything",
+            "metrics: pushed nightly",
         ]
+        assert [r[0] for r in cluster.requests] == ["PUT"] and cluster.pushes() == ["nightly"]
+        assert cluster.pushgateway.value("nightly", "secret_rotator_paused") == 1
 
     def test_run_without_a_path_is_the_nightly_run(self):
         bao = nightly_world(due=(LEAF,))
@@ -193,13 +196,14 @@ class TestStamp:
     ENV = {cli.ROLE_ID_ENV: ROLE_ID, cli.SECRET_ID_ENV: SECRET_ID}
 
     def stamp(self, bao, *argv):
-        lines = []
+        """A stamp with the cluster token, whose metrics push lands in self.cluster."""
+        self.cluster, lines = FakeCluster(), []
         code = cli.main(
             ["stamp", *argv],
             opener=bao,
             out=lines.append,
-            environ=self.ENV,
-            kube=lambda token: pytest.fail("stamp built a cluster client"),
+            environ=self.ENV | {cli.K8S_TOKEN_ENV: TOKEN},
+            kube=self.cluster.kube,
         )
         return code, lines
 

@@ -2,8 +2,9 @@
 the run says so in Telegram and ends there. Then compliance, the due set oldest first, admission —
 a plan with an operator step is marked manual-due and never started (design §4.4) — the health of
 each plan's rollout targets, and the plans under the executor, a failed one rolled back by the run
-itself (ruling D2). Last the standing card and the digest. One plan's failure never ends the run:
-it exits non-zero only when the run itself broke."""
+itself (ruling D2). Last the standing card, the digest and the metrics (design §3.4): the run health
+every night, the lock held included, the state and the findings once it audited the store. One
+plan's failure never ends the run: it exits non-zero only when the run itself broke."""
 
 import datetime
 import time
@@ -11,6 +12,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 
 from secret_rotator import card as cards
+from secret_rotator import metrics
 from secret_rotator.audit import Audit, Leaf, audit, due_keys, live_store, report
 from secret_rotator.cluster import Cluster
 from secret_rotator.executor import Executor, Outcome
@@ -181,6 +183,7 @@ class Night:
         self.failed_tonight: set[str] = set()
 
     def go(self) -> int:
+        began = self.clock()
         enabled_kinds = self.switches.kinds_enabled
         self.out(
             f"secret-rotator run, {self.today}{cards.DRY_RUN if self.dry_run else ''}: kinds "
@@ -189,6 +192,7 @@ class Night:
         )
         if (holder := self.lock.holder()) is not None:
             self.locked_out(holder, "it ran nothing tonight")
+            self.push_metrics(began, audited=False)
             return 1 if self.broken else 0
         self.store.update(live_store(self.bao, runs=True))
         self.result = audit(self.store, self.cluster.referenced(), self.kinds)
@@ -207,7 +211,29 @@ class Night:
             self.out(f"{self.deferred} plan(s) past the cap: the next nights take them")
         self.post_card()
         self.digest()
+        self.push_metrics(began, audited=True)
         return 1 if self.broken else 0
+
+    def push_metrics(self, began: float, *, audited: bool) -> None:
+        """The groups of design §3.4 at the run's end; a group not pushed is a line of the log and
+        changes nothing else. A run that raised pushes nothing, so its last run health ages."""
+        health = metrics.run_health(
+            ended=self.now(),
+            duration=self.clock() - began,
+            success=not self.broken,
+            rotations=len(self.rotated),
+            deferred=self.deferred,
+            switches=self.switches,
+        )
+        groups = {metrics.NIGHTLY: lambda: health}
+        if audited:
+            groups = {
+                metrics.STATE: lambda: metrics.state(self.bao, self.kinds),
+                metrics.AUDIT: lambda: metrics.findings(self.result),
+                **groups,
+            }
+        if pushed := metrics.push(self.cluster.kube, groups, self.out):
+            self.out(f"metrics: pushed {', '.join(pushed)}")
 
     def send(self, text: str) -> None:
         if self.dry_run:

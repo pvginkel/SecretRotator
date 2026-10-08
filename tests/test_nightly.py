@@ -143,7 +143,10 @@ class TestTheLock:
         assert "kv/rotator/lock held by run x/y on c1, pid 9 since 2026-10-05T04:12:09" in message
         assert "it ran nothing tonight" in message
         assert bao.writes() == [] and bao.data(LOCK_LEAF)["holder"] == "run x/y on c1, pid 9"
-        assert night.youtrack.requests == [] and night.cluster.requests == []
+        assert night.youtrack.requests == []
+        # The cluster: no read, the run health alone pushed.
+        assert [r[0] for r in night.cluster.requests] == ["PUT"]
+        assert night.cluster.pushes() == ["nightly"]
 
     def test_taken_mid_run_no_further_plan_starts_and_the_rest_is_reported(self):
         bao = world()

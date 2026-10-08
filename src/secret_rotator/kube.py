@@ -45,6 +45,30 @@ class Kube:
         self.sleep = sleep
         self.clock = clock
 
+    def send(
+        self, method: str, path: str, data: bytes | None, content_type: str, accept: str
+    ) -> tuple[int, bytes]:
+        """The status and the answer as sent; a transport failure raised."""
+        req = urllib.request.Request(
+            self.addr + path,
+            method=method,
+            data=data,
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "Accept": accept,
+                "Content-Type": content_type,
+            },
+        )
+        try:
+            with self.open(req) as resp:
+                return resp.status, resp.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.read()
+        except urllib.error.URLError as e:
+            raise KubeError(f"{method} {path}: transport error: {e.reason}") from None
+        except (OSError, http.client.HTTPException) as e:
+            raise KubeError(f"{method} {path}: transport error: {e!r}") from None
+
     def call(
         self,
         method: str,
@@ -53,25 +77,8 @@ class Kube:
         content_type: str = "application/json",
     ) -> tuple[int, dict | None]:
         """The status and the JSON answer; a 404 is returned, any other status >= 400 raised."""
-        req = urllib.request.Request(
-            self.addr + path,
-            method=method,
-            data=None if body is None else json.dumps(body).encode(),
-            headers={
-                "Authorization": f"Bearer {self.token}",
-                "Accept": "application/json",
-                "Content-Type": content_type,
-            },
-        )
-        try:
-            with self.open(req) as resp:
-                status, raw = resp.status, resp.read()
-        except urllib.error.HTTPError as e:
-            status, raw = e.code, e.read()
-        except urllib.error.URLError as e:
-            raise KubeError(f"{method} {path}: transport error: {e.reason}") from None
-        except (OSError, http.client.HTTPException) as e:
-            raise KubeError(f"{method} {path}: transport error: {e!r}") from None
+        data = None if body is None else json.dumps(body).encode()
+        status, raw = self.send(method, path, data, content_type, "application/json")
         try:
             doc = json.loads(raw) if raw else None
         except ValueError:
@@ -102,3 +109,20 @@ class Kube:
         if status == 404:
             raise KubeError(f"PATCH {path}: HTTP 404: no such object", status)
         return doc
+
+    def put_text(self, path: str, text: str, content_type: str) -> None:
+        """A PUT of a text body to a service behind the API's service proxy, which answers in its
+        own format; KubeError for any status >= 400, with the answer's message: the apiserver's
+        own refusal is a JSON Status, the service's is its text."""
+        status, raw = self.send("PUT", path, text.encode(), content_type, "*/*")
+        if status < 400:
+            return
+        answer = raw.decode(errors="replace")
+        try:
+            doc = json.loads(answer)
+        except ValueError:
+            doc = None
+        if isinstance(doc, dict):
+            answer = str(doc.get("message", ""))
+        message = " ".join(answer.split())
+        raise KubeError(f"PUT {path}: HTTP {status}" + (f": {message}" if message else ""), status)
