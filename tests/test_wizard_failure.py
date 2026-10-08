@@ -13,15 +13,18 @@ from test_ui import FAILED, SIZE, app_of, in_box, info, select, settled, slow_lo
 from test_wizard import (
     TOKEN,
     VENDOR,
+    asked,
     at_credential,
+    bar_text,
     go,
     labels,
     phase,
+    progress,
     specs,
     submit,
     tones,
 )
-from textual.widgets import Input, Static
+from textual.widgets import Input
 
 from secret_rotator.contract import LOCK_LEAF, STATE_LEAF
 from secret_rotator.staging import ROLLBACK
@@ -29,7 +32,6 @@ from secret_rotator.ui.app import NO_ROLLBACK, QUIT, QUIT_ROLLBACK, ROLLING_BACK
 from secret_rotator.ui.item import Phase
 from secret_rotator.ui.run import COMMAND
 from secret_rotator.ui.widgets import (
-    ButtonBar,
     ConfirmModal,
     DetailsModal,
     HelpModal,
@@ -53,14 +55,8 @@ def rows(app, rid):
     return [row.plain for row in app.box(rid).area.of(StepLog)[0].rows(100)]
 
 
-def progress(app, rid):
-    (bar,) = app.box(rid).area.of(ButtonBar)
-    return bar.query_one(".progress", Static).content.plain
-
-
 def reason(app, rid):
-    (bar,) = app.box(rid).area.of(ButtonBar)
-    return bar.query_one(".reason", Static).content.plain
+    return bar_text(app, rid, "reason")
 
 
 def instruction(app, rid):
@@ -93,7 +89,7 @@ async def abort(pilot, app):
     await until(pilot, lambda: button() is not None)
     button().focus()
     await pilot.press("enter")
-    await until(pilot, lambda: isinstance(app.screen, ConfirmModal))
+    await asked(pilot, app)
 
 
 async def left_at_the_revoke():
@@ -206,6 +202,7 @@ async def test_an_earlier_session_s_failure_shows_its_screen_and_the_run_state_s
         assert app.screen.text == "2026-10-07T04:30:00+00:00: kv.write: HTTP 403"
         await pilot.press("enter")  # Close
         await until(pilot, lambda: not isinstance(app.screen, DetailsModal) and in_box(app))
+        await pilot.pause()  # the list's screen resumes first: it focuses a button when none is
         await pilot.press("escape")  # back to the list
         assert app.focused is None
 

@@ -71,6 +71,17 @@ def labels(app, rid):
     return [b.label.plain for b in app.box(rid).area.buttons()]
 
 
+def bar_text(app, rid, part):
+    """What the box's current bar shows in its part, blank until that bar has drawn."""
+    (bar,) = app.box(rid).area.of(ButtonBar)
+    found = bar.query(f".{part}")
+    return str(found.first(Static).content) if found else ""
+
+
+def progress(app, rid):
+    return bar_text(app, rid, "progress")
+
+
 def status_of(widget) -> str:
     return widget.query_one(".field-status", Static).content.plain
 
@@ -96,6 +107,11 @@ async def submit(pilot, app):
         lambda: isinstance(app.focused, ActionButton) and app.focused.label.plain == "Continue",
     )
     await pilot.press("enter")
+
+
+async def asked(pilot, app):
+    """The question is up and has focus, which it takes once it has mounted."""
+    await until(pilot, lambda: isinstance(app.screen, ConfirmModal) and app.focused is not None)
 
 
 async def at_credential(pilot, app, rid):
@@ -142,8 +158,8 @@ async def test_a_plan_runs_start_to_finish_and_its_box_leaves_the_list():
         box = app.box(VENDOR)
         assert str(box.border_title).startswith("✓ ") and tones(box) == {"success"}
         assert box.query_one(".info", Static).content.plain == "done"
-        assert box.query_one(".progress", Static).content.plain.startswith("Step 3 of 3")
-        assert box.query_one(".progress", Static).content.plain.endswith("done")
+        assert progress(app, VENDOR).startswith("Step 3 of 3")
+        assert progress(app, VENDOR).endswith("done")
         await until(pilot, lambda: VENDOR not in app.order)
         assert app.done_count == 1
     assert bao.data(LEAF)["token"] == TOKEN and bao.data("iac/copy")["token"] == TOKEN
@@ -278,7 +294,7 @@ async def test_the_question_s_buttons_take_the_arrows_and_leave_the_list_alone()
         await at_credential(pilot, app, VENDOR)
         await pilot.press(*"off")
         await submit(pilot, app)
-        await until(pilot, lambda: isinstance(app.screen, ConfirmModal))
+        await asked(pilot, app)
         assert app.focused.id == "no"
         await pilot.press("left")
         assert app.focused.id == "yes"
@@ -353,7 +369,7 @@ async def test_a_cleared_expiry_says_the_credential_never_expires_and_is_taken()
         await submit(pilot, app)
         await until(pilot, lambda: app.items[VENDOR].screen.index == 2 and in_box(app))
         await pilot.press("enter")
-        await until(pilot, lambda: phase(app, VENDOR) is Phase.DONE)
+        await until(pilot, lambda: VENDOR not in app.order)  # done, and its box has left
     assert expires_at(bao, LEAF) is None
 
 
@@ -449,22 +465,25 @@ async def test_the_bar_shows_the_screen_s_progress_and_the_box_takes_the_colour_
         await at_credential(pilot, app, VENDOR)
         box = app.box(VENDOR)
 
-        def progress():
-            return box.query_one(".progress", Static).content.plain
+        def shown():
+            return progress(app, VENDOR)
 
-        assert progress().startswith("Step 1 of 3") and progress().endswith("~2 min left")
+        await until(pilot, lambda: shown() != "")  # a screen's new bar draws once it has composed
+        assert shown().startswith("Step 1 of 3") and shown().endswith("~2 min left")
         assert tones(box) == {"accent"} and str(box.border_title).startswith("● ")  # your move
         info = box.query_one(".info", Static).content.plain
         assert info == "overdue 37d · paste a new vendor token · ~2 min"  # the plan's estimate
         await pilot.press(*TOKEN)
         await submit(pilot, app)
         await until(pilot, lambda: cue.holding.is_set() and tones(box) == {"primary"})
-        assert progress().startswith("Step 2 of 3") and progress().endswith("~2 min left")
+        await until(pilot, lambda: shown() != "")
+        assert shown().startswith("Step 2 of 3") and shown().endswith("~2 min left")
         assert "[" not in str(box.border_title).split("]")[-1]  # one colour: the glyph unstyled
         assert box.query_one(".info", Static).content.plain == info
         cue.go()
         await until(pilot, lambda: phase(app, VENDOR) is Phase.WAITING and tones(box) == {"accent"})
-        assert progress().startswith("Step 3 of 3") and progress().endswith("<1 min left")
+        await until(pilot, lambda: shown() != "")
+        assert shown().startswith("Step 3 of 3") and shown().endswith("<1 min left")
 
 
 async def test_a_log_shows_at_most_eight_lines_the_earliest_folded():
