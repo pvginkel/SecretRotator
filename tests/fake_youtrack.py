@@ -11,7 +11,7 @@ import urllib.parse
 from secret_rotator.youtrack import ADDR
 
 TOKEN = "SECRET-token-of-jeeves"
-TAG = "Secret Rotator"
+TAG = "Rotator Standing Card"
 SEARCH = re.compile(r"project: ANS tag: \{(?P<tag>[^}]+)\} #Unresolved sort by: created asc")
 PROJECTS = [{"id": "0-7", "shortName": "KC"}, {"id": "0-3", "shortName": "ANS"}]
 

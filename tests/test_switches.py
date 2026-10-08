@@ -11,7 +11,7 @@ VALID = {
     "paused": False,
     "kinds_enabled": ["random"],
     "max_rotations_per_run": 10,
-    "card_tag": "Secret Rotator",
+    "card_tag": "Rotator Standing Card",
     "telegram_chat_id": -1001234567890,
 }
 
@@ -31,7 +31,7 @@ def test_the_packaged_switches_ship_inside_the_package_and_start_in_dry_run():
         paused=False,
         kinds_enabled=frozenset({"random"}),
         max_rotations_per_run=10,
-        card_tag="Secret Rotator",
+        card_tag="Rotator Standing Card",
         telegram_chat_id=None,
     )
 

@@ -12,8 +12,8 @@ kinds_enabled: [random]
 
 max_rotations_per_run: 10
 
-# The tag of the standing YouTrack card.
-card_tag: Secret Rotator
+# The tag of the standing YouTrack card, and of no other card.
+card_tag: Rotator Standing Card
 
 # The Homelab Alerts group; null: not committed yet.
 telegram_chat_id: null

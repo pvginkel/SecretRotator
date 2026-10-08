@@ -50,7 +50,9 @@ class TestTheClient:
         assert fake.issues[0]["customFields"] == {"Type": "Task", "State": "New"}
 
     def test_a_tag_its_token_does_not_see_is_named(self):
-        with pytest.raises(YouTrackError, match="YouTrack shows its token no tag Secret Rotator"):
+        with pytest.raises(
+            YouTrackError, match="YouTrack shows its token no tag Rotator Standing Card"
+        ):
             client(FakeYouTrack(tags=("Other",))).create_card(TAG, "s", "d")
 
     def test_a_refusal_names_its_status_and_never_the_token(self):
