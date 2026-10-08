@@ -1,8 +1,9 @@
 """Jenkins over HTTP, as an opener for secret_rotator.jenkins.Jenkins: jobs by full name, the build
 queue and builds, the credentials of the system store's global domain, whose config.xml it gives
 with every secret redacted, and the admin account's API tokens, which its security page lists as
-Jenkins 2.568.3 does and any of which authenticates a request. A queued build starts and ends once
-the fake clock, which the client's sleep advances, has passed its lag."""
+Jenkins 2.568.3 does and each of which authenticates a request as the user it is taken for. A
+queued build starts and ends once the fake clock, which the client's sleep advances, has passed
+its lag."""
 
 import base64
 import email.message
@@ -136,10 +137,12 @@ class FakeJenkins:
             "a-certificate": {"xml": CERTIFICATE, "secrets": {}},
             "a-username": {"xml": USERNAME, "secrets": {}},
         }
-        # The admin account's API tokens: uuid -> {"name", "value"}; rotator/jenkins holds one.
+        # The admin account's API tokens: uuid -> {"name", "value", "as"}, "as" the user a request
+        # with it is taken for, None: refused; rotator/jenkins holds one.
         self.tokens = {}
         self.serial = 0  # the last token uuid's number
         self.minted = 0
+        self.mint_as = USER  # the "as" of the tokens it mints
         self.add_token("secret-rotator", TOKEN)
         self.before_revoke = None  # called with the uuid before each revoke
         self.page = security_page  # renders the security page from the tokens
@@ -158,11 +161,11 @@ class FakeJenkins:
     def sleep(self, seconds):
         self.now += seconds
 
-    def add_token(self, name, value):
+    def add_token(self, name, value, taken_as=USER):
         """A token of the admin account; its uuid."""
         self.serial += 1
         key = str(uuid.UUID(int=self.serial))
-        self.tokens[key] = {"name": name, "value": value}
+        self.tokens[key] = {"name": name, "value": value, "as": taken_as}
         return key
 
     def token_names(self):
@@ -190,12 +193,17 @@ class FakeJenkins:
             raise self.broken[method, path]
         if (method, path) in self.refused:
             return self.error(self.refused[method, path])
-        live = {
-            "Basic " + base64.b64encode(f"{USER}:{token['value']}".encode()).decode()
+        taken = {
+            "Basic " + base64.b64encode(f"{USER}:{token['value']}".encode()).decode(): token["as"]
             for token in self.tokens.values()
         }
-        if req.get_header("Authorization") not in live:
+        user = taken.get(req.get_header("Authorization"))
+        if user is None:
             return self.error(401)
+        if path == "/whoAmI/api/json":
+            return self.json({"name": user, "anonymous": False, "authenticated": True})
+        if user != USER:
+            return self.error(403)
         if path == f"/user/{USER}/security/" and method == "GET":
             return FakeResponse(200, self.page(self.tokens).encode())
         if path == f"{PROPERTY}/generateNewToken":
@@ -204,8 +212,6 @@ class FakeJenkins:
         if path == f"{PROPERTY}/revoke":
             assert method == "POST" and req.get_header("Content-type") == FORM
             return self.revoke(dict(urllib.parse.parse_qsl(body)))
-        if path == "/whoAmI/api/json":
-            return self.json({"name": USER, "anonymous": False, "authenticated": True})
         if found := re.fullmatch(r"((?:/job/[^/]+)+)/(build|buildWithParameters)", path):
             assert method == "POST"
             return self.trigger(self.job_of(found[1]), found[2], query)
@@ -225,7 +231,7 @@ class FakeJenkins:
             return self.json({"status": "error", "message": "a name is wanted"})
         self.minted += 1
         value = f"SECRET-minted-token-{self.minted}"
-        key = self.add_token(name, value)
+        key = self.add_token(name, value, self.mint_as)
         data = {"tokenUuid": key, "tokenName": name, "tokenValue": value}
         return self.json({"status": "ok", "data": data | {"expirationDate": "never"}})
 

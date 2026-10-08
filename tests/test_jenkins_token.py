@@ -24,8 +24,8 @@ from secret_rotator.contract import KINDS
 from secret_rotator.executor import AbortRefused, Executor, Outcome
 from secret_rotator.jenkins import JenkinsError
 from secret_rotator.kinds.jenkins_token import JenkinsToken, token_name, tokens
-from secret_rotator.kinds.jenkins_token.steps import UUID, Mint
-from secret_rotator.model import Finished, value_name
+from secret_rotator.kinds.jenkins_token.steps import UUID, Login, Mint
+from secret_rotator.model import Finished, StepFailed, value_name
 from secret_rotator.plan import PlanError, make
 
 SEED = ann.load_seed(ann.DEFAULT_SEED)
@@ -453,6 +453,31 @@ class TestTheRuns:
         assert world.jenkins.token_names() == sorted(name for _, name in LEAVES.values())
         assert world.generation(ROLLED[MCP]) == 3
 
+    @pytest.mark.parametrize(
+        "taken_as, error",
+        [
+            (
+                None,
+                "Jenkins refuses the login as admin with the new token: GET /whoAmI/api/json: "
+                "HTTP 401",
+            ),
+            ("someone-else", "Jenkins takes the new token as someone-else, not admin"),
+        ],
+    )
+    def test_a_new_token_jenkins_does_not_take_as_the_account_revokes_no_old_one(
+        self, taken_as, error
+    ):
+        world = World()
+        world.jenkins.mint_as = taken_as
+        executor = world.executor(MCP)
+        assert executor.run() is Outcome.FAILED
+        failure = world.failure()
+        assert failure.step.id == "jenkins_token.login" and failure.error == error
+        assert requests_to(world, REVOKE) == [] and "Claude" in world.jenkins.token_names()
+        assert executor.abort() is Outcome.ROLLED_BACK
+        assert world.held(MCP) == "SECRET-old-Claude"
+        assert world.jenkins.token_names() == sorted(name for _, name in LEAVES.values())
+
     def test_a_mint_jenkins_refuses_mints_nothing_and_its_rollback_revokes_nothing(self):
         world = World()
         world.jenkins.refused["POST", GENERATE] = 403
@@ -589,6 +614,17 @@ class TestTheSteps:
         assert mint.undo(ctx) == f"token {uuid} revoked"
         assert uuid not in world.jenkins.tokens
         assert mint.undo(ctx) == f"token {uuid} revoked"
+
+    def test_a_login_fails_unless_the_leaf_holds_the_token_the_plan_minted(self):
+        world = World()
+        ctx = Ctx(world.bao)
+        Mint(world.jenkins.jenkins(), f"{MCP}#token", "token").run(ctx)
+        login = Login(world.jenkins.jenkins(), MCP, "token")
+        with pytest.raises(StepFailed) as e:
+            login.run(ctx)
+        assert str(e.value) == f"{MCP}#token does not hold the token the plan minted"
+        world.bao.new_version(MCP, DATA[MCP] | {"token": ctx.values[value_name("token")]})
+        assert login.run(ctx) == "logged in as admin"
 
     def test_jenkins_s_own_refusal_of_a_mint_is_its_message(self):
         jenkins = FakeJenkins().jenkins()
