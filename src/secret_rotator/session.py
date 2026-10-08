@@ -13,7 +13,7 @@ from secret_rotator.executor import AbortRefused, Executor, Outcome, PlanMismatc
 from secret_rotator.lock import Holder, LockError, LockHeld
 from secret_rotator.model import label
 from secret_rotator.openbao import OpenBaoError
-from secret_rotator.telegram import failed
+from secret_rotator.telegram import TelegramError, failed
 
 
 class Choice(StrEnum):
@@ -38,8 +38,8 @@ def abort_question(executor: Executor) -> str:
 
 class Session:
     """say: a line the operator reads; confirm: their yes or no to a question. notify: where each
-    failure is told in Telegram, None while no chat is committed. command: the command the plan
-    runs in, which takes a plan left in flight up again."""
+    failure is told in Telegram, None while no chat is committed; a message it cannot send is
+    said. command: the command the plan runs in, which takes a plan left in flight up again."""
 
     def __init__(
         self,
@@ -97,18 +97,23 @@ class Session:
                 self.say(f"error: {err}")
                 return None
             if self.notify is not None and outcome in (Outcome.FAILED, Outcome.ROLLBACK_FAILED):
-                failure, plan = e.failure, e.plan
-                self.notify(
-                    f"In `{self.command}`: "
-                    + failed(
-                        plan.name,
-                        plan.target.keys,
-                        label(failure.step, failure.action),
-                        failure.error,
-                        rollback=outcome is Outcome.ROLLBACK_FAILED,
-                    )
-                )
+                self.tell(outcome)
             return outcome
+
+    def tell(self, outcome: Outcome) -> None:
+        """The failure in Telegram."""
+        failure, plan = self.executor.failure, self.executor.plan
+        text = failed(
+            plan.name,
+            plan.target.keys,
+            label(failure.step, failure.action),
+            failure.error,
+            rollback=outcome is Outcome.ROLLBACK_FAILED,
+        )
+        try:
+            self.notify(f"In `{self.command}`: {text}")
+        except (OpenBaoError, TelegramError) as err:
+            self.say(f"The Telegram message about it is not sent: {err}")
 
     def break_lock(self, holder: Holder) -> bool:
         """The lock of a holder the operator says is gone, broken; False when it is not."""

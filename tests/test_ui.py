@@ -100,9 +100,12 @@ def executor_of(bao):
     return executor
 
 
-def app_of(bao, today=TODAY, now=NOW, rotations=None):
+def app_of(bao, today=TODAY, now=NOW, rotations=None, notify=None):
     rotations = listing(bao) if rotations is None else rotations
-    return RotatorApp(rotations, today=today, now=now, executor=executor_of(bao), linger=0.05)
+    executor = executor_of(bao)
+    return RotatorApp(
+        rotations, today=today, now=now, executor=executor, notify=notify, linger=0.05
+    )
 
 
 async def until(pilot, condition, timeout=10.0):
@@ -287,15 +290,16 @@ async def test_the_information_line_of_each_state_with_the_due_text_in_its_colou
         assert failed["failed at step 2 of 2 · write eso/prd/mixed/prd/creds"] == ERR
 
 
-async def test_a_rollback_stopped_part_way_shows_failed():
+async def test_a_rollback_stopped_part_way_shows_failed_at_its_undo():
     bao = world()
-    put_flight(bao, "manual", PAT, ["token"], "kv.write", **{ROLLBACK: "1"})
+    put_flight(bao, "manual", PAT, ["token"], "kv.write", **{ROLLBACK: "0"})
     app = app_of(bao)
     async with app.run_test(size=SIZE) as pilot:
         await settled(pilot)
         box = app.box(f"{PAT}#token")
         assert str(box.border_title).startswith("✗ ") and tones(box) == {"error"}
-        assert info(app, f"{PAT}#token").plain == "overdue 37d · rollback failed"
+        line = "overdue 37d · rollback failed at undo: write eso/prd/gh/prd/pat"
+        assert info(app, f"{PAT}#token").plain == line
 
 
 async def test_every_box_takes_its_state_s_colour_selected_or_not():

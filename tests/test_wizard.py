@@ -2,7 +2,7 @@
 plan run by the real executor against the fake OpenBao, its tool steps the test double's. The
 screens collated from the plan, the button bar and its progress, the credential, show and confirm
 screens, the expiry, the live step log, Copy, the question dialog, done, the lock across the UI and
-a leaf's one plan in flight, and quitting at an operator step."""
+a leaf's one plan in flight, and quitting."""
 
 from fixtures import compliant_store, edit, fields_of
 from plans import LEAF, client, fake, fake_of, flight_of, put_flight, put_state, state_of
@@ -21,7 +21,7 @@ from test_listing import (
     leaf,
     store,
 )
-from test_ui import SIZE, app_of, in_box, select, settled, until, world
+from test_ui import FAILED, IN_FLIGHT, SIZE, app_of, in_box, select, settled, until, world
 from test_ui import tones as ui_tones
 from textual.widgets import Input, Static
 
@@ -30,7 +30,7 @@ from secret_rotator.kinds.external import RUNBOOK
 from secret_rotator.kinds.manual import TYPES
 from secret_rotator.lock import Lock
 from secret_rotator.model import Action
-from secret_rotator.ui.app import BUSY, BUSY_DONE, WAITS
+from secret_rotator.ui.app import BUSY, BUSY_DONE, BUSY_OF, QUIT, QUIT_RUN, WAITS
 from secret_rotator.ui.item import Item, Line, LineState, Phase
 from secret_rotator.ui.widgets import (
     ActionButton,
@@ -222,7 +222,7 @@ async def test_the_field_is_a_normal_input_and_reveal_and_clear_work_on_it():
         await pilot.press("home", "delete", "w")  # arrows and editing, as in any input
         assert app.drafts[VENDOR]["token"] == "wpat_12345"
         assert app.focused.password
-        assert labels(app, VENDOR) == ["Continue", "Reveal", "Clear"]
+        assert labels(app, VENDOR) == ["Continue", "Reveal", "Clear", "Abort"]
         app.action_press_button("reveal")
         await pilot.pause(0.05)
         assert app.box(VENDOR).revealed and not app.focused.password
@@ -306,7 +306,7 @@ async def test_enter_in_a_field_goes_to_the_continue_button_which_carries_no_key
 
 
 async def test_a_new_wizard_screen_focuses_its_first_field_or_button():
-    """The failure that changes the buttons on a screen is P9's."""
+    """A failure's new buttons on the same screen: test_wizard_failure."""
     bao, app = vendor_app()
     async with app.run_test(size=SIZE) as pilot:
         await select(pilot, app, VENDOR)
@@ -424,7 +424,7 @@ async def test_a_show_screen_masks_the_value_until_reveal_and_copies_it():
         shown = box.area.of(ValueBox)[0]
         assert shown.border_title == "secret_id"
         assert shown.content.plain == "•" * len(value)
-        assert labels(app, rid) == ["Done", "Reveal", "Copy"]
+        assert labels(app, rid) == ["Done", "Reveal", "Copy", "Abort"]
         assert app.focused.label.plain == "Done"
         app.action_press_button("reveal")
         await pilot.pause(0.05)
@@ -544,6 +544,15 @@ async def test_one_plan_at_a_time_every_other_box_says_what_it_cannot_do():
         assert bells == [1] and app.focused is None
         app.start(app.items[HOOK_ID])  # a press the button's state did not stop
         assert phase(app, HOOK_ID) is Phase.DUE and bells == [1, 1]
+        failed, in_flight = specs(app, FAILED), specs(app, IN_FLIGHT)
+        for spec in (failed["retry"], failed["abort"]):
+            assert (spec.enabled, spec.reason) == (False, BUSY_OF.format("retry or abort"))
+        assert failed["details"].enabled  # reading is not running
+        for spec in (in_flight["resume"], in_flight["abort"]):
+            assert (spec.enabled, spec.reason) == (False, BUSY_OF.format("resume or abort"))
+        app.retry(app.items[FAILED])
+        app._abort(app.items[IN_FLIGHT])
+        assert bells == [1, 1, 1, 1] and app.active.item.id == PAT_ID
         await select(pilot, app, PAT_ID)  # the wizard, where it is
         assert phase(app, PAT_ID) is Phase.WAITING
         assert app.box(PAT_ID).area.of(CredentialField)
@@ -617,8 +626,7 @@ async def test_quitting_at_an_operator_step_leaves_the_plan_in_flight_there_with
     assert bao.data(LOCK_LEAF) == {}
 
 
-async def test_quitting_while_a_tool_step_runs_stops_it_and_leaves_the_plan_in_flight_there():
-    """P9 asks first."""
+async def test_quitting_while_a_tool_step_runs_asks_then_leaves_the_plan_in_flight_there():
     cue = Cue()
     bao, app = vendor_app(Held("rollout", "roll out app/deployment/app", cue=cue))
     async with app.run_test(size=SIZE) as pilot:
@@ -626,7 +634,16 @@ async def test_quitting_while_a_tool_step_runs_stops_it_and_leaves_the_plan_in_f
         await pilot.press(*TOKEN)
         await submit(pilot, app)
         await until(pilot, lambda: cue.holding.is_set())
+        await pilot.press("q")
+        await until(pilot, lambda: isinstance(app.screen, ConfirmModal))
+        assert (app.screen.question, app.screen.detail) == (QUIT, QUIT_RUN)
+        await pilot.press("n")
+        await until(pilot, lambda: not isinstance(app.screen, ConfirmModal))
+        assert phase(app, VENDOR) is Phase.RUNNING and cue.holding.is_set()
+        assert app.return_code is None
         await pilot.press("ctrl+q")
+        await until(pilot, lambda: isinstance(app.screen, ConfirmModal))
+        await pilot.press("y")
         await until(pilot, lambda: app.return_code == 0)
     assert flight_of(bao, LEAF).step == "rollout" and bao.data(LOCK_LEAF) == {}
 

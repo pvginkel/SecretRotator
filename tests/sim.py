@@ -1,15 +1,17 @@
 """The UI's test double: the mock's simulated backend over the step and kind contracts. Its tool
-steps report progress and take as long as the test holds them, then finish or fail on its cue;
-its kind builds a vendor key's plan, you · tool · you, around them. Test code drives every cue."""
+steps report progress and take as long as the test holds them, then finish or fail on its cue, and
+so do their undos; its kind builds a vendor key's plan, you · tool · you, around them. Test code
+drives every cue."""
 
+import dataclasses
 import datetime
 import queue
 import re
 import threading
 
-from plans import plan_of
+from plans import flight_of, plan_of, state_of
 
-from secret_rotator.executor import Stand
+from secret_rotator.executor import Stand, stand_of
 from secret_rotator.listing import Rotation
 from secret_rotator.model import Step, StepFailed
 from secret_rotator.opsteps import Shape
@@ -32,37 +34,47 @@ class Cue:
         self.verdicts.put(error)
 
 
+def hold(cue, ctx, done):
+    """Reports `1/2 Ready` until the cue lets go: done, or fails with the cue's error; without a
+    cue, done at once."""
+    if cue is None:
+        return done
+    cue.holding.set()
+    try:
+        while True:
+            try:
+                verdict = cue.verdicts.get(timeout=0.02)
+            except queue.Empty:
+                ctx.progress("1/2 Ready")
+                continue
+            if verdict is None:
+                return done
+            raise StepFailed(verdict)
+    finally:
+        cue.holding.clear()
+
+
 class Held(Step):
-    """A mutating tool step that reports `1/2 Ready` until its cue lets it finish, `Ready`, or
-    fail with the cue's error; without a cue it finishes at once."""
+    """A mutating tool step held on its cue, finishing `Ready`; its undo, `undone`, on the undo's
+    cue. An activator's undo is its run again."""
 
     type = "sim.held"
     mutates = True
 
-    def __init__(self, id, title, *, cue=None, estimate=0, silent=False):
+    def __init__(
+        self, id, title, *, cue=None, undo_cue=None, estimate=0, silent=False, activator=False
+    ):
         super().__init__(id, title, estimate=estimate)
         self.cue = cue
+        self.undo_cue = undo_cue
         self.silent = silent
+        self.activator = activator
 
     def run(self, ctx):
-        if self.cue is None:
-            return "Ready"
-        self.cue.holding.set()
-        try:
-            while True:
-                try:
-                    verdict = self.cue.verdicts.get(timeout=0.02)
-                except queue.Empty:
-                    ctx.progress("1/2 Ready")
-                    continue
-                if verdict is None:
-                    return "Ready"
-                raise StepFailed(verdict)
-        finally:
-            self.cue.holding.clear()
+        return hold(self.cue, ctx, "Ready")
 
     def undo(self, ctx):
-        return "undone"
+        return hold(self.undo_cue, ctx, "undone")
 
 
 class Vendor:
@@ -112,3 +124,11 @@ def rotation(plan, due_at=datetime.date(2026, 9, 1)):
 def vendor(*held, leaf="eso/prd/app/prd/token", store=None):
     """The vendor plan of a random leaf of the store, the compliant one by default."""
     return rotation(plan_of(kind=Vendor(*held), leaf=leaf, store=store))
+
+
+def again(bao, listed):
+    """The rotation as the next app lists it: where its plan stands in the fake."""
+    leaf = listed.plan.target.leaf
+    flight = flight_of(bao, leaf)
+    at, stand = stand_of(listed.plan, flight, state_of(bao, leaf).status)
+    return dataclasses.replace(listed, stand=stand, at=at, flight=flight)

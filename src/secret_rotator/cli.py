@@ -29,7 +29,7 @@ from secret_rotator.state import LeafState, State
 from secret_rotator.switches import Switches, SwitchesError
 from secret_rotator.switches import load as load_switches
 from secret_rotator.telegram import TOKEN as BOT_TOKEN
-from secret_rotator.telegram import Telegram, TelegramError
+from secret_rotator.telegram import Telegram
 from secret_rotator.youtrack import YouTrack
 
 # The rotator's AppRole, kv/iac/rotator-approle, which iac-impl puts in the iac container's
@@ -179,20 +179,15 @@ def connect(
 
 
 def notifier(
-    bao: OpenBao,
-    chat: int | None,
-    telegram: Callable[[str, int], Telegram],
-    console: Console,
+    bao: OpenBao, chat: int | None, telegram: Callable[[str, int], Telegram]
 ) -> Callable[[str], None] | None:
-    """What tells `run <path>`'s failures in Telegram; None until a chat id is committed."""
+    """What tells the failures of `run <path>` and the UI in Telegram, raising OpenBaoError or
+    TelegramError for a message it cannot send; None until a chat id is committed."""
     if chat is None:
         return None
 
     def notify(text: str) -> None:
-        try:
-            telegram(bao.value(*BOT_TOKEN), chat).send(text)
-        except (OpenBaoError, TelegramError) as e:
-            console.line(f"The Telegram message about it is not sent: {e}")
+        telegram(bao.value(*BOT_TOKEN), chat).send(text)
 
     return notify
 
@@ -273,19 +268,19 @@ def main(
                     out(f"metrics: the state group is not pushed: {K8S_TOKEN_ENV} is not set")
             return code
         cluster = Cluster(kube(environ[K8S_TOKEN_ENV]))
-        if args.command == "ui":
-            return ui.main(bao, kinds, cluster, today)
-        if args.command == "run":
-            con = console()
+        if args.command in ("ui", "run"):
+            notify = notifier(bao, switches().telegram_chat_id, telegram)
+            if args.command == "ui":
+                return ui.main(bao, kinds, cluster, today, notify)
             code = terminal.run_leaf(
                 bao,
                 args.path,
                 kinds,
-                con,
+                console(),
                 holder=holder_name(f"run {args.path}"),
                 today=today,
                 cluster=cluster,
-                notify=notifier(bao, switches().telegram_chat_id, telegram, con),
+                notify=notify,
             )
             metrics.push_state(bao, kinds, cluster.kube, out)
             return code

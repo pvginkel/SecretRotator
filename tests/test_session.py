@@ -27,6 +27,7 @@ from secret_rotator.contract import LOCK_LEAF
 from secret_rotator.executor import Abandon, Outcome, Stand
 from secret_rotator.lock import Lock
 from secret_rotator.session import Choice, Offer, Session, abort_question
+from secret_rotator.telegram import TelegramError
 
 UI = "secret-rotator ui"
 REVOKED = "the old token is revoked"
@@ -140,6 +141,17 @@ class TestAttempt:
             f"In `{UI}`: The rollback of the random plan of {LEAF} (token) failed at undo: do t: "
             "the undo of t failed",
         ]
+
+    def test_a_message_that_cannot_be_sent_is_said(self):
+        e = executor(fake(), plan_of(Tool("t", Journal(), fail=1)), Recorder())
+        front = Front()
+
+        def down(text):
+            raise TelegramError("sendMessage: HTTP 502")
+
+        session = Session(e, say=front.said.append, confirm=front.confirm, notify=down, command=UI)
+        assert session.attempt(e.run) is Outcome.FAILED
+        assert front.said == ["The Telegram message about it is not sent: sendMessage: HTTP 502"]
 
     def test_without_a_chat_a_failure_is_told_nowhere(self):
         e = executor(fake(), plan_of(Tool("t", Journal(), fail=1)), Recorder())

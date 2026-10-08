@@ -1,10 +1,10 @@
 """`secret-rotator ui`'s app (design §7): the status bar, a box per listed rotation with the
 selected one expanded, the footer; a box's Start runs its plan as the wizard of §7.4, one plan at a
-time (§4.3)."""
+time (§4.3), with Retry, Abort behind its guard, the rollback screen and Details (§4.5)."""
 
 import datetime
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -15,8 +15,11 @@ from textual.widgets import Input, Static
 
 from secret_rotator.executor import Abandon, Outcome
 from secret_rotator.listing import Rotation
-from secret_rotator.model import Action, Finished, Progress, Started
+from secret_rotator.model import Action, Actor, Finished, Progress, Started
+from secret_rotator.openbao import OpenBaoError
 from secret_rotator.opsteps import EXPIRY, ConfirmRequest, CredentialRequest, ShowRequest
+from secret_rotator.session import abort_question
+from secret_rotator.staging import ROLLBACK
 from secret_rotator.ui.collate import screen_of
 from secret_rotator.ui.item import Item, Line, LineState, Phase
 from secret_rotator.ui.run import ExecutorOf, Run
@@ -37,6 +40,7 @@ from secret_rotator.ui.widgets import (
     CredentialField,
     CredentialFields,
     Description,
+    DetailsModal,
     EmptyState,
     ExpiryField,
     HelpModal,
@@ -60,19 +64,36 @@ WAITS = "cannot start while another rotation of its leaf is in flight"
 BUSY = "cannot start a rotation while a different one is in progress"
 WAITS_DONE = "cannot mark it done while another rotation of its leaf is in flight"
 BUSY_DONE = "cannot mark it done while a different rotation is in progress"
+# What a box in flight cannot do while another runs (§7.5), by the buttons it shows.
+BUSY_OF = "cannot {} while a different rotation is in progress"
+NO_ROLLBACK = "no rollback: {}"  # why Abort is disabled: a finished step has no undo (§4.5)
+QUIT = "A step is running. Quit?"
+QUIT_RUN = "The rotation stays in flight and resumes at this step."
+QUIT_ROLLBACK = "The rollback stops at this step; Retry continues it."
+ROLLING_BACK = "Rolling back"  # the rollback screen's title (§7.4)
 COPIED = 2.0  # seconds Copy reads `✓ Copied`
 CONTINUE = "app.press_button('continue')"
 
 VIEWS = {CredentialRequest: "credential", ShowRequest: "show", ConfirmRequest: "confirm"}
 # Where a run leaves its box.
-ENDED = {Outcome.DONE: Phase.DONE, Outcome.FAILED: Phase.FAILED, Outcome.EXITED: Phase.IN_FLIGHT}
+ENDED = {
+    Outcome.DONE: Phase.DONE,
+    Outcome.FAILED: Phase.FAILED,
+    Outcome.EXITED: Phase.IN_FLIGHT,
+    Outcome.CANCELLED: Phase.DUE,
+    Outcome.ROLLED_BACK: Phase.ROLLED_BACK,
+    Outcome.ROLLBACK_FAILED: Phase.ROLLBACK_FAILED,
+}
 
 
 class RotatorApp(App[None]):
     """rotations: in the order listed, which it keeps for the session (§7.5). today: what the due
     texts count from; now: the time an in-flight box's time is told in, and its zone. executor:
-    a plan's executor for a renderer, under the session's lock. linger: the seconds a done box
-    shows `done` before it leaves."""
+    a plan's executor for a renderer, under the session's lock. notify: where each failure is told
+    in Telegram, None while no chat is committed. linger: the seconds a done box shows `done`, and
+    a rolled-back one `rolled back`, before it leaves or is due again. A box in flight has its
+    executor loaded from OpenBao when the app is made: what its Abort rolls back, or where its
+    rollback stopped."""
 
     CSS_PATH = "app.tcss"
     TITLE = "secret-rotator ui"
@@ -99,6 +120,7 @@ class RotatorApp(App[None]):
         today: datetime.date,
         now: datetime.datetime,
         executor: ExecutorOf,
+        notify: Callable[[str], None] | None = None,
         linger: float = 1.5,
     ) -> None:
         super().__init__()
@@ -106,16 +128,30 @@ class RotatorApp(App[None]):
         self.today = today
         self.now = now
         self.executor_of = executor
+        self.notify = notify
         self.linger = linger
         self.items = {item.id: item for item in map(Item.of, rotations)}
         self.order = list(self.items)
         self.selected: str | None = self.order[0] if self.order else None
         self.done_count = 0
+        self.runs: dict[str, Run] = {}  # a box's, from its first start, or from the start
         self.active: Run | None = None  # the one plan running (§4.3)
         self.drafts: dict[str, dict[str, str]] = {}  # a credential screen's entries, by box
         self._quitting = False  # the run is being ended so the app can exit
         self._focus_into: str | None = None  # this box's first control takes focus once it can
         self._selecting = False
+        for item in self.items.values():
+            if item.in_flight:
+                executor = self.run_of(item).executor
+                executor.load()
+                if item.phase is Phase.ROLLBACK_FAILED:
+                    item.rollback = executor.rollback()
+                    item.undone = int(executor.staging.get(ROLLBACK))
+
+    def run_of(self, item: Item) -> Run:
+        if item.id not in self.runs:
+            self.runs[item.id] = Run(self, item, self.executor_of, self.notify)
+        return self.runs[item.id]
 
     # --- layout -------------------------------------------------------------
 
@@ -187,15 +223,17 @@ class RotatorApp(App[None]):
     @staticmethod
     def view(item: Item) -> str:
         """What the state area shows: an external key's confirm; the due box's description; the
-        wizard's screen, an operator one once its request came; nothing for a box in flight or
-        whose rollback failed (P9)."""
+        rollback screen; the wizard's screen at its step: an operator one with its request once
+        it came, before that its step's title and instruction."""
         if item.external:
             return "external"
         if item.phase is Phase.DUE:
             return "due"
-        if item.phase in (Phase.IN_FLIGHT, Phase.ROLLBACK_FAILED):
-            return ""
-        return VIEWS.get(type(item.request), "tool")
+        if item.rolls_back:
+            return "rollback"
+        if item.request is not None:
+            return VIEWS[type(item.request)]
+        return "operator" if item.screen.actor is Actor.OPERATOR else "tool"
 
     def _sync_area(self, box: Box, area: StateArea) -> None:
         item = box.item
@@ -222,10 +260,10 @@ class RotatorApp(App[None]):
         item = box.item
         if view == "due":
             return [Description(Text(item.rotation.plan.description)), Notice(), ButtonBar()]
-        if view == "":
-            return [Notice()]
         if view == "tool":
             return [StepLog(), Notice(), ButtonBar()]
+        if view == "rollback":
+            return [Instruction(), StepLog(), Notice(), ButtonBar()]
         parts: list[Widget] = [Instruction()]
         if view == "credential":
             parts.append(CredentialFields(*self._fields(box)))
@@ -252,7 +290,7 @@ class RotatorApp(App[None]):
         for instruction in area.of(Instruction):
             instruction.update(self._instruction(item))
         for log in area.of(StepLog):
-            log.set_lines(item.visible())
+            log.set_lines(item.rollback_lines() if item.rolls_back else item.visible())
             log.display = bool(log.lines)
         logged = any(log.display for log in area.of(StepLog))
         for spacer in area.of(Spacer):
@@ -269,9 +307,12 @@ class RotatorApp(App[None]):
             button_bar.set(self.buttons(box), self.progress(item), self.progress(item, True))
 
     def _instruction(self, item: Item) -> Text:
-        """An operator screen's title and instruction; an external key's are its one confirm's,
-        its notes and the runbook."""
-        source = item.rotation.plan.steps[0] if item.external else item.request
+        """An operator screen's title and instruction, its request's once it came, else its
+        step's; an external key's are its one confirm's, its notes and the runbook. The rollback
+        screen's title."""
+        if item.rolls_back:
+            return Instruction.build(ROLLING_BACK, "", header_colour(item))
+        source = item.request if item.request is not None else item.operator_step
         return Instruction.build(source.title, source.instruction, header_colour(item))
 
     # --- the buttons and the progress (§7.4, §7.5) --------------------------------
@@ -284,8 +325,22 @@ class RotatorApp(App[None]):
                 return [ButtonSpec(True, "Done", "done", not why, why)]
             why = self.blocked(item, BUSY, WAITS)
             return [ButtonSpec(True, "Start", "start", not why, why)]
-        if item.external or item.phase not in (Phase.RUNNING, Phase.WAITING):
+        run = self.runs[item.id]
+        busy = self.active is not None and self.active is not run
+        details = ButtonSpec(False, "Details", "details")
+        if item.phase is Phase.ROLLBACK_FAILED:  # the rollback is an abort already
+            why = BUSY_OF.format("retry") if busy else ""
+            return [ButtonSpec(True, "Retry", "retry", not why, why), details]
+        if item.phase in (Phase.FAILED, Phase.IN_FLIGHT):
+            verb = "retry" if item.phase is Phase.FAILED else "resume"
+            blocker = run.executor.abort_blocker()
+            why = BUSY_OF.format(verb if blocker else f"{verb} or abort") if busy else ""
+            first = ButtonSpec(True, verb.capitalize(), verb, not why, why)
+            abort = self._abort_spec(blocker, why)
+            return [first, abort, details] if item.phase is Phase.FAILED else [first, abort]
+        if item.external or run.aborting or item.phase not in (Phase.RUNNING, Phase.WAITING):
             return []
+        abort = self._abort_spec(run.executor.abort_blocker(), "")
         waiting = item.phase is Phase.WAITING
         request = item.request
         reveal = ButtonSpec(False, "Hide" if box.revealed else "Reveal", "reveal")
@@ -296,14 +351,21 @@ class RotatorApp(App[None]):
                 ButtonSpec(True, "Continue", "continue", waiting and filled),
                 reveal,
                 ButtonSpec(False, "Clear", "clear", waiting),
+                abort,
             ]
         if isinstance(request, ShowRequest):
             copied = time.monotonic() < box.copied_until
             copy = ButtonSpec(False, "✓ Copied" if copied else "Copy", "copy")
-            return [ButtonSpec(True, "Done", "done", waiting), reveal, copy]
+            return [ButtonSpec(True, "Done", "done", waiting), reveal, copy, abort]
         if isinstance(request, ConfirmRequest):
-            return [ButtonSpec(True, "Done", "done", waiting)]
-        return []
+            return [ButtonSpec(True, "Done", "done", waiting), abort]
+        return [abort]
+
+    @staticmethod
+    def _abort_spec(blocker: str | None, busy: str) -> ButtonSpec:
+        """Abort, disabled while a finished step has no undo, or while another plan runs."""
+        why = NO_ROLLBACK.format(blocker) if blocker else busy
+        return ButtonSpec(False, "Abort", "abort", not why, why)
 
     def blocked(self, item: Item, busy: str, waits: str) -> str:
         """Why the due box's plan cannot start: another plan runs, or its leaf has another in
@@ -326,7 +388,8 @@ class RotatorApp(App[None]):
         )
 
     def progress(self, item: Item, compact: bool = False) -> Text:
-        """`Step n of N`, a short bar in the box's colour, `~m min left`; compact: no bar."""
+        """`Step n of N`, a short bar in the box's colour, `~m min left`; in a rollback `Undo n of
+        N` (§4.5); compact: no bar."""
         if item.phase is Phase.DUE or item.external:
             return Text()
 
@@ -336,12 +399,18 @@ class RotatorApp(App[None]):
             colour = TONE_COLOUR[TONE[item.phase]]
             return Text.assemble(head, "  ", bar(fraction, colour), "  ", tail)
 
+        failed = item.phase in (Phase.FAILED, Phase.ROLLBACK_FAILED)
+        tail = Text("failed", style=ERR) if failed else Text(f"{minutes(item.remaining)} left")
+        if item.rolls_back:
+            count = len(item.rollback)
+            if item.phase is Phase.ROLLED_BACK:
+                return line(f"Undo {count} of {count}", 1.0, Text("done"))
+            n = min(item.undone + 1, count)
+            return line(f"Undo {n} of {count}", item.undone / count, tail)
         count = len(item.screens)
         if item.phase is Phase.DONE:
             return line(f"Step {count} of {count}", 1.0, Text("done"))
         n = item.screen.index + 1
-        failed = item.phase is Phase.FAILED
-        tail = Text("failed", style=ERR) if failed else Text(f"{minutes(item.remaining)} left")
         return line(f"Step {n} of {count}", (n - 1) / count, tail)
 
     # --- focus ------------------------------------------------------------------
@@ -349,7 +418,8 @@ class RotatorApp(App[None]):
     def _tick(self) -> None:
         self._ensure_focus()
         run = self.active
-        if run is not None and run.item.phase is Phase.RUNNING and run.item.id == self.selected:
+        working = run is not None and run.item.phase in (Phase.RUNNING, Phase.ROLLING_BACK)
+        if working and run.item.id == self.selected:
             box = self.box(run.item.id)
             if box is not None:
                 for log in box.area.of(StepLog):
@@ -381,7 +451,7 @@ class RotatorApp(App[None]):
         enabled button; nothing while the screen's steps run, since its buttons change when they
         finish. A part still being removed is skipped."""
         item = box.item
-        if item.phase is Phase.RUNNING:
+        if item.phase in (Phase.RUNNING, Phase.ROLLING_BACK):
             return None
         if item.phase is Phase.WAITING:
             empty = [f for f in area.of(CredentialField) if f.is_mounted and not f.value.strip()]
@@ -478,6 +548,12 @@ class RotatorApp(App[None]):
         item = box.item
         if action == "start" or (action == "done" and item.phase is Phase.DUE):
             self.start(item)
+        elif action in ("retry", "resume"):
+            self.retry(item)
+        elif action == "abort":
+            self._ask_abort(item)
+        elif action == "details":
+            self._details(item)
         elif action == "continue":
             self._continue(box)
         elif action == "done":
@@ -502,11 +578,62 @@ class RotatorApp(App[None]):
         if self.active is not None or self.waits(item):
             self.bell()
             return
+        self._attempt(item)
+
+    def retry(self, item: Item) -> None:
+        """Retry: the failed step again, or the stopped rollback on; Resume: the plan on from
+        the step it was left at."""
+        if self.active is not None:
+            self.bell()
+            return
+        self._attempt(item)
+
+    def _attempt(self, item: Item, *, aborting: bool = False) -> None:
+        run = self.run_of(item)
+        run.attempt(run.executor.abort if aborting else run.executor.run, aborting=aborting)
         item.said = []
-        item.phase = Phase.RUNNING
-        self.active = Run(self, item, self.executor_of)
-        self.active.start()
+        item.phase = Phase.ROLLING_BACK if item.rolls_back else Phase.RUNNING
+        self.active = run
         self._changed(item)
+
+    def _ask_abort(self, item: Item) -> None:
+        """Abort's guard (§4.5): one question, then the rollback, or a cancel while nothing has
+        mutated."""
+        run = self.runs[item.id]
+        if self.active not in (None, run) or run.executor.abort_blocker():
+            self.bell()
+            return
+        question = abort_question(run.executor)
+        self.push_screen(ConfirmModal(question), lambda yes: self._abort(item) if yes else None)
+
+    def _abort(self, item: Item) -> None:
+        """Rolls the plan back where it now stands: an operator step abandoned, a tool step
+        stopped, its undo run (Executor.stop); a plan not running, by an attempt of its own.
+        Abort empties the fields."""
+        run = self.runs[item.id]
+        if self.active not in (None, run) or run.executor.abort_blocker():
+            self.bell()
+            return
+        self.drafts.pop(item.id, None)
+        if self.active is None:
+            if item.phase in (Phase.FAILED, Phase.IN_FLIGHT):
+                self._attempt(item, aborting=True)
+            return
+        run.aborting = True
+        if item.phase is Phase.WAITING:
+            self.answer(item, Abandon.ABORT)
+        else:
+            run.executor.stop(Abandon.ABORT)
+            self._changed(item)
+
+    def _details(self, item: Item) -> None:
+        """The technical detail of the box's failure; of an earlier session's, what the run state
+        recorded."""
+        try:
+            text = self.runs[item.id].session.details()
+        except OpenBaoError as e:
+            text = f"error: {e}"
+        self.push_screen(DetailsModal(f"Details · {item.stopped_at()}", text))
 
     def answer(self, item: Item, answer: dict[str, str] | Abandon) -> None:
         """The operator's answer to the operator step the box's wizard waits on."""
@@ -578,12 +705,20 @@ class RotatorApp(App[None]):
     def on_run_stepped(self, message: Run.Stepped) -> None:
         item, event = message.run.item, message.event
         key = (event.step.id, event.action)
+        undo = event.action is not Action.RUN
+        if undo:  # the rollback screen
+            item.rollback = message.rollback
+            item.phase = Phase.ROLLING_BACK
         if isinstance(event, Started):
-            if event.action is Action.RUN:
+            if undo:
+                item.undone = item.rollback.index((event.step, event.action))
+            else:
                 if screen_of(item.screens, event.step) is not item.screen:
                     item.request = None
                 item.at = item.rotation.plan.index(event.step.id)
-            item.lines[key] = Line(event.step, event.action, time.monotonic())
+            before = item.lines.get(key)
+            attempt = before.attempt + 1 if before is not None else 1
+            item.lines[key] = Line(event.step, event.action, time.monotonic(), attempt=attempt)
         elif isinstance(event, Progress):
             item.lines[key].detail = event.detail
         elif isinstance(event, Finished):
@@ -592,6 +727,8 @@ class RotatorApp(App[None]):
             line.detail = event.detail if event.ok else event.detail or line.detail
             line.error = event.error
             line.elapsed = time.monotonic() - line.started
+            if undo and event.ok:
+                item.undone += 1
         self._changed(item)
 
     def on_run_asked(self, message: Run.Asked) -> None:
@@ -618,20 +755,42 @@ class RotatorApp(App[None]):
         self.push_screen(ConfirmModal(message.question, detail), lambda yes: run.answer(bool(yes)))
 
     def on_run_ended(self, message: Run.Ended) -> None:
-        """outcome None: the session said why it got to none, a failure once a step started.
-        Quitting, the app exits once the plan is left."""
+        """outcome None: the session said why it got to none; the box stands where it did unless
+        a step started, which leaves it failed, in its rollback if it was rolling back. Quitting,
+        the app exits once the plan is left."""
         run, item = message.run, message.run.item
         self.active = None
-        if message.outcome is None:
-            item.phase = Phase.FAILED if run.started else Phase.DUE
-        else:
+        run.aborting = False
+        if message.outcome is not None:
             item.phase = ENDED[message.outcome]
+        elif not run.started:
+            item.phase = run.before
+        else:
+            rolling = item.phase is Phase.ROLLING_BACK
+            item.phase = Phase.ROLLBACK_FAILED if rolling else Phase.FAILED
         if self._quitting:
             self.exit()
             return
         if item.phase is Phase.DONE:
             self.set_timer(self.linger, lambda: self._remove(item))
+        elif item.phase is Phase.ROLLED_BACK:
+            self.set_timer(self.linger, lambda: self._due_again(item))
+        elif item.phase is Phase.DUE:
+            self._due_again(item)
+            return
         self._changed(item)
+
+    def _due_again(self, item: Item) -> None:
+        """The box is due again, in place and still selected (D21); when nothing waits, the green
+        box tops the list."""
+        item.due_again()
+        self.drafts.pop(item.id, None)
+        self._green_box()
+        self._changed(item)
+
+    def _green_box(self) -> None:
+        if not self.waiting() and not self.query(EmptyState):
+            self.box_list.mount(self.empty_state(), before=0)
 
     def _remove(self, item: Item) -> None:
         """A done box leaves the list; the box below it is selected, the one above when it was
@@ -649,17 +808,24 @@ class RotatorApp(App[None]):
             if new is not None:
                 self.refresh_box(new)
                 self._scroll_to_selected()
-        if not self.waiting() and not self.query(EmptyState):
-            self.box_list.mount(self.empty_state(), before=0)
+        self._green_box()
         self._refresh_status()
 
     # --- quit -----------------------------------------------------------------
 
     def action_quit(self) -> None:
         """Quits; a plan running is left in flight where it is first, its lock released. While a
-        question is open q does not stack another."""
+        tool step runs it asks first (§4.5); while a question is open q does not stack another."""
         if isinstance(self.screen, ConfirmModal):
             return
+        if self.active is None or self.active.item.phase is Phase.WAITING:
+            self._quit()
+            return
+        rolling = self.active.item.phase is Phase.ROLLING_BACK
+        detail = QUIT_ROLLBACK if rolling else QUIT_RUN
+        self.push_screen(ConfirmModal(QUIT, detail), lambda yes: self._quit() if yes else None)
+
+    def _quit(self) -> None:
         if self.active is None:
             self.exit()
             return

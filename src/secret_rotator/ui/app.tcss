@@ -105,7 +105,7 @@ EmptyState {
     padding: 0 1;
 }
 
-ConfirmModal, HelpModal {
+ConfirmModal, DetailsModal, HelpModal {
     align: center middle;
     background: $background 60%;
 }
@@ -142,4 +142,20 @@ ConfirmModal, HelpModal {
 .confirm {
     border: round $warning;
     min-width: 42;  /* room for Yes and No when the question is short */
+}
+
+.details {
+    width: 110;
+    max-height: 90%;
+    border: round $error;
+}
+
+.details-body {
+    margin-top: 1;
+    height: auto;
+    max-height: 32;
+}
+
+.details > Static, .details > VerticalScroll, .details-body > Static {
+    width: 100%;
 }

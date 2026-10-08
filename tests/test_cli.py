@@ -32,7 +32,7 @@ from secret_rotator.console import Console
 from secret_rotator.contract import LOCK_LEAF, STATE_LEAF
 from secret_rotator.openbao import OpenBao
 from secret_rotator.switches import Switches, SwitchesError
-from secret_rotator.telegram import Telegram
+from secret_rotator.telegram import Telegram, TelegramError
 from secret_rotator.ui.app import RotatorApp
 from secret_rotator.youtrack import YouTrack
 
@@ -151,9 +151,17 @@ def test_ui_lists_every_rotation_with_an_operator_step_in_full_colour(monkeypatc
         "SECRET_ROTATOR_SECRET_ID": SECRET_ID,
         "SECRET_ROTATOR_K8S_TOKEN": TOKEN,
     }
-    code = cli.main(["ui"], opener=bao, out=pytest.fail, environ=env, kube=FakeCluster().kube)
+    code = cli.main(
+        ["ui"],
+        opener=bao,
+        out=pytest.fail,
+        environ=env,
+        kube=FakeCluster().kube,
+        switches=switches(),
+    )
     assert code == 0
     (app,) = shown
+    assert app.notify is not None  # a chat id is committed: failures are told in Telegram
     assert f"{WIFI}#password" in app.order
     assert all(item.rotation.plan.needs_operator for item in app.items.values())
     assert app.today == datetime.datetime.now(datetime.UTC).date()
@@ -434,31 +442,25 @@ class TestEveryRunNamesItsCommitFirst:
         assert lines == [f"secret-rotator run {WIFI}, {SOURCE}"]
 
 
-class TestRunPathTellsTelegram:
+class TestRunPathAndTheUiTellTelegram:
     def test_not_until_a_chat_id_is_committed(self):
-        con = Console(io.StringIO(), io.StringIO())
-        assert (
-            cli.notifier(OpenBao(opener=FakeOpenBao(), token=BAO_TOKEN), None, Telegram, con)
-            is None
-        )
+        bao = OpenBao(opener=FakeOpenBao(), token=BAO_TOKEN)
+        assert cli.notifier(bao, None, Telegram) is None
 
-    def test_with_the_bot_s_token_and_a_failed_message_is_said_not_raised(self):
+    def test_with_the_bot_s_token_raising_for_a_message_it_cannot_send(self):
+        """The session says it (test_session)."""
         bao = FakeOpenBao({"rotator/telegram": {"data": {"token": BOT}, "meta": {}}})
         telegram = FakeTelegram()
-        con = Console(io.StringIO(), io.StringIO())
         notify = cli.notifier(
             OpenBao(opener=bao, token=BAO_TOKEN),
             CHAT,
             lambda token, chat: Telegram(token, chat, opener=telegram),
-            con,
         )
         notify("The random plan of x failed")
         assert telegram.messages == ["The random plan of x failed"]
         telegram.down = True
-        notify("again")
-        assert "The Telegram message about it is not sent: sendMessage: HTTP 502" in (
-            con.stdout.getvalue()
-        )
+        with pytest.raises(TelegramError, match="sendMessage: HTTP 502"):
+            notify("again")
 
 
 def own_store(now):

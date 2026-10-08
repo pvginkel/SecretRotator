@@ -1,5 +1,5 @@
 """The UI's widgets (design §7.2, §7.4): the status bar, the boxes, their state area's parts — the
-step log, the fields, the shown value — the question dialog and help."""
+step log, the fields, the shown value — the question dialog, Details and help."""
 
 import datetime
 import time
@@ -45,6 +45,8 @@ GLYPH = {
     Phase.DONE: "✓",
     Phase.IN_FLIGHT: "◐",
     Phase.FAILED: "✗",
+    Phase.ROLLING_BACK: "●",
+    Phase.ROLLED_BACK: "○",
     Phase.ROLLBACK_FAILED: "✗",
 }
 SPINNER = "◐◓◑◒"  # a running line's glyph, turning
@@ -60,6 +62,8 @@ TONE = {
     Phase.DONE: "success",
     Phase.IN_FLIGHT: "accent",
     Phase.FAILED: "error",
+    Phase.ROLLING_BACK: "primary",
+    Phase.ROLLED_BACK: "due",
     Phase.ROLLBACK_FAILED: "error",
 }
 TONES = tuple(dict.fromkeys(TONE.values()))
@@ -139,16 +143,19 @@ def info_text(item: Item, today: datetime.date, now: datetime.datetime) -> Text:
     r = item.rotation
     if item.phase is Phase.DONE:
         return Text("done", style=f"bold {OK}")
+    if item.phase is Phase.ROLLED_BACK:
+        return Text("rolled back", style="bold")
     if item.phase is Phase.IN_FLIGHT:
-        return Text(f"{since_text(r.flight.since, now)} · {r.plan.ask} · {minutes(r.estimate)}")
+        return Text(f"{since_text(r.flight.since, now)} · {r.plan.ask} · {minutes(item.estimate)}")
     due = due_part(r.due_at, today)
     if item.phase is Phase.FAILED:
-        step = r.plan.steps[item.at]
-        failed = f"failed at step {item.screen.index + 1} of {len(item.screens)} · {step.title}"
-        return Text.assemble(due, " · ", (failed, ERR))
+        where = f"step {item.screen.index + 1} of {len(item.screens)} · {item.stopped_at()}"
+        return Text.assemble(due, " · ", (f"failed at {where}", ERR))
     if item.phase is Phase.ROLLBACK_FAILED:
-        return Text.assemble(due, " · ", ("rollback failed", ERR))
-    return Text.assemble(due, f" · {r.plan.ask} · {minutes(r.estimate)}")
+        at = item.stopped_at()
+        failed = f"rollback failed at {at}" if at else "rollback failed"
+        return Text.assemble(due, " · ", (failed, ERR))
+    return Text.assemble(due, f" · {r.plan.ask} · {minutes(item.estimate)}")
 
 
 # --- buttons ------------------------------------------------------------------
@@ -354,6 +361,8 @@ class StepLog(Widget):
             if line.detail:
                 body.append(" · ")
                 body.append(line.detail, style=ERR if failed else DIM)
+            if line.attempt > 1:
+                body.append(f" · attempt {line.attempt}", style=HEAD)
             rows.append(self._row(glyph, body, Text(clock(line.spent()), style=DIM), width))
             if failed and line.error:
                 rows.append(Text.assemble("  ", (line.error, ERR)))
@@ -665,6 +674,30 @@ class ConfirmModal(ModalScreen[bool]):
         buttons = list(self.query(ActionButton))
         current = buttons.index(self.focused) if self.focused in buttons else 0
         buttons[(current + delta) % len(buttons)].focus()
+
+
+class DetailsModal(ModalScreen[None]):
+    """A failure's technical detail (§4.5): the stack trace, the API response, the kubectl output.
+    Close at the right edge; Esc, q and ⏎ close it too."""
+
+    AUTO_FOCUS = "#close"
+    BINDINGS = [Binding("escape,q,enter", "close", "Close")]
+
+    def __init__(self, title: str, text: str) -> None:
+        super().__init__()
+        self.title_text = title
+        self.text = text
+
+    def compose(self) -> ComposeResult:
+        with Vertical(classes="dialog details"):
+            yield Static(Text(self.title_text, style=f"bold {ERR}"))
+            with VerticalScroll(classes="details-body"):
+                yield Static(Text(self.text))
+            with Horizontal(classes="dialog-buttons"):
+                yield ActionButton("Close", "screen.close", variant="primary", id="close")
+
+    def action_close(self) -> None:
+        self.dismiss(None)
 
 
 # --- help ---------------------------------------------------------------------

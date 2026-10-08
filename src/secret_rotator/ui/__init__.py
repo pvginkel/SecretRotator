@@ -3,7 +3,7 @@ theirs."""
 
 import datetime
 import os
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Callable, Mapping, MutableMapping
 
 from secret_rotator.audit import live_store
 from secret_rotator.cluster import Cluster
@@ -24,7 +24,14 @@ def full_colour(environ: MutableMapping[str, str]) -> None:
         environ["COLORTERM"] = "truecolor"
 
 
-def main(bao: OpenBao, kinds: Mapping[str, Kind], cluster: Cluster, today: datetime.date) -> int:
+def main(
+    bao: OpenBao,
+    kinds: Mapping[str, Kind],
+    cluster: Cluster,
+    today: datetime.date,
+    notify: Callable[[str], None] | None,
+) -> int:
+    """notify: where each failure is told in Telegram, None while no chat is committed."""
     store = live_store(bao, runs=True)
     rotations = listed(store, kinds, cluster)
     state = State(bao, store)
@@ -35,5 +42,5 @@ def main(bao: OpenBao, kinds: Mapping[str, Kind], cluster: Cluster, today: datet
 
     full_colour(os.environ)
     now = datetime.datetime.now().astimezone()
-    RotatorApp(rotations, today=today, now=now, executor=executor).run()
+    RotatorApp(rotations, today=today, now=now, executor=executor, notify=notify).run()
     return 0
