@@ -527,6 +527,8 @@ class RotatorApp(App[None]):
                     # Textual lays nothing out while a batch is open (Screen._on_timer_update),
                     # and paints the layout last made when it closes.
                     self.screen._refresh_layout()
+                    if self.shown()[:1] == [self.selected]:  # the top, the green box with it
+                        self.box_list.scroll_home(animate=False, immediate=True)
                     self.box_list.scroll_to_widget(box, animate=False, immediate=True)
                     self.screen._refresh_layout(scroll=True)
             finally:

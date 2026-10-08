@@ -609,7 +609,8 @@ async def test_ctrl_q_quits_with_a_button_focused():
 # --- the empty state ---------------------------------------------------------------------
 
 
-async def test_when_nothing_waits_a_green_box_tops_the_list_without_a_next_line():
+def nothing_waits():
+    """The listing's store with every key stamped yesterday: nothing waits on the operator."""
     bao = fake_of(store())
     yesterday = "2026-10-07"
     for path, key in [
@@ -622,7 +623,11 @@ async def test_when_nothing_waits_a_green_box_tops_the_list_without_a_next_line(
     ]:
         put_state(bao, path, stamps={key: yesterday})
     put_state(bao, MIXED, stamps={"password": yesterday, "pin": yesterday})
-    app = app_of(bao)
+    return bao
+
+
+async def test_when_nothing_waits_a_green_box_tops_the_list_without_a_next_line():
+    app = app_of(nothing_waits())
     async with app.run_test(size=SIZE) as pilot:
         await settled(pilot)
         first, *rest = app.box_list.children
@@ -632,6 +637,24 @@ async def test_when_nothing_waits_a_green_box_tops_the_list_without_a_next_line(
         assert app.selected == f"{HOOK}#secret"  # the soonest
         status = app.query_one("#status", StatusBar).content.plain
         assert "0 waiting" in status
+
+
+async def test_home_shows_the_top_of_the_list_the_green_box_included():
+    """On a list taller than the terminal, End and then Home: the green box shows again above the
+    first box, which is selected and whole."""
+    app = app_of(nothing_waits())
+    async with app.run_test(size=(110, 20)) as pilot:
+        await settled(pilot)
+        await pilot.press("end")
+        await settled(pilot)
+        assert app.box_list.scroll_y > 0
+        await pilot.press("home")
+        await settled(pilot)
+        assert app.selected == app.order[0]
+        view, green = app.box_list.region, app.query_one(EmptyState).region
+        box = app.box(app.selected).region
+        assert app.box_list.scroll_y == 0 and view.y <= green.y
+        assert green.bottom <= box.y and box.bottom <= view.bottom
 
 
 async def test_with_nothing_listed_the_green_box_is_the_list_s_only_box():
