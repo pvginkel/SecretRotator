@@ -231,6 +231,7 @@ def test_the_never_keys_that_stay_until_their_cards_land(entries):
         ("jenkins/iot-mqtt", "password", "manual"),
         ("eso/prd/media/prd/mydownloads-users", "users.yml", "manual"),
         ("shared/samba/users", "mvdbovenkamp", "manual"),
+        ("shared/jenkins/admin-password", "password", "manual"),
         ("rotator/approle/eso-dev", "secret_id", "approle"),
     }
 

@@ -55,6 +55,8 @@ def oidc_config(**fields):
         "default_role": "openbao-admin",
         **fields,
     }
+
+
 # When a version was written unless the fake recorded another time: the evening before plans.NOW.
 WRITTEN_AT = datetime.datetime(2026, 10, 4, 21, 14, 7, 945319, tzinfo=datetime.UTC)
 
