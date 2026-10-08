@@ -273,7 +273,7 @@ class TestTheRuns:
         assert (new != PASSWORD, old) == (True, PASSWORD)
         assert len(world.grafana.puts()) == 1
 
-    def test_a_set_whose_answer_is_lost_is_undone_once_kv_holds_the_old_password_again(self):
+    def test_a_set_whose_answer_is_lost_is_undone_before_kv_holds_the_old_password_again(self):
         world = World()
         world.grafana.lost["PUT", PUT_PATH] = 502
         executor = world.executor()
