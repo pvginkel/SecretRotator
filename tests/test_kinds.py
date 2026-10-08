@@ -16,6 +16,7 @@ from secret_rotator.contract import MARKER_VALUE
 from secret_rotator.executor import Abandon, AbortRefused, Executor, Outcome
 from secret_rotator.kinds.approle import AppRole
 from secret_rotator.kinds.cnpg_role import CnpgRole
+from secret_rotator.kinds.jenkins_token import JenkinsToken
 from secret_rotator.kinds.keycloak_client import KeycloakClient
 from secret_rotator.kinds.manual import TYPES, Manual, load_type
 from secret_rotator.kinds.random import Random
@@ -79,11 +80,19 @@ def run(store, plan, *answers, data=None):
 
 class TestTheRegistry:
     def test_it_finds_the_kinds_this_distribution_ships_through_their_entry_points(self):
-        assert set(KINDS) == {"random", "manual", "approle", "keycloak-client", "cnpg-role"}
+        assert set(KINDS) == {
+            "random",
+            "manual",
+            "approle",
+            "keycloak-client",
+            "cnpg-role",
+            "jenkins-token",
+        }
         assert isinstance(KINDS["random"], Random) and isinstance(KINDS["manual"], Manual)
         assert isinstance(KINDS["approle"], AppRole)
         assert isinstance(KINDS["keycloak-client"], KeycloakClient)
         assert isinstance(KINDS["cnpg-role"], CnpgRole)
+        assert isinstance(KINDS["jenkins-token"], JenkinsToken)
 
     @pytest.mark.parametrize(
         ("found", "problem"),
@@ -171,12 +180,11 @@ class TestRandom:
 class TestCredentialTypes:
     """manual's documents (design §6, ruling 054 D1): one per credential type of the catalog."""
 
-    def test_the_plugin_documents_the_catalogs_ten_types(self):
+    def test_the_plugin_documents_the_catalogs_nine_types(self):
         assert set(TYPES) == {
             "argocd-token",
             "github-pat",
             "grafana-api-key",
-            "jenkins-basic-auth",
             "mouser-api-key",
             "openai-api-key",
             "ssh-private-key",
@@ -208,7 +216,6 @@ class TestCredentialTypes:
                 ["0f8fad5b-d9cb-469f-a165-70867728950e"],
                 ["0f8fad5bd9cb469fa16570867728950e", "key"],
             ),
-            ("jenkins-basic-auth", ["Basic dXNlcjp0b2tlbg=="], ["dXNlcjp0b2tlbg==", "Bearer x"]),
             (
                 "tvdb-api-key",
                 ["0F8FAD5B-D9CB-469F-A165-70867728950E"],

@@ -1,15 +1,18 @@
 """Jenkins over HTTP, as an opener for secret_rotator.jenkins.Jenkins: jobs by full name, the build
-queue and builds, and the credentials of the system store's global domain, whose config.xml it
-gives with every secret redacted. A queued build starts and ends once the fake clock, which the
-client's sleep advances, has passed its lag."""
+queue and builds, the credentials of the system store's global domain, whose config.xml it gives
+with every secret redacted, and the admin account's API tokens, which its security page lists as
+Jenkins 2.568.3 does and any of which authenticates a request. A queued build starts and ends once
+the fake clock, which the client's sleep advances, has passed its lag."""
 
 import base64
 import email.message
+import html
 import io
 import json
 import re
 import urllib.error
 import urllib.parse
+import uuid
 import xml.etree.ElementTree as ET
 
 from secret_rotator.jenkins import ADDR, Jenkins
@@ -20,6 +23,7 @@ CREDENTIALS = {"user": USER, "token": TOKEN}  # rotator/jenkins
 YT = "YouTrack/YouTrackConfiguration"
 APPROLE = "724520d1-a0c1-4fa3-8a9e-a027de7f469a"
 REDACTED = "<secret-redacted/>"
+FORM = "application/x-www-form-urlencoded"
 
 VAULT_APPROLE = f"""<com.datapipe.jenkins.vault.credentials.VaultAppRoleCredential plugin="vault">
   <scope>GLOBAL</scope>
@@ -55,6 +59,33 @@ CERTIFICATE = f"""<com.cloudbees.plugins.credentials.impl.CertificateCredentials
   </keyStoreSource>
 </com.cloudbees.plugins.credentials.impl.CertificateCredentialsImpl>"""
 
+PROPERTY = f"/user/{USER}/descriptorByName/jenkins.security.ApiTokenProperty"
+# The security page's token list as Jenkins 2.568.3 renders it (2026-10-08), its icons left out:
+# the hidden template card of a new token first, then one card per token.
+TEMPLATE_CARD = (
+    '<div class="jenkins-hidden" id="api-token-row-template"><div class="token-card">'
+    '<div class="token-card-inner"><div class="token-card__title"><span class="token-name"></span>'
+    '</div><div class="token-stats"><span class="api-token-new-expiration token-creation"></span>'
+    '<span class="token-last-used">Never used</span></div></div><div class="token-controls">'
+    '<button tooltip="Show" type="button" class="api-token-property-token-show"></button>'
+    f'<button data-target-url="{PROPERTY}/rename" type="button" '
+    'class="api-token-property-token-rename"></button>'
+    f'<button data-target-url="{PROPERTY}/revoke" type="button" '
+    'class="api-token-property-token-revoke"></button></div></div></div>'
+)
+TOKEN_CARD = (
+    '<div id="{uuid}" class="token-card "><div class="token-card-inner"><div tooltip="" '
+    'class="token-card__title "><span class="token-name">{name}</span></div><div '
+    'class="token-stats"><span class="warning token-creation">This token does not expire</span>'
+    '<span class="token-last-used"><span class="jenkins-!-text-color-secondary">Last used today'
+    '</span><span class="token-use-counter">7</span></span></div></div><div '
+    f'class="token-controls"><button data-target-url="{PROPERTY}/rename" type="button" '
+    'class="jenkins-button api-token-property-token-rename"></button><button '
+    f'data-confirm-title="Revoke token" data-target-url="{PROPERTY}/revoke" type="button" '
+    'class="jenkins-button api-token-property-token-revoke" data-token-uuid="{uuid}"></button>'
+    "</div></div>"
+)
+
 USERNAME = """<com.cloudbees.plugins.credentials.impl.UsernameCredentialsImpl>
   <scope>GLOBAL</scope>
   <id>a-username</id>
@@ -69,6 +100,18 @@ class FakeResponse(io.BytesIO):
         self.headers = email.message.Message()
         for name, value in (headers or {}).items():
             self.headers[name] = value
+
+
+def security_page(tokens):
+    """The account's security page listing the tokens, {uuid: {"name", "value"}}."""
+    cards = "".join(
+        TOKEN_CARD.format(uuid=uuid, name=html.escape(token["name"]))
+        for uuid, token in tokens.items()
+    )
+    return (
+        f'<html><body><div id="api-tokens">{TEMPLATE_CARD}<div id="api-token-list">{cards}'
+        "</div></div></body></html>"
+    )
 
 
 def string_credential(id):
@@ -93,6 +136,13 @@ class FakeJenkins:
             "a-certificate": {"xml": CERTIFICATE, "secrets": {}},
             "a-username": {"xml": USERNAME, "secrets": {}},
         }
+        # The admin account's API tokens: uuid -> {"name", "value"}; rotator/jenkins holds one.
+        self.tokens = {}
+        self.serial = 0  # the last token uuid's number
+        self.minted = 0
+        self.add_token("secret-rotator", TOKEN)
+        self.before_revoke = None  # called with the uuid before each revoke
+        self.page = security_page  # renders the security page from the tokens
         self.mangle = set()  # credential ids whose description a POST changes
         self.requests = []  # (method, path, query, body)
         self.broken = {}  # (method, path) -> the OSError it raises
@@ -107,6 +157,16 @@ class FakeJenkins:
 
     def sleep(self, seconds):
         self.now += seconds
+
+    def add_token(self, name, value):
+        """A token of the admin account; its uuid."""
+        self.serial += 1
+        key = str(uuid.UUID(int=self.serial))
+        self.tokens[key] = {"name": name, "value": value}
+        return key
+
+    def token_names(self):
+        return sorted(token["name"] for token in self.tokens.values())
 
     def add_string(self, id, value):
         self.credentials[id] = {"xml": string_credential(id), "secrets": {"secret": value}}
@@ -130,9 +190,22 @@ class FakeJenkins:
             raise self.broken[method, path]
         if (method, path) in self.refused:
             return self.error(self.refused[method, path])
-        auth = "Basic " + base64.b64encode(f"{USER}:{TOKEN}".encode()).decode()
-        if req.get_header("Authorization") != auth:
+        live = {
+            "Basic " + base64.b64encode(f"{USER}:{token['value']}".encode()).decode()
+            for token in self.tokens.values()
+        }
+        if req.get_header("Authorization") not in live:
             return self.error(401)
+        if path == f"/user/{USER}/security/" and method == "GET":
+            return FakeResponse(200, self.page(self.tokens).encode())
+        if path == f"{PROPERTY}/generateNewToken":
+            assert method == "POST" and req.get_header("Content-type") == FORM
+            return self.generate(dict(urllib.parse.parse_qsl(body)))
+        if path == f"{PROPERTY}/revoke":
+            assert method == "POST" and req.get_header("Content-type") == FORM
+            return self.revoke(dict(urllib.parse.parse_qsl(body)))
+        if path == "/whoAmI/api/json":
+            return self.json({"name": USER, "anonymous": False, "authenticated": True})
         if found := re.fullmatch(r"((?:/job/[^/]+)+)/(build|buildWithParameters)", path):
             assert method == "POST"
             return self.trigger(self.job_of(found[1]), found[2], query)
@@ -145,6 +218,22 @@ class FakeJenkins:
         ):
             return self.credential(urllib.parse.unquote(found[1]), method, body, req)
         return self.error(404)
+
+    def generate(self, form):
+        name = form.get("newTokenName", "").strip()
+        if not name:
+            return self.json({"status": "error", "message": "a name is wanted"})
+        self.minted += 1
+        value = f"SECRET-minted-token-{self.minted}"
+        key = self.add_token(name, value)
+        data = {"tokenUuid": key, "tokenName": name, "tokenValue": value}
+        return self.json({"status": "ok", "data": data | {"expirationDate": "never"}})
+
+    def revoke(self, form):
+        if self.before_revoke:
+            self.before_revoke(form["tokenUuid"])
+        self.tokens.pop(form["tokenUuid"], None)
+        return FakeResponse(200, b"")
 
     @staticmethod
     def job_of(path):

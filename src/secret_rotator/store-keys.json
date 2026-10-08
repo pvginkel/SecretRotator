@@ -119,6 +119,9 @@
   "eso/prd/iac-provisioner/api/token": [
     "token"
   ],
+  "eso/prd/infra-statistics/prd/jenkins": [
+    "token"
+  ],
   "eso/prd/intercom/prd/mqtt": [
     "password"
   ],
@@ -152,8 +155,9 @@
     "client_secret"
   ],
   "eso/prd/jenkins-mcp/prd/config": [
-    "authorization",
-    "bearer-token"
+    "bearer-token",
+    "token",
+    "user"
   ],
   "eso/prd/jenkins-telegram-bot/prd/config": [
     "jenkins-token",

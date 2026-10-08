@@ -67,7 +67,6 @@ KINDS: dict[str, KindSpec] = {
     "cephx": KindSpec(ONE),
     "rgw-admin": KindSpec(ONE),
     "grafana-admin": KindSpec(ONE),
-    "jenkins-admin-password": KindSpec(ONE),
     "pve-root-password": KindSpec(ONE),
     "kubecoder-client": KindSpec(ONE),
     "jenkins-job-token": KindSpec(ONE),

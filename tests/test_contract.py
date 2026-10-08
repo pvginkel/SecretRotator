@@ -28,7 +28,6 @@ DESIGN_6_KINDS = {
     "cephx",
     "rgw-admin",
     "grafana-admin",
-    "jenkins-admin-password",
     "pve-root-password",
     "kubecoder-client",
     "jenkins-job-token",

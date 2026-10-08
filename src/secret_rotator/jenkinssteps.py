@@ -15,7 +15,8 @@ JOB_BOUND, JOB_POLL = 1800, 10  # seconds, from the trigger: the queue and the b
 REDACTED = "secret-redacted"
 
 
-def connect(jenkins: Jenkins, ctx: Context) -> None:
+def connect(jenkins: Jenkins, ctx: Context) -> str:
+    """Authenticates the client as rotator/jenkins says; the account's user id."""
     version = ctx.bao.read(CREDENTIALS)
     if version is None:
         raise StepFailed(
@@ -24,6 +25,7 @@ def connect(jenkins: Jenkins, ctx: Context) -> None:
     if missing := [key for key in ("user", "token") if not version.data.get(key)]:
         raise StepFailed(f"{CREDENTIALS} has no {' or '.join(missing)}")
     jenkins.authenticate(version.data["user"], version.data["token"])
+    return version.data["user"]
 
 
 def parse_job(spec: str) -> tuple[str, dict[str, str]]:
