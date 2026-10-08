@@ -26,6 +26,7 @@ from secret_rotator.kvsteps import (
 from secret_rotator.model import Actor, Step
 from secret_rotator.opsteps import OperatorConfirm, OperatorCredential, OperatorShow, Shape
 from secret_rotator.schedule import schedule
+from secret_rotator.staging import InFlight
 
 
 class PlanError(Exception):
@@ -300,7 +301,9 @@ class PlanContext:
 
 
 class Kind(Protocol):
-    """A kind's plugin (design §6, plugin contract), registered under its name."""
+    """A kind's plugin (design §6, plugin contract), registered under its name. It may also have
+    `credential(leaf: Target) -> str`, the key's credential in words for the UI's title (R85); the
+    title of a kind without it shows the kind's name."""
 
     name: str  # the kind an entry names
     per_key: bool  # one plan per key of the kind on a leaf; else one plan of all of them
@@ -423,6 +426,18 @@ def make(
         raise PlanError(f"{leaf}: {kind} is not a kind this install has a plugin for")
     built = target(leaf, kind, keys, audit)
     return build(kinds[kind], built, cluster, derived=derived, jenkins=jenkins, ansible=ansible)
+
+
+def in_flight(
+    kinds: Mapping[str, Kind],
+    leaf: str,
+    flight: InFlight,
+    audit: Audit,
+    cluster: Cluster | None = None,
+) -> Plan:
+    """The leaf's plan in flight, built again from its entries and what it derived from the
+    cluster when it started (design §4.5)."""
+    return make(kinds, leaf, flight.kind, list(flight.keys), audit, cluster, derived=flight.derived)
 
 
 def split(kind: Kind, keys: Iterable[str]) -> list[tuple[str, ...]]:

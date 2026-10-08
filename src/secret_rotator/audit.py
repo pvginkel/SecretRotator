@@ -165,6 +165,24 @@ def copies_in(meta: dict[str, str]) -> set[tuple[str, str]]:
     return {target for kind in kinds if (target := copy_target(kind))}
 
 
+def exempt(store: Mapping[str, Leaf], leaf: str, referenced: set[str] | None) -> set[str] | None:
+    """The leaves the orphan check takes as referenced for the leaf's plans. A plan in flight is
+    not blocked by the orphan finding of its leaf, or of a leaf holding a copy of its keys (design
+    §3.3): with the leaf's plan in flight, those leaves are added."""
+    flight = store[leaf].flight
+    if flight is None or referenced is None:
+        return referenced
+    return (
+        referenced
+        | {leaf}
+        | {
+            path
+            for path, other in store.items()
+            if any((leaf, key) in copies_in(other.meta) for key in flight.keys)
+        }
+    )
+
+
 def audit(
     store: dict[str, Leaf],
     referenced: set[str] | None = None,

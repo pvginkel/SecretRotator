@@ -12,6 +12,7 @@ import termios
 import threading
 
 import pytest
+from fake_openbao import WRITTEN_AT
 from fixtures import edit, fields_of
 from plans import COPY, LEAF, client, fake_of, flight_of, state_of
 from test_kinds import ACTIVATE_NONE, KINDS, SEAL, TRELLO, WIFI, store_of
@@ -134,7 +135,7 @@ class TestPlanCommand:
 
     def test_the_plan_in_flight_and_the_keys_without_a_plan_are_named(self):
         store = store_of(**ACTIVATE_NONE)
-        store[TRELLO].flight = InFlight("manual", ("token",), "kv.write")
+        store[TRELLO].flight = InFlight("manual", ("token",), "kv.write", WRITTEN_AT)
         lines = []
         terminal.print_leaf(lines.append, TRELLO, store, audit(store), KINDS, TODAY)
         assert lines[1] == "  in flight: its manual plan of token, at kv.write"

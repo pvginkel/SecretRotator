@@ -1,5 +1,6 @@
 """OpenBao's HTTP API, as much of it as the rotator uses: srviac's iac image has no bao CLI."""
 
+import datetime
 import functools
 import http.client
 import json
@@ -44,6 +45,7 @@ class Version:
 
     number: int
     data: dict[str, str]
+    created: datetime.datetime  # when it was written
 
 
 class OpenBao:
@@ -203,7 +205,9 @@ class OpenBao:
         status, doc = self.call("GET", f"{MOUNT}/data/{leaf}", query=query)
         if status == 404:
             return None
-        return Version(doc["data"]["metadata"]["version"], doc["data"]["data"])
+        meta = doc["data"]["metadata"]
+        created = datetime.datetime.fromisoformat(meta["created_time"])
+        return Version(meta["version"], doc["data"]["data"], created)
 
     def write(self, leaf: str, data: dict[str, str], cas: int | None = None) -> int:
         """Writes the leaf's whole data as a new version, whose number it returns. With cas, only

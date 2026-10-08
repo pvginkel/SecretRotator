@@ -550,7 +550,7 @@ class TestOperatorSteps:
             self.held = held
 
         def read(self, leaf):
-            return None if self.held is None else Version(1, self.held)
+            return None if self.held is None else Version(1, self.held, NOW)
 
         def ask(self, request):
             self.asked.append(request)

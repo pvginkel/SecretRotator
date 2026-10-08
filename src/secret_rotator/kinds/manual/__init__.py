@@ -78,6 +78,10 @@ class Manual:
     def ask(self, leaf: Target) -> str:
         return f"paste a new {_what(leaf)}"
 
+    def credential(self, leaf: Target) -> str:
+        known = _type(leaf)
+        return known.credential if known else self.name
+
     def description(self, leaf: Target) -> str:
         return f"You mint a new {_what(leaf)} and enter it. The tool {tool_part(leaf)}."
 

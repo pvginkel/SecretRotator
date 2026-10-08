@@ -3,15 +3,16 @@ object under its path; every write a check-and-set started again from a fresh re
 write came first; a leaf gone from the store dropped at the next write; and the plans in flight
 found by their staging leaves."""
 
+import datetime
 import json
 
 import pytest
-from fake_openbao import FakeOpenBao
+from fake_openbao import WRITTEN_AT, FakeOpenBao
 from plans import LEAF, client, fake, put_flight, put_state, run_state, state_of
 
 from secret_rotator.contract import STATE_LEAF
 from secret_rotator.openbao import OpenBaoError
-from secret_rotator.staging import InFlight, flights
+from secret_rotator.staging import ROLLBACK, InFlight, flights, staging_leaf
 from secret_rotator.state import LeafState, State
 
 WIFI = "shared/wifi"
@@ -118,9 +119,20 @@ class TestThePlansInFlight:
         put_flight(bao, "random", LEAF, ["token"], "kv.write", **{"value:token": "SECRET-new"})
         put_flight(bao, "manual", WIFI, ["a,b", "c/d"], "operator.credential:a,b")
         assert flights(client(bao)) == {
-            LEAF: InFlight("random", ("token",), "kv.write"),
-            WIFI: InFlight("manual", ("a,b", "c/d"), "operator.credential:a,b"),
+            LEAF: InFlight("random", ("token",), "kv.write", WRITTEN_AT),
+            WIFI: InFlight("manual", ("a,b", "c/d"), "operator.credential:a,b", WRITTEN_AT),
         }
+
+    def test_each_is_since_its_staging_leaf_s_latest_version_and_says_whether_it_rolls_back(self):
+        bao = fake()
+        put_flight(bao, "random", LEAF, ["token"], "kv.write")
+        later = WRITTEN_AT + datetime.timedelta(hours=1)
+        bao.now = later
+        client(bao).write(staging_leaf("random", LEAF), bao.data(staging_leaf("random", LEAF)))
+        assert flights(client(bao))[LEAF].since == later
+        assert not flights(client(bao))[LEAF].rolling_back
+        put_flight(bao, "random", LEAF, ["token"], "kv.write", **{ROLLBACK: "1"})
+        assert flights(client(bao))[LEAF].rolling_back
 
     def test_none_without_a_staging_leaf(self):
         assert flights(client(fake())) == {}

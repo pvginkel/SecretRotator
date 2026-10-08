@@ -7,7 +7,7 @@ import functools
 import time
 from collections.abc import Callable, Mapping
 
-from secret_rotator.audit import Audit, Leaf, audit, copies_in, live_store
+from secret_rotator.audit import Audit, Leaf, audit, exempt, live_store
 from secret_rotator.cluster import Cluster
 from secret_rotator.console import Console
 from secret_rotator.executor import Abandon, Executor, Outcome, PlanMismatch, Stand
@@ -33,7 +33,7 @@ from secret_rotator.opsteps import (
     ShowRequest,
     expiry_problem,
 )
-from secret_rotator.plan import Kind, LeafPlan, Plan, PlanError, make, of_leaf
+from secret_rotator.plan import Kind, LeafPlan, Plan, PlanError, in_flight, of_leaf
 from secret_rotator.session import Choice, Session, abort_question
 from secret_rotator.state import LeafState, State
 
@@ -412,15 +412,7 @@ def run_leaf(
         return 1
     flight = store[leaf].flight
     referenced = None if cluster is None else cluster.referenced()
-    if flight is not None and referenced is not None:
-        # A plan in flight is not blocked by the orphan finding of its leaf, or of a leaf holding a
-        # copy of its keys (design §3.3).
-        referenced |= {leaf} | {
-            path
-            for path, other in store.items()
-            if any((leaf, key) in copies_in(other.meta) for key in flight.keys)
-        }
-    result = audit(store, referenced, kinds)
+    result = audit(store, exempt(store, leaf, referenced), kinds)
     plans, unplanned = of_leaf(leaf, store, result, kinds, cluster)
     try:
         if flight is None:
@@ -429,15 +421,7 @@ def run_leaf(
                 return 0 if any(p.plan for p in plans) else 1
         else:
             try:
-                plan = make(
-                    kinds,
-                    leaf,
-                    flight.kind,
-                    list(flight.keys),
-                    result,
-                    cluster,
-                    derived=flight.derived,
-                )
+                plan = in_flight(kinds, leaf, flight, result, cluster)
             except PlanError as e:
                 console.line(f"error: its plan in flight cannot be built again: {e}")
                 return 1

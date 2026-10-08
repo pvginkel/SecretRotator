@@ -2,10 +2,11 @@
 values, metadata and its patch with max_versions, create, and refusals and transport failures it
 names."""
 
+import datetime
 import urllib.error
 
 import pytest
-from fake_openbao import ROLE_ID, SECRET_ID, TOKEN, FakeOpenBao, approle
+from fake_openbao import ROLE_ID, SECRET_ID, TOKEN, WRITTEN_AT, FakeOpenBao, approle
 from fixtures import COMPLIANT, data_of, fields_of
 
 from secret_rotator.openbao import (
@@ -138,13 +139,15 @@ def test_a_metadata_patch_of_a_leaf_that_is_gone_is_refused():
     assert str(e.value) == "PATCH kv/metadata/no/such/leaf: HTTP 404: no leaf no/such/leaf"
 
 
-def test_read_gives_a_version_s_number_and_data_or_none():
+def test_read_gives_a_version_s_number_data_and_created_time_or_none():
     bao = fake()
     c = client(bao)
-    assert c.read("shared/wifi") == Version(1, data_of("shared/wifi"))
+    assert c.read("shared/wifi") == Version(1, data_of("shared/wifi"), WRITTEN_AT)
+    later = WRITTEN_AT + datetime.timedelta(days=1)
+    bao.now = later
     c.write("shared/wifi", {"password": "SECRET-new"})
-    assert c.read("shared/wifi") == Version(2, {"password": "SECRET-new"})
-    assert c.read("shared/wifi", version=1) == Version(1, data_of("shared/wifi"))
+    assert c.read("shared/wifi") == Version(2, {"password": "SECRET-new"}, later)
+    assert c.read("shared/wifi", version=1) == Version(1, data_of("shared/wifi"), WRITTEN_AT)
     assert c.read("shared/wifi", version=5) is None
     assert c.read("no/such/leaf") is None
     assert bao.requests[-2][2] == {"version": "5"}

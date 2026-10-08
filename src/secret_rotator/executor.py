@@ -31,10 +31,8 @@ from secret_rotator.model import (
 )
 from secret_rotator.openbao import OpenBao, OpenBaoError
 from secret_rotator.plan import Plan
-from secret_rotator.staging import NOT_LANDED, STEP, Staging, flights
+from secret_rotator.staging import NOT_LANDED, ROLLBACK, STEP, InFlight, Staging, flights
 from secret_rotator.state import LeafState, State
-
-ROLLBACK = "rollback"  # staging: how many of the rollback's items are done
 
 
 class Stand(StrEnum):
@@ -76,6 +74,31 @@ class PlanMismatch(Exception):
 
 class AbortRefused(Exception):
     pass
+
+
+def stand_of(plan: Plan, flight: InFlight | None, status: str | None) -> tuple[int, Stand]:
+    """Where the plan stands, from its leaf's plan in flight and the leaf's status in the run
+    state: the index of the step it is at, and its Stand. PlanMismatch when the leaf is in flight
+    in another of its plans, or at a step this plan does not have."""
+    if flight is None:
+        return 0, Stand.FRESH
+    leaf = plan.target.leaf
+    if (flight.kind, flight.keys) != (plan.target.kind, plan.target.keys):
+        raise PlanMismatch(
+            f"{leaf} is in flight in its {flight.kind} plan of {', '.join(flight.keys)}, "
+            f"at {flight.step}"
+        )
+    at = plan.index(flight.step)
+    if at is None:
+        raise PlanMismatch(
+            f"{leaf} is in flight at step {flight.step}, which the {plan.name} rebuilt from its "
+            f"entries does not have: they changed mid-rotation"
+        )
+    if flight.rolling_back:
+        return at, Stand.ROLLING_BACK
+    if (status or "").startswith("failed") and plan.steps[at].actor is Actor.TOOL:
+        return at, Stand.FAILED
+    return at, Stand.IN_FLIGHT
 
 
 class _Abandoned(BaseException):
@@ -159,28 +182,7 @@ class Executor:
     def load(self) -> Stand:
         flight = flights(self.bao).get(self.leaf)
         self.staging.load()
-        if flight is None:
-            self.at, self.stand = 0, Stand.FRESH
-            return self.stand
-        if (flight.kind, flight.keys) != (self.kind, self.plan.target.keys):
-            raise PlanMismatch(
-                f"{self.leaf} is in flight in its {flight.kind} plan of {', '.join(flight.keys)}, "
-                f"at {flight.step}"
-            )
-        at = self.plan.index(flight.step)
-        if at is None:
-            raise PlanMismatch(
-                f"{self.leaf} is in flight at step {flight.step}, which the {self.plan.name} "
-                f"rebuilt from its entries does not have: they changed mid-rotation"
-            )
-        self.at = at
-        failed = (self.state.of(self.leaf).status or "").startswith("failed")
-        if self.staging.get(ROLLBACK) is not None:
-            self.stand = Stand.ROLLING_BACK
-        elif failed and self.plan.steps[at].actor is Actor.TOOL:
-            self.stand = Stand.FAILED
-        else:
-            self.stand = Stand.IN_FLIGHT
+        self.at, self.stand = stand_of(self.plan, flight, self.state.of(self.leaf).status)
         return self.stand
 
     def run(self) -> Outcome:

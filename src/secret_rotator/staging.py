@@ -5,6 +5,7 @@ so an exit or a crash loses nothing; destroyed with every version once the plan 
 back. Its path, rotator/staging/<kind>/<leaf>, names the plan's kind and leaf. The rotator's policy
 grants delete here only."""
 
+import datetime
 import json
 from dataclasses import dataclass, field
 
@@ -19,6 +20,7 @@ KEYS = "keys"
 STEP = "step"
 DERIVED = "derived"
 NOT_LANDED = "not-landed"
+ROLLBACK = "rollback"  # how many of the rollback's items are done, from its start
 
 
 def staging_leaf(kind: str, leaf: str) -> str:
@@ -28,12 +30,15 @@ def staging_leaf(kind: str, leaf: str) -> str:
 @dataclass(frozen=True)
 class InFlight:
     """A plan in flight: its kind and keys, the step it is at, written before that step runs, so
-    every step before it finished, and what it derived from the cluster."""
+    every step before it finished, when its record was last written, what it derived from the
+    cluster, and whether a rollback of it stopped part-way."""
 
     kind: str
     keys: tuple[str, ...]
     step: str
+    since: datetime.datetime  # its staging leaf's latest version's created_time
     derived: Derived = field(default_factory=Derived)
+    rolling_back: bool = False
 
 
 def flights(bao: OpenBao) -> dict[str, InFlight]:
@@ -41,9 +46,16 @@ def flights(bao: OpenBao) -> dict[str, InFlight]:
     found = {}
     for path in bao.leaves(STAGING_PREFIX):
         kind, leaf = path.removeprefix(STAGING_PREFIX).split("/", 1)
-        data = bao.read(path).data
-        keys = tuple(json.loads(data[KEYS]))
-        found[leaf] = InFlight(kind, keys, data[STEP], Derived.load(data[DERIVED]))
+        version = bao.read(path)
+        data = version.data
+        found[leaf] = InFlight(
+            kind,
+            tuple(json.loads(data[KEYS])),
+            data[STEP],
+            version.created,
+            Derived.load(data[DERIVED]),
+            rolling_back=ROLLBACK in data,
+        )
     return found
 
 

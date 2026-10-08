@@ -55,6 +55,8 @@ def oidc_config(**fields):
         "default_role": "openbao-admin",
         **fields,
     }
+# When a version was written unless the fake recorded another time: the evening before plans.NOW.
+WRITTEN_AT = datetime.datetime(2026, 10, 4, 21, 14, 7, 945319, tzinfo=datetime.UTC)
 
 
 def approle(role_id, **secret_ids):
@@ -82,8 +84,9 @@ class FakeResponse(io.BytesIO):
 class FakeOpenBao:
     def __init__(self, leaves=None, approles=None, clock=None):
         # path -> {"data": dict | None, "meta": dict}, and once written "version" (the current
-        # version's number, else 1), "history" (version number -> that version's data) and
-        # "max_versions" (else 0)
+        # version's number, else 1), "history" (version number -> that version's data),
+        # "created" (version number -> when it was written, else WRITTEN_AT) and "max_versions"
+        # (else 0)
         self.leaves = copy.deepcopy(leaves or {})
         self.requests = []  # (method, path, query, body, content type)
         self.refuse = {}  # (method, request path) -> the HTTP status it answers
@@ -99,6 +102,7 @@ class FakeOpenBao:
         self.token_ends = None
         # The OIDC auth method's config with its client secret; None: the method has no config.
         self.oidc = None
+        self.now = WRITTEN_AT  # the created_time of a version written from now on
 
     def __call__(self, req):
         url = urllib.parse.urlsplit(req.full_url)
@@ -182,7 +186,10 @@ class FakeOpenBao:
         data = entry["data"] if number == current else entry.get("history", {}).get(number)
         if data is None:
             return self.answer(404, {"data": {"data": None, "metadata": {"version": number}}})
-        return self.answer(200, {"data": {"data": data, "metadata": {"version": number}}})
+        # KV v2 reports a version's created_time in UTC, to the nanosecond.
+        created = entry.get("created", {}).get(number, WRITTEN_AT)
+        metadata = {"version": number, "created_time": f"{created:%Y-%m-%dT%H:%M:%S.%f}214Z"}
+        return self.answer(200, {"data": {"data": data, "metadata": metadata}})
 
     def check_cas(self, leaf, body):
         cas = body.get("options", {}).get("cas")
@@ -198,6 +205,7 @@ class FakeOpenBao:
             entry.setdefault("history", {})[number] = entry["data"]
         entry["version"] = number + 1
         entry["data"] = data
+        entry.setdefault("created", {})[number + 1] = self.now
         return self.answer(200, {"data": {"version": number + 1}})
 
     def post_data(self, leaf, body, query, req):

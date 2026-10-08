@@ -8,7 +8,7 @@ import json
 import threading
 import time
 
-from fake_openbao import TOKEN, FakeOpenBao
+from fake_openbao import TOKEN, WRITTEN_AT, FakeOpenBao
 from fixtures import COMPLIANT, compliant_store, data_of
 
 from secret_rotator.audit import audit
@@ -18,7 +18,15 @@ from secret_rotator.lock import Lock
 from secret_rotator.model import Actor, Finished, Started, Step, StepFailed
 from secret_rotator.openbao import OpenBao
 from secret_rotator.plan import build, target
-from secret_rotator.staging import DERIVED, KEYS, STEP, InFlight, flights, staging_leaf
+from secret_rotator.staging import (
+    DERIVED,
+    KEYS,
+    ROLLBACK,
+    STEP,
+    InFlight,
+    flights,
+    staging_leaf,
+)
 from secret_rotator.state import LeafState, State
 
 NOW = datetime.datetime(2026, 10, 5, 4, 30, tzinfo=datetime.UTC)
@@ -85,7 +93,7 @@ def put_flight(bao, kind, leaf, keys, step, **staged):
     """A plan in flight in the fake, as a run left it at the step, having derived nothing."""
     data = {KEYS: json.dumps(list(keys)), STEP: step, DERIVED: Derived().dump()} | staged
     bao.leaves[staging_leaf(kind, leaf)] = {"data": data, "meta": {}}
-    return InFlight(kind, tuple(keys), step)
+    return InFlight(kind, tuple(keys), step, WRITTEN_AT, rolling_back=ROLLBACK in staged)
 
 
 class Journal(list):

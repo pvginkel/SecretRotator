@@ -109,6 +109,9 @@ class AppRole:
         put = [f"put the new {args['role']} secret_id in place"]
         return "; ".join([*(put if delivery.how == "manual" else []), *leaf.confirms])
 
+    def credential(self, leaf: Target) -> str:
+        return "AppRole secret_id"
+
     def description(self, leaf: Target) -> str:
         args = args_of(leaf)
         role, delivery = args["role"], delivery_of(args["delivery"])

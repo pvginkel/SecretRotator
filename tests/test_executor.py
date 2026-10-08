@@ -6,6 +6,7 @@ import datetime
 import time
 
 import pytest
+from fake_openbao import WRITTEN_AT
 from fixtures import AUTO, annotated, compliant_store, data_of, edit, fields_of
 from plans import (
     COPY,
@@ -218,7 +219,9 @@ class TestAFailure:
         state = state_of(bao, LEAF)
         assert state.status == "failed" and "HTTP 403" in state.last_error
         assert state.last_run == "2026-10-05T04:30:00+00:00" and state.stamps == {}
-        assert flight_of(bao, LEAF) == InFlight("random", ("token",), "kv.copy:iac/copy#token")
+        assert flight_of(bao, LEAF) == InFlight(
+            "random", ("token",), "kv.copy:iac/copy#token", WRITTEN_AT
+        )
         (failure,) = r.failures()
         assert failure.step.id == "kv.copy:iac/copy#token" and "Traceback" in failure.technical
         assert r.lines()[-1] == ("failed", "kv.copy:iac/copy#token", Action.RUN)
@@ -329,7 +332,7 @@ class TestTheLeafsPlanInFlight:
         api_key = plan_of(Tool("act", Journal(), fail=1, activator=True), **TRELLO_MANUAL)
         run(bao, api_key)
         flight = flight_of(bao, TRELLO)
-        assert flight == InFlight("manual", ("api-key",), "act")
+        assert flight == InFlight("manual", ("api-key",), "act", WRITTEN_AT)
         again = plan_of(Tool("act", Journal()), **TRELLO_MANUAL | {"keys": flight.keys})
         assert run(bao, again)[0] is Outcome.DONE
         assert state_of(bao, TRELLO).stamps == {"api-key": "2026-10-05"}
@@ -342,7 +345,7 @@ class TestTheLeafsPlanInFlight:
         bao = fake()
         keys = {"store": store, "keys": ("a,b", "c/d")}
         assert run(bao, plan_of(Tool("act", Journal(), fail=1), **keys))[0] is Outcome.FAILED
-        assert flight_of(bao, LEAF) == InFlight("random", ("a,b", "c/d"), "act")
+        assert flight_of(bao, LEAF) == InFlight("random", ("a,b", "c/d"), "act", WRITTEN_AT)
         assert run(bao, plan_of(Tool("act", Journal()), **keys))[0] is Outcome.DONE
         assert state_of(bao, LEAF).stamps == {"a,b": "2026-10-05", "c/d": "2026-10-05"}
 
@@ -353,7 +356,7 @@ class TestResume:
         outcome, r = run(bao, plan_of(Confirm("revoke")), Abandon.EXIT)
         assert outcome is Outcome.EXITED
         assert r.asked == [("revoke", "please revoke")]
-        assert flight_of(bao, LEAF) == InFlight("random", ("token",), "revoke")
+        assert flight_of(bao, LEAF) == InFlight("random", ("token",), "revoke", WRITTEN_AT)
         assert bao.data(LOCK_LEAF) == {}
 
     def test_a_new_process_resumes_where_the_plan_stopped_with_its_staged_value(self):
@@ -685,7 +688,7 @@ class TestStop:
         e, worker = self.started(bao, Waiting("rollout", j), Confirm("check"))
         e.stop(Abandon.EXIT)
         assert worker.join() is Outcome.EXITED
-        assert flight_of(bao, LEAF) == InFlight("random", ("token",), "rollout")
+        assert flight_of(bao, LEAF) == InFlight("random", ("token",), "rollout", WRITTEN_AT)
         assert bao.data(LOCK_LEAF) == {} and state_of(bao, LEAF) == LeafState()
         new = bao.data(LEAF)["token"]
         e = executor(bao, plan_of(Tool("rollout", j), Confirm("check")), Recorder({}))
