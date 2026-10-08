@@ -8,7 +8,7 @@ import os
 import time
 
 from fake_openbao import WRITTEN_AT
-from plans import fake_of, put_flight, put_state
+from plans import client, fake_of, lock, put_flight, put_state, run_state
 from rich.text import Text
 from test_listing import (
     BOT,
@@ -26,6 +26,7 @@ from test_listing import (
 from textual.screen import Screen
 from textual.widgets import Static
 
+from secret_rotator.executor import Executor
 from secret_rotator.model import Actor
 from secret_rotator.staging import ROLLBACK
 from secret_rotator.ui import full_colour
@@ -82,8 +83,26 @@ def world():
     return bao
 
 
-def app_of(bao, today=TODAY, now=NOW):
-    return RotatorApp(listing(bao), today=today, now=now)
+def executor_of(bao):
+    """The executor of a plan on the fake, under the UI's lock, its clock at NOW."""
+
+    def executor(plan, renderer):
+        return Executor(
+            client(bao),
+            plan,
+            renderer,
+            lock(bao, "secret-rotator ui"),
+            state=run_state(bao),
+            dry_run=False,
+            clock=lambda: NOW,
+        )
+
+    return executor
+
+
+def app_of(bao, today=TODAY, now=NOW, rotations=None):
+    rotations = listing(bao) if rotations is None else rotations
+    return RotatorApp(rotations, today=today, now=now, executor=executor_of(bao), linger=0.05)
 
 
 async def until(pilot, condition, timeout=10.0):
@@ -430,7 +449,7 @@ async def test_a_click_selects_a_box_and_opens_it():
         rid = f"{SEAL}#seal-key"
         await pilot.click(app.box(rid), offset=(5, 1))
         await until(pilot, lambda: in_box(app))  # a click opens the box, as ⏎ does
-        assert app.selected == rid and app.focused.label.plain == "Start"
+        assert app.selected == rid and app.focused.label.plain == "Done"  # an external key's
 
 
 async def test_help_opens_on_question_mark_and_f1_and_lists_no_simulation_key():
@@ -506,7 +525,7 @@ async def test_when_nothing_waits_a_green_box_tops_the_list_without_a_next_line(
 
 
 async def test_with_nothing_listed_the_green_box_is_the_list_s_only_box():
-    app = RotatorApp([], today=TODAY, now=NOW)
+    app = app_of(fake_of(store()), rotations=[])
     async with app.run_test(size=SIZE) as pilot:
         await settled(pilot)
         assert [type(w) for w in app.box_list.children] == [EmptyState]

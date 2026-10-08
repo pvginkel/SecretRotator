@@ -3,6 +3,7 @@ credential: SSH private key
 shape:
   words: is a private key, from -----BEGIN … PRIVATE KEY----- to -----END … PRIVATE KEY-----
   pattern: '-----BEGIN ([A-Z]+ )?PRIVATE KEY-----.+-----END ([A-Z]+ )?PRIVATE KEY-----\s*'
+  multiline: true
 expires: false
 ---
 1. Generate a new key pair, with the comment the notes name, into a temporary file:

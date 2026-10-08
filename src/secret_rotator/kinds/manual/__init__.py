@@ -4,9 +4,10 @@ plan per key.
 
 A key's one arg, `type`, names its credential type: one document in types/ each, `<type>.md`, the
 type's standard instructions for minting it under a YAML front matter of what the credential is,
-the shape a pasted value has, and whether it expires. The instructions are the same for every key
-of the type; the key's own notes show below them. For a type that expires the operator gives the
-new credential's expiry with it, which the stamp writes as the key's expires_at."""
+the shape a pasted value has, whether it spans lines, and whether it expires. The instructions are
+the same for every key of the type; the key's own notes show below them. For a type that expires
+the operator gives the new credential's expiry with it, which the stamp writes as the key's
+expires_at."""
 
 import re
 from collections.abc import Mapping
@@ -39,7 +40,11 @@ def load_type(text: str) -> CredentialType:
     return CredentialType(
         fields["credential"],
         body.strip(),
-        Shape(fields["shape"]["words"], lambda value: pattern.fullmatch(value) is not None),
+        Shape(
+            fields["shape"]["words"],
+            lambda value: pattern.fullmatch(value) is not None,
+            fields["shape"].get("multiline", False),
+        ),
         fields["expires"],
     )
 

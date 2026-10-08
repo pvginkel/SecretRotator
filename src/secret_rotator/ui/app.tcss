@@ -35,7 +35,9 @@ Box:hover {
 
 Box.-due { border: round #C0C0C0; border-title-color: #C0C0C0; }
 Box.-accent { border: round $accent; border-title-color: $accent; }
+Box.-primary { border: round $primary; border-title-color: $text-primary; }
 Box.-error { border: round $error; border-title-color: $text-error; }
+Box.-success { border: round $success; border-title-color: $text-success; }
 
 Box > .info {
     height: 1;
@@ -47,6 +49,38 @@ Box > StateArea {
 
 Box.-selected > StateArea {
     display: block;
+}
+
+/* A field: a normal input (a TextArea for a multi-line value) in a rounded box titled with its
+   key, orange while focused; the shown value is drawn the same way. */
+CredentialField > Input, CredentialField > SecretTextArea, ExpiryField > Input, ValueBox {
+    width: 1fr;
+    max-width: 110;
+    padding: 0 1;
+    border: round $foreground 30%;
+    border-title-color: $foreground;
+    background: $surface;
+}
+
+CredentialField > Input, ExpiryField > Input {
+    height: 3;
+}
+
+CredentialField > SecretTextArea {
+    height: auto;
+    min-height: 3;
+    max-height: 16;
+}
+
+ValueBox {
+    height: auto;
+    margin-top: 1;
+}
+
+CredentialField > Input:focus, CredentialField > SecretTextArea:focus, ExpiryField > Input:focus {
+    border: round $accent;
+    border-title-color: $text-accent;
+    background-tint: $foreground 0%;
 }
 
 /* A focused button turns light as a whole, its label in the button's colour. */
@@ -71,7 +105,7 @@ EmptyState {
     padding: 0 1;
 }
 
-HelpModal {
+ConfirmModal, HelpModal {
     align: center middle;
     background: $background 60%;
 }
@@ -87,4 +121,25 @@ HelpModal {
 
 .dialog > Static {
     width: auto;
+}
+
+.dialog-detail {
+    margin-top: 1;
+}
+
+/* A dialog's buttons sit at its right edge. */
+.dialog-buttons {
+    margin-top: 1;
+    height: 1;
+    width: 100%;
+    align-horizontal: right;
+}
+
+.dialog-buttons > ActionButton {
+    margin-left: 2;
+}
+
+.confirm {
+    border: round $warning;
+    min-width: 42;  /* room for Yes and No when the question is short */
 }

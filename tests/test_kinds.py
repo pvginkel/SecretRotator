@@ -262,6 +262,15 @@ class TestCredentialTypes:
         assert [shape.test(v) for v in matches] == [True] * len(matches)
         assert [shape.test(v) for v in mismatches] == [False] * len(mismatches)
 
+    def test_a_whole_file_is_entered_as_lines_and_every_other_value_as_one(self):
+        multiline = {name for name, t in TYPES.items() if t.shape.multiline}
+        assert multiline == {"ssh-private-key", "torguard-wireguard"}
+        doc = load_type(
+            "---\ncredential: a key\nshape:\n  words: is a key\n  pattern: .+\n  multiline: true\n"
+            "expires: false\n---\nPaste it.\n"
+        )
+        assert doc.shape.multiline
+
     def test_the_live_mint_facts_are_in_their_types_documents(self):
         assert "TorGuard control panel" in TYPES["torguard-wireguard"].instructions
         assert "TheTVDB's dashboard" in TYPES["tvdb-api-key"].instructions

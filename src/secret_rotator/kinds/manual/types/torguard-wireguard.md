@@ -3,6 +3,7 @@ credential: TorGuard WireGuard config
 shape:
   words: is a WireGuard config, an [Interface] section with its PrivateKey and a [Peer] section
   pattern: .*\[Interface\].*PrivateKey.*\[Peer\].*
+  multiline: true
 expires: false
 ---
 The value is the whole config file, from [Interface] to the end of [Peer].

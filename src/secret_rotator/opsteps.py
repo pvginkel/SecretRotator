@@ -20,6 +20,7 @@ class Shape:
 
     words: str  # after `it`: `starts with ghp_ or github_pat_`
     test: Callable[[str], bool]
+    multiline: bool = False  # a whole file, entered as lines: a WireGuard config, a private key
 
 
 @dataclass(frozen=True)
