@@ -1,9 +1,12 @@
 // Lints and tests SecretRotator on Python 3.13, the iac image's, then resets the prd branch to the
 // commit it tested and starts IaC/IaC Docker Image with image=iac, which installs prd's tip into
-// the iac image srviac runs the rotator from. A red build moves nothing.
+// the iac image srviac runs the rotator from. Last, it publishes dashboards/ into the Grafana
+// folder "Secret rotation" with Jenkins' Grafana token, kv/jenkins/grafana-api: the dashboard is
+// SecretRotator's artefact, published by its own build (AnsibleSpecs argo-cd D68).
 //
 // prd is the last green commit: every rebuild of the iac image installs it, the version poller's
-// and an Ansible change's too, so a red build on main never reaches srviac.
+// and an Ansible change's too, so a build red at its lint or tests never reaches srviac. One red
+// at the publish has already reset prd and started the image.
 //
 // Controller config:
 //   - Job: IaC/SecretRotator
@@ -17,8 +20,8 @@ pipeline {
         kubernetes {
             inheritFrom 'jenkins-agent'
             // The gates run in the image `cexec iac` runs them in locally: Python 3.13, the iac
-            // image's version, with poetry.
-            yaml podYaml(templates: ['iac-toolchain'])
+            // image's version, with poetry. grafanaDashboards.publish runs its curl in k8s.
+            yaml podYaml(templates: ['iac-toolchain', 'k8s'])
         }
     }
 
@@ -86,6 +89,15 @@ pipeline {
         stage('Trigger IaC Docker Image') {
             steps {
                 build job: 'IaC Docker Image', parameters: [string(name: 'image', value: 'iac')], wait: false
+            }
+        }
+
+        // After the release stages, so a Grafana problem never holds back a rotator release.
+        stage('Publish dashboards') {
+            steps {
+                script {
+                    grafanaDashboards.publish(dir: 'dashboards', folder: 'Secret rotation')
+                }
             }
         }
     }

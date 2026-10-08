@@ -344,6 +344,9 @@
     "age_secret_key",
     "github_token"
   ],
+  "jenkins/grafana-api": [
+    "token"
+  ],
   "jenkins/home-automation-fleet": [
     "ha_token"
   ],

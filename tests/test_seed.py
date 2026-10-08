@@ -4,7 +4,8 @@ secret-rotation/catalog.md says.
 
 store-keys.json maps each leaf to its data key names (no values): the value-blind inventory of
 2026-10-04 after slice 044's cutover, plus the rotator's own leaves and markers (catalog
-§ rotator/). A leaf added to the seed is added there with its key names."""
+§ rotator/) and jenkins/grafana-api, which the store holds once the operator stores Jenkins'
+Grafana token (slice 046). A leaf added to the seed is added there with its key names."""
 
 import datetime
 import json
@@ -85,6 +86,18 @@ def test_it_holds_once_keycloak_da_admin_is_deleted(store):
         keys.write_text(json.dumps(store))
         code, lines = audit_offline(keys)
     assert lines[0] == "seed leaf not in the key file: jenkins/keycloak-da-admin"
+    assert lines[-1].startswith(f"0 finding(s) on 0 of {len(store)} leaf(s)")
+    assert code == 0
+
+
+def test_it_holds_until_jenkins_grafana_token_is_stored(store):
+    # The operator creates the token in Grafana and stores it (slice 046 Ruling D1).
+    del store["jenkins/grafana-api"]
+    with tempfile.TemporaryDirectory() as tmp:
+        keys = Path(tmp, "keys.json")
+        keys.write_text(json.dumps(store))
+        code, lines = audit_offline(keys)
+    assert lines[0] == "seed leaf not in the key file: jenkins/grafana-api"
     assert lines[-1].startswith(f"0 finding(s) on 0 of {len(store)} leaf(s)")
     assert code == 0
 
@@ -221,6 +234,7 @@ def test_every_scheduled_manual_key_names_the_type_the_catalog_gives_it(entries)
         ("eso/prd/media/prd/gluetun-wg", "config"): "torguard-wireguard",
         (CATALOG, "argocd-token"): "argocd-token",
         (CATALOG, "grafana-api-key"): "grafana-api-key",
+        ("jenkins/grafana-api", "token"): "grafana-api-key",
         (CATALOG, "ssh-key-pve"): "ssh-private-key",
     }
     manual = {

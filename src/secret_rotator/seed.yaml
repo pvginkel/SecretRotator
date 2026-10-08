@@ -662,6 +662,15 @@ iac/rotator-k8s-token:
 
 # --- jenkins: read at build time --------------------------------------------------------------
 
+jenkins/grafana-api:
+  kind: manual
+  args: {"type":"grafana-api-key"}
+  interval: 365d
+  activate: none
+  notes: "Jenkins' own Grafana service account, role Editor: the shared step
+    grafanaDashboards.publish posts each repo's dashboards with it. Not the KubeCoder catalog's
+    grafana-api-key, which is projected into dev environments."
+
 jenkins/home-automation-fleet:
   kind: home-assistant-token
   interval: 14d
