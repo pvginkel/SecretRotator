@@ -2,13 +2,23 @@
 auto's rollout targets derived through the Secrets pod templates read, never a bare pod, and a
 workload's health as `kubectl rollout status` and Argo CD judge it. The ServiceAccount manifest."""
 
+import json
 from pathlib import Path
 
 import pytest
 import yaml
-from fake_cluster import FakeCluster, externalsecret, pod_spec, workload
+from fake_cluster import FakeCluster, externalsecret, pod_spec, snapshot, workload
 
-from secret_rotator.cluster import Cluster, Ref, Workload, leaves_of, pending
+from secret_rotator.cluster import (
+    SNAPSHOT,
+    SNAPSHOT_KINDS,
+    Cluster,
+    Ref,
+    SnapshotError,
+    Workload,
+    leaves_of,
+    pending,
+)
 
 LEAF = "eso/prd/app/prd/token"
 CATALOG = "eso/prd/kc/prd/catalog"
@@ -100,6 +110,46 @@ class TestConsumers:
             "/apis/apps/v1/statefulsets",
             "/apis/external-secrets.io/v1/externalsecrets",
         ]
+
+
+class TestSnapshot:
+    """An offline plan's cluster: the List kubectl prints of the objects the live cluster lists."""
+
+    @pytest.fixture(autouse=True)
+    def path(self, tmp_path):
+        self.file = tmp_path / "snapshot.json"
+
+    def of(self, doc):
+        self.file.write_text(doc if isinstance(doc, str) else json.dumps(doc))
+        return Cluster.of_snapshot(self.file)
+
+    def test_it_derives_what_the_live_cluster_derives_and_has_no_client(self):
+        _, live = cluster_of()
+        taken = self.of(snapshot())
+        assert taken.referenced() == live.referenced()
+        for leaf in sorted(live.referenced()):
+            assert taken.external_secrets(leaf) == live.external_secrets(leaf)
+            assert taken.consumers(leaf) == live.consumers(leaf)
+        assert taken.snapshot and taken.kube is None
+        assert not live.snapshot
+
+    def test_kubectl_lists_the_kinds_it_holds(self):
+        listed = [resource.partition(".")[0] for resource in SNAPSHOT.split(",")]
+        assert listed == [f"{kind.lower()}s" for kind in SNAPSHOT_KINDS]
+
+    def test_it_holds_no_secret(self):
+        doc = snapshot()
+        doc["items"].append({"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "s"}})
+        with pytest.raises(SnapshotError, match="it holds a Secret: a snapshot holds"):
+            self.of(doc)
+
+    @pytest.mark.parametrize(
+        "doc, why",
+        [("{", "not JSON"), ([], "not the List"), ({"kind": "List"}, "not the List")],
+    )
+    def test_a_file_that_is_not_kubectl_s_list(self, doc, why):
+        with pytest.raises(SnapshotError, match=why):
+            self.of(doc)
 
 
 def deployment(generation=2, observed=2, replicas=2, updated=2, total=2, available=2):

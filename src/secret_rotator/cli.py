@@ -11,7 +11,7 @@ from pathlib import Path
 from secret_rotator import annotate as ann
 from secret_rotator import audit as aud
 from secret_rotator import metrics, nightly, provenance, registry, terminal
-from secret_rotator.cluster import Cluster
+from secret_rotator.cluster import SNAPSHOT, Cluster, SnapshotError
 from secret_rotator.console import Console
 from secret_rotator.contract import (
     ContractError,
@@ -107,6 +107,14 @@ def parser() -> argparse.ArgumentParser:
         metavar="FILE",
     )
     plan.add_argument("--seed", type=Path, help="with --keys: the seed (default: the packaged one)")
+    plan.add_argument(
+        "--snapshot",
+        type=Path,
+        help="with --keys: derive the syncs and rollout targets from FILE, a read-only snapshot of "
+        f"the prd cluster: what `kubectl get {SNAPSHOT} -A -o json` prints. Without it, an "
+        "offline plan of a leaf activated through the cluster cannot be built",
+        metavar="FILE",
+    )
     run = commands.add_parser(
         "run",
         help="without a path, the nightly run; with one, run a plan of that leaf in the terminal",
@@ -203,6 +211,8 @@ def main(
     offline = args.command in ("audit", "plan") and args.keys is not None
     if args.command in ("audit", "plan") and args.seed and not offline:
         p.error(f"the live {args.command} reads the store, not a seed: --seed goes with --keys")
+    if args.command == "plan" and args.snapshot and not offline:
+        p.error("the live plan reads the cluster, not a snapshot: --snapshot goes with --keys")
     if not offline and not (environ.get(ROLE_ID_ENV) and environ.get(SECRET_ID_ENV)):
         p.error(
             f"{ROLE_ID_ENV} and {SECRET_ID_ENV} are not set: the rotator's AppRole, "
@@ -228,8 +238,10 @@ def main(
         if offline:
             store = ann.offline_store(args.keys, ann.load_seed(seed_path), out)
             if args.command == "plan":
-                result = aud.audit(store, plugins=kinds)
-                return terminal.print_leaf(out, args.path, store, result, kinds, today)
+                cluster = None if args.snapshot is None else Cluster.of_snapshot(args.snapshot)
+                referenced = None if cluster is None else cluster.referenced()
+                result = aud.audit(store, referenced, kinds)
+                return terminal.print_leaf(out, args.path, store, result, kinds, today, cluster)
             return aud.report(aud.audit(store, plugins=kinds), store, out)
         seed = ann.load_seed(seed_path) if args.command == "annotate" else None
         bao = connect(environ, opener, clock)
@@ -273,6 +285,7 @@ def main(
         return aud.report(result, store, out)
     except (
         ann.SeedError,
+        SnapshotError,
         registry.RegistryError,
         SwitchesError,
         OpenBaoError,

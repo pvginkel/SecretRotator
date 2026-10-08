@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from fake_cluster import TOKEN, FakeCluster
+from fake_cluster import TOKEN, FakeCluster, compliant_objects, snapshot
 from fake_openbao import ROLE_ID, SECRET_ID, FakeOpenBao, approle
 from fake_openbao import TOKEN as BAO_TOKEN
 from fake_telegram import CHAT, FakeTelegram
@@ -95,6 +95,12 @@ def test_the_live_plan_takes_no_seed():
     env = {"SECRET_ROTATOR_ROLE_ID": "r", "SECRET_ROTATOR_SECRET_ID": "s"}
     code, err = usage("plan", "x/y", "--seed=s.yaml", env=env)
     assert code == 2 and "the live plan reads the store, not a seed" in err
+
+
+def test_the_live_plan_takes_no_snapshot():
+    env = {"SECRET_ROTATOR_ROLE_ID": "r", "SECRET_ROTATOR_SECRET_ID": "s"}
+    code, err = usage("plan", "x/y", "--snapshot=s.json", env=env)
+    assert code == 2 and "the live plan reads the cluster, not a snapshot" in err
 
 
 def test_run_takes_a_leaf_and_runs_its_plan_in_the_terminal():
@@ -555,11 +561,11 @@ class TestOffline:
         assert self.check() == 1
         assert "eso/prd/app/prd/oidc: rotation_url: missing" in self.lines
 
-    def plan(self, leaf):
+    def plan(self, leaf, *options):
         self.keys.write_text(json.dumps(self.names))
         self.lines = []
         return cli.main(
-            ["plan", leaf, f"--keys={self.keys}", f"--seed={self.seed}"],
+            ["plan", leaf, f"--keys={self.keys}", f"--seed={self.seed}", *options],
             opener=lambda req: pytest.fail(f"the offline plan called {req.full_url}"),
             out=self.lines.append,
             environ={},
@@ -580,7 +586,51 @@ class TestOffline:
         assert self.plan("eso/prd/app/prd/token") == 1
         assert (
             "eso/prd/app/prd/token: its activation is read from the cluster, which an offline "
-            "plan does not reach" in self.lines[2]
+            "plan without a snapshot does not reach" in self.lines[2]
+        )
+
+    def snapshot(self, doc=None):
+        path = self.seed.parent / "snapshot.json"
+        path.write_text(json.dumps(snapshot() if doc is None else doc))
+        return f"--snapshot={path}"
+
+    def test_plan_against_a_snapshot_derives_the_syncs_and_rollouts_from_it(self):
+        assert self.plan("eso/prd/app/prd/token", self.snapshot()) == 0, self.lines
+        steps = [line.split(None, 1)[1] for line in self.lines if line.split()[0].isdigit()]
+        assert [step for step in steps if step.startswith("tool  eso.sync")] == [
+            "tool  eso.sync                      sync ExternalSecret app-prd/app-token"
+        ]
+        assert [step for step in steps if step.startswith("tool  k8s.rollout")] == [
+            "tool  k8s.rollout                   roll out app-prd/deployment/app",
+            "tool  k8s.rollout                   roll out app-prd/statefulset/app-db",
+        ]
+
+    def test_a_snapshot_finds_an_orphan_as_the_live_plan_does(self):
+        objects = [(r, o) for r, o in compliant_objects() if o["metadata"]["name"] != "bot"]
+        assert self.plan("eso/prd/bot/prd/config", self.snapshot(snapshot(objects))) == 0
+        assert (
+            "  telegram-bot-token: blocked: (consumers): an orphan: no ExternalSecret references "
+            "it or a leaf it is copied into" in self.lines
+        )
+
+    def test_a_named_rollout_target_the_snapshot_does_not_hold_fails_the_plan(self):
+        seed = yaml.safe_load(self.seed.read_text())
+        token = seed["eso/prd/app/prd/token"]["keys"]["token"]
+        token["activate"] = "k8s-rollout:app-prd/deployment/app,app-prd/deployment/gone"
+        self.seed.write_text(yaml.safe_dump(seed, sort_keys=False))
+        assert self.plan("eso/prd/app/prd/token", self.snapshot()) == 1
+        assert self.lines[2] == (
+            "      cannot be built: eso/prd/app/prd/token: the snapshot holds no rollout target "
+            "app-prd/deployment/gone"
+        )
+
+    def test_a_snapshot_holding_a_secret_is_refused(self):
+        doc = snapshot()
+        doc["items"].append({"apiVersion": "v1", "kind": "Secret", "metadata": {"name": "s"}})
+        assert self.plan("eso/prd/app/prd/token", self.snapshot(doc)) == 1
+        assert self.lines[-1].endswith(
+            "snapshot.json: it holds a Secret: a snapshot holds ExternalSecret, Deployment, "
+            "StatefulSet, DaemonSet only"
         )
 
     def test_a_key_file_that_is_not_leaf_to_key_names(self):

@@ -167,7 +167,7 @@ class AppRole:
             if ctx.steps.cluster is None:
                 raise PlanError(
                     f"{leaf.leaf}: its delivery writes Secret {delivery.arg}, on the cluster an "
-                    f"offline plan does not reach"
+                    f"offline plan without a snapshot does not reach"
                 )
             namespace, name = delivery.arg.split("/")
             step = K8sSecret(ctx.steps.cluster, namespace, name, secret)

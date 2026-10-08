@@ -284,6 +284,22 @@ def compliant_objects():
     ]
 
 
+def snapshot(objects=None):
+    """The List `kubectl get <cluster.SNAPSHOT> -A -o json` prints of the cluster's objects (the
+    compliant cluster's by default): its ExternalSecrets and workloads, each with its kind."""
+    kinds = {"externalsecrets": ("external-secrets.io/v1", "ExternalSecret")}
+    kinds |= {resource: ("apps/v1", kind) for resource, kind in KINDS.items()}
+    return {
+        "apiVersion": "v1",
+        "kind": "List",
+        "items": [
+            {"apiVersion": kinds[resource][0], "kind": kinds[resource][1], **copy.deepcopy(o)}
+            for resource, o in (compliant_objects() if objects is None else objects)
+            if resource in kinds
+        ],
+    }
+
+
 class FakeCluster:
     def __init__(self, objects=None, *, eso_lag=3, rollout_lag=12):
         # (resource, namespace, name) -> object

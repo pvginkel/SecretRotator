@@ -4,10 +4,13 @@ with its Argo Application Healthy.
 
 One match serves auto, the sync before every rollout and the orphan check (design R70): an
 ExternalSecret references a leaf when a data[].remoteRef.key or a dataFrom[].extract.key names it.
-The KubeCoder catalogs are extracted whole, by dataFrom[].extract alone."""
+The KubeCoder catalogs are extracted whole, by dataFrom[].extract alone.
+
+An offline plan derives the same from a snapshot of the cluster (Cluster.of_snapshot) instead."""
 
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from secret_rotator.contract import WORKLOAD
 from secret_rotator.kube import Kube
@@ -19,6 +22,14 @@ APPLICATIONS = "/apis/argoproj.io/v1alpha1/namespaces/argocd-prd/applications"
 # Argo CD tracks what an Application deployed by this annotation, <app>:<group>/<Kind>:<ns>/<name>.
 TRACKING = "argocd.argoproj.io/tracking-id"
 RESOURCES = {"deployment": "deployments", "statefulset": "statefulsets", "daemonset": "daemonsets"}
+# A snapshot is the List `kubectl get <SNAPSHOT> -A -o json` prints: the objects the plan derives
+# from, and no Secret.
+SNAPSHOT = "externalsecrets.external-secrets.io,deployments.apps,statefulsets.apps,daemonsets.apps"
+SNAPSHOT_KINDS = ("ExternalSecret", "Deployment", "StatefulSet", "DaemonSet")
+
+
+class SnapshotError(Exception):
+    pass
 
 
 @dataclass(frozen=True, order=True)
@@ -165,6 +176,12 @@ def pending(kind: str, obj: dict) -> str | None:
     return None
 
 
+def _pod_template(kind: str, obj: dict) -> tuple[Workload, dict]:
+    """The workload with its pod template's spec."""
+    workload = Workload(obj["metadata"]["namespace"], kind, obj["metadata"]["name"])
+    return workload, obj["spec"]["template"].get("spec") or {}
+
+
 def owning_app(obj: dict) -> str | None:
     """The Argo CD Application that deployed the object; None when none did."""
     tracking = (obj["metadata"].get("annotations") or {}).get(TRACKING)
@@ -175,10 +192,36 @@ class Cluster:
     """The cluster through one client. The ExternalSecrets and workloads are listed once, on first
     use, so every plan built from one Cluster derives from the same reading."""
 
-    def __init__(self, kube: Kube):
+    def __init__(self, kube: Kube | None):
         self.kube = kube
+        self.snapshot = False
         self._externalsecrets: list[dict] | None = None
         self._workloads: list[tuple[Workload, dict]] | None = None
+
+    @classmethod
+    def of_snapshot(cls, path: Path) -> "Cluster":
+        """The cluster as the snapshot in the file holds it. It has no client: a plan derives from
+        it, and nothing built against it reaches the cluster."""
+        try:
+            doc = json.loads(path.read_text())
+        except ValueError:
+            raise SnapshotError(f"{path}: not JSON") from None
+        if not isinstance(doc, dict) or not isinstance(doc.get("items"), list):
+            raise SnapshotError(f"{path}: not the List kubectl get -o json prints")
+        cluster = cls(None)
+        cluster.snapshot = True
+        cluster._externalsecrets, cluster._workloads = [], []
+        for obj in doc["items"]:
+            kind = obj.get("kind") if isinstance(obj, dict) else None
+            if kind not in SNAPSHOT_KINDS:
+                raise SnapshotError(
+                    f"{path}: it holds a {kind}: a snapshot holds {', '.join(SNAPSHOT_KINDS)} only"
+                )
+            if kind == "ExternalSecret":
+                cluster._externalsecrets.append(obj)
+            else:
+                cluster._workloads.append(_pod_template(kind.lower(), obj))
+        return cluster
 
     @property
     def externalsecrets(self) -> list[dict]:
@@ -191,10 +234,7 @@ class Cluster:
         """Each workload with its pod template's spec."""
         if self._workloads is None:
             self._workloads = [
-                (
-                    Workload(o["metadata"]["namespace"], kind, o["metadata"]["name"]),
-                    o["spec"]["template"].get("spec") or {},
-                )
+                _pod_template(kind, o)
                 for kind, resource in RESOURCES.items()
                 for o in self.kube.items(f"{APPS}/{resource}")
             ]

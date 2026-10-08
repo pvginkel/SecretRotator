@@ -580,5 +580,8 @@ class TestTheLeafsPlans:
             (("api-key",), None),
             (("token",), None),
         ]
-        offline = "its activation is read from the cluster, which an offline plan does not reach"
+        offline = (
+            "its activation is read from the cluster, which an offline plan without a snapshot "
+            "does not reach"
+        )
         assert all(p.plan is None and offline in p.error for p in plans)

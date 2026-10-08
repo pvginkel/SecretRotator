@@ -87,9 +87,10 @@ KUBERNETES = ("eso", "k8s-rollout")
 
 class StepFactory:
     """The patterns a plan is built from, named by what they do (design §4.3). Without a cluster,
-    as offline, it builds no Kubernetes step. What derived holds of a leaf is not read from the
-    cluster again: a plan in flight is rebuilt from what it derived when it started (design §4.5).
-    Jenkins and Ansible are reached only when a step runs: by default the real ones."""
+    as offline without a snapshot, it builds no Kubernetes step. What derived holds of a leaf is
+    not read from the cluster again: a plan in flight is rebuilt from what it derived when it
+    started (design §4.5). Jenkins and Ansible are reached only when a step runs: by default the
+    real ones."""
 
     def __init__(
         self,
@@ -178,7 +179,14 @@ class StepFactory:
         leaves = (self.target.leaf,) if leaves is None else tuple(leaves)
         found = [es for leaf in leaves for es in self._external_secrets(leaf)]
         syncs = [EsoSync(cluster, es) for es in dict.fromkeys(found)]
-        return [*syncs, *(K8sRollout(cluster, w) for w in dict.fromkeys(targets))]
+        targets = list(dict.fromkeys(targets))
+        if cluster.snapshot:
+            held = {workload for workload, _ in cluster.workloads}
+            if absent := [str(w) for w in targets if w not in held]:
+                raise PlanError(
+                    f"{self.target.leaf}: the snapshot holds no rollout target {', '.join(absent)}"
+                )
+        return [*syncs, *(K8sRollout(cluster, w) for w in targets)]
 
     def activate(self) -> list[Step]:
         """The activation of every entry the plan writes, in the Target's order: each spec of its
@@ -238,7 +246,7 @@ class StepFactory:
         if self.cluster is None:
             raise PlanError(
                 f"{self.target.leaf}: its activation is read from the cluster, which an offline "
-                f"plan does not reach"
+                f"plan without a snapshot does not reach"
             )
         return self.cluster
 
