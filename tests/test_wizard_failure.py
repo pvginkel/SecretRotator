@@ -9,7 +9,7 @@ from plans import LEAF, fake, flight_of, put_flight, put_state, state_of
 from sim import REVOKED, Cue, Held, again
 from sim import vendor as vendor_rotation
 from test_listing import PAT, SEAL
-from test_ui import FAILED, SIZE, app_of, in_box, info, select, settled, until, world
+from test_ui import FAILED, SIZE, app_of, in_box, info, select, settled, slow_loop, until, world
 from test_wizard import (
     TOKEN,
     VENDOR,
@@ -29,7 +29,7 @@ from secret_rotator.ui.app import NO_ROLLBACK, QUIT, QUIT_ROLLBACK, ROLLING_BACK
 from secret_rotator.ui.item import Phase
 from secret_rotator.ui.run import COMMAND
 from secret_rotator.ui.widgets import (
-    ActionButton,
+    ButtonBar,
     ConfirmModal,
     DetailsModal,
     HelpModal,
@@ -54,11 +54,18 @@ def rows(app, rid):
 
 
 def progress(app, rid):
-    return app.box(rid).query_one(".progress", Static).content.plain
+    (bar,) = app.box(rid).area.of(ButtonBar)
+    return bar.query_one(".progress", Static).content.plain
+
+
+def reason(app, rid):
+    (bar,) = app.box(rid).area.of(ButtonBar)
+    return bar.query_one(".reason", Static).content.plain
 
 
 def instruction(app, rid):
-    return app.box(rid).query_one(Instruction).content.plain
+    (shown,) = app.box(rid).area.of(Instruction)
+    return shown.content.plain
 
 
 async def to_held(pilot, app, cue):
@@ -80,7 +87,7 @@ async def abort(pilot, app):
 
     def button():
         box = app.box(app.selected)
-        found = [b for b in box.area.of(ActionButton) if b.is_mounted and b.label.plain == "Abort"]
+        found = [b for b in box.area.buttons() if b.is_mounted and b.label.plain == "Abort"]
         return found[0] if found and not found[0].disabled else None
 
     await until(pilot, lambda: button() is not None)
@@ -136,6 +143,27 @@ async def test_a_failure_shows_retry_abort_and_details_is_told_and_retry_counts_
         assert app.items[VENDOR].screen.index == 2 and app.focused.label.plain == "Done"
 
 
+async def test_a_failed_box_holds_focus_on_retry_on_a_slow_event_loop():
+    """Each failure replaces the running screen's Abort with Retry · Abort · Details while the
+    focus timer runs between the loop's turns, the old Abort's removal still pending: focus goes
+    to the new Retry, and stays there once the old Abort is gone."""
+    cue = Cue()
+    bao, app, _ = vendor_run(Held("rollout", ROLLOUT, cue=cue))
+    async with app.run_test(size=SIZE) as pilot:
+        await to_held(pilot, app, cue)
+        with slow_loop():
+            for attempt in (1, 2):
+                cue.fail("0/2 Ready after 5m0s")
+                await until(pilot, lambda: phase(app, VENDOR) is Phase.FAILED and in_box(app))
+                assert app.focused.label.plain == "Retry"
+                assert labels(app, VENDOR) == ["Retry", "Abort", "Details"]
+                await settled(pilot)
+                assert in_box(app) and app.focused.label.plain == "Retry"
+                if attempt == 1:
+                    await pilot.press("enter")  # Retry
+                    await until(pilot, lambda: cue.holding.is_set())
+
+
 async def test_details_shows_the_technical_detail_over_the_box_and_the_arrows_reach_it():
     cue = Cue()
     bao, app, _ = vendor_run(Held("rollout", ROLLOUT, cue=cue))
@@ -151,7 +179,7 @@ async def test_details_shows_the_technical_detail_over_the_box_and_the_arrows_re
         await until(pilot, lambda: isinstance(app.screen, DetailsModal))
         assert app.screen.title_text == f"Details · {ROLLOUT}"
         assert "StepFailed: 0/2 Ready after 5m0s" in app.screen.text  # the traceback
-        assert app.focused.label.plain == "Close"
+        await until(pilot, lambda: app.focused is not None and app.focused.label.plain == "Close")
         await pilot.press("down")  # the list stays put under a dialog
         assert app.selected == VENDOR
         await pilot.press("escape")
@@ -177,7 +205,7 @@ async def test_an_earlier_session_s_failure_shows_its_screen_and_the_run_state_s
         assert app.screen.title_text == "Details · write eso/prd/mixed/prd/creds"
         assert app.screen.text == "2026-10-07T04:30:00+00:00: kv.write: HTTP 403"
         await pilot.press("enter")  # Close
-        await until(pilot, lambda: not isinstance(app.screen, DetailsModal))
+        await until(pilot, lambda: not isinstance(app.screen, DetailsModal) and in_box(app))
         await pilot.press("escape")  # back to the list
         assert app.focused is None
 
@@ -204,8 +232,7 @@ async def test_a_failed_stamp_shows_on_the_confirm_it_rides_on_with_abort_refuse
         assert rows(app, VENDOR)[0].startswith("✗ stamp token")
         abort = specs(app, VENDOR)["abort"]
         assert (abort.enabled, abort.reason) == (False, NO_ROLLBACK.format(REVOKED))
-        reason = app.box(VENDOR).query_one(".reason", Static).content.plain
-        assert reason == NO_ROLLBACK.format(REVOKED)
+        assert reason(app, VENDOR) == NO_ROLLBACK.format(REVOKED)
         assert labels(app, VENDOR) == ["Retry", "Details", "Abort"]  # the disabled one last
         assert len(told) == 1 and "failed at stamp token" in told[0]
         del bao.refuse[("PATCH", f"kv/metadata/{LEAF}")]
@@ -224,13 +251,12 @@ async def test_abort_is_disabled_with_its_reason_on_the_screen_that_runs_after_t
         await until(pilot, lambda: app.items[VENDOR].screen.index == 2 and in_box(app))
         assert specs(app, VENDOR)["abort"].enabled
         await pilot.press("enter")  # Done: the old token is revoked
-        await until(pilot, lambda: cue.holding.is_set() and phase(app, VENDOR) is Phase.RUNNING)
-        assert app.items[VENDOR].screen.index == 3
+        await until(pilot, lambda: cue.holding.is_set() and app.items[VENDOR].screen.index == 3)
+        assert phase(app, VENDOR) is Phase.RUNNING
         abort = specs(app, VENDOR)["abort"]
         assert (abort.enabled, abort.reason) == (False, NO_ROLLBACK.format(REVOKED))
-        reason = app.box(VENDOR).query_one(".reason", Static)
-        await until(pilot, lambda: reason.content.plain == NO_ROLLBACK.format(REVOKED))
-        (button,) = [b for b in app.box(VENDOR).query(ActionButton) if b.label.plain == "Abort"]
+        await until(pilot, lambda: reason(app, VENDOR) == NO_ROLLBACK.format(REVOKED))
+        (button,) = [b for b in app.box(VENDOR).area.buttons() if b.label.plain == "Abort"]
         assert button.disabled
         cue.go()
         await until(pilot, lambda: VENDOR not in app.order)
@@ -413,7 +439,7 @@ async def test_quitting_in_a_rollback_asks_and_the_next_start_shows_it_stopped_a
         assert phase(app, VENDOR) is Phase.ROLLBACK_FAILED and str(box.border_title)[0] == "✗"
         line = f"overdue 37d · rollback failed at undo: {ROLLOUT}"
         assert info(app, VENDOR).plain == line
-        assert labels(app, VENDOR) == ["Retry", "Details"]
+        await until(pilot, lambda: labels(app, VENDOR) == ["Retry", "Details"])
         assert instruction(app, VENDOR) == ROLLING_BACK and rows(app, VENDOR) == []
         assert progress(app, VENDOR).startswith("Undo 1 of 3")
         assert progress(app, VENDOR).endswith("failed")
@@ -447,7 +473,7 @@ async def test_a_plan_left_in_flight_shows_its_screen_with_resume_and_abort_and_
         await settled(pilot)
         box = app.box(VENDOR)
         assert phase(app, VENDOR) is Phase.IN_FLIGHT and str(box.border_title)[0] == "◐"
-        assert labels(app, VENDOR) == ["Resume", "Abort"]
+        await until(pilot, lambda: labels(app, VENDOR) == ["Resume", "Abort"])
         assert instruction(app, VENDOR).startswith("Revoke the old token")  # its screen
         await pilot.click(box, offset=(5, 1))
         await until(pilot, lambda: in_box(app))
@@ -468,6 +494,7 @@ async def test_aborting_a_plan_left_in_flight_rolls_it_back():
         await abort(pilot, app)
         assert app.screen.question == "Abort and roll back 2 steps?"
         await pilot.press("y")
-        await until(pilot, lambda: phase(app, VENDOR) is Phase.DUE)
-        assert labels(app, VENDOR) == ["Start"]
+        await until(
+            pilot, lambda: phase(app, VENDOR) is Phase.DUE and labels(app, VENDOR) == ["Start"]
+        )
     assert flight_of(bao, LEAF) is None and bao.data(LEAF)["token"] != TOKEN

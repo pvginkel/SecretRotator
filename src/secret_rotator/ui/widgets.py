@@ -238,10 +238,13 @@ class ButtonBar(Horizontal):
         self.specs: tuple[ButtonSpec, ...] = ()
         self.progress = Text()
         self.compact = Text()
+        # The buttons it shows: none of those it showed before, which are still children, mounted
+        # and focusable while Textual removes them.
+        self.buttons: list[ActionButton] = []
 
     def action_step(self, delta: int) -> None:
         """← → move between the buttons."""
-        buttons = [b for b in self.query(ActionButton) if b.focusable]
+        buttons = [b for b in self.buttons if b.focusable]
         if buttons and self.app.focused in buttons:
             buttons[(buttons.index(self.app.focused) + delta) % len(buttons)].focus()
 
@@ -277,14 +280,16 @@ class ButtonBar(Horizontal):
         except NoMatches:  # not composed yet: on_mount applies it
             return
         ordered = self.ordered()
-        buttons = list(self.query(ActionButton))
+        buttons = self.buttons
         if [b.action for b in buttons] == [f"app.press_button('{s.action}')" for s in ordered]:
             for button, spec in zip(buttons, ordered, strict=True):  # a focused one keeps focus
                 button.update_from(spec)
         else:
             with self.app.batch_update():
-                self.query(ActionButton).remove()
-                self.mount_all([ActionButton.of(s) for s in ordered], before=reason)
+                for button in buttons:
+                    button.remove()
+                self.buttons = [ActionButton.of(s) for s in ordered]
+                self.mount_all(self.buttons, before=reason)
         reason.update(Text(self.reason()))
         # Short of room it drops the progress bar; the reason then shortens with an ellipsis.
         used = sum(ActionButton.width_of(s) for s in self.specs) + len(self.reason()) + 2
@@ -597,6 +602,10 @@ class StateArea(Vertical):
         children while Textual removes them."""
         found = [w for part in self.parts for w in (part, *part.query(kind))]
         return [w for w in found if isinstance(w, kind)]
+
+    def buttons(self) -> list[ActionButton]:
+        """The buttons its button bar shows: none of those Textual is still removing."""
+        return [button for bar in self.of(ButtonBar) for button in bar.buttons]
 
 
 class Box(Vertical):

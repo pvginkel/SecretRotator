@@ -68,7 +68,7 @@ def specs(app, rid):
 
 
 def labels(app, rid):
-    return [b.label.plain for b in app.box(rid).query(ActionButton)]
+    return [b.label.plain for b in app.box(rid).area.buttons()]
 
 
 def status_of(widget) -> str:
@@ -125,9 +125,9 @@ async def test_a_plan_runs_start_to_finish_and_its_box_leaves_the_list():
         await pilot.press(*TOKEN)
         await submit(pilot, app)
         await until(pilot, lambda: cue.holding.is_set() and phase(app, VENDOR) is Phase.RUNNING)
-        await until(pilot, lambda: bool(app.box(VENDOR).query(StepLog)))
+        await until(pilot, lambda: bool(app.box(VENDOR).area.of(StepLog)))
         assert app.focused is None  # nothing takes focus while the screen's steps run
-        log = app.box(VENDOR).query_one(StepLog)
+        (log,) = app.box(VENDOR).area.of(StepLog)
         await until(pilot, lambda: len(log.lines) == 3)
         rows = [row.plain for row in log.rows(100)]
         assert rows[0].startswith("✓ write eso/prd/app/prd/token")

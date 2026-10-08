@@ -3,6 +3,8 @@ of the fake OpenBao: every box a full box, expanded iff selected, its title, its
 in each state the list starts in, its colour; the status bar, the due box's state area, the keys,
 the mouse, the help and the empty state; and the colour over the VS Code task's chain."""
 
+import asyncio
+import contextlib
 import datetime
 import os
 import time
@@ -118,6 +120,26 @@ async def until(pilot, condition, timeout=10.0):
 
 async def settled(pilot):
     await pilot.pause(0.2)
+
+
+@contextlib.contextmanager
+def slow_loop(lag=0.1):
+    """Each turn of the running event loop blocks for `lag` seconds, the app's focus timer's
+    interval: the timer, which runs in a task of its own, is then due between any two turns, also
+    while the app waits on a widget's removal."""
+    loop = asyncio.get_running_loop()
+    handle = None
+
+    def turn():
+        nonlocal handle
+        time.sleep(lag)
+        handle = loop.call_soon(turn)
+
+    handle = loop.call_soon(turn)
+    try:
+        yield
+    finally:
+        handle.cancel()
 
 
 async def select(pilot, app, rid):

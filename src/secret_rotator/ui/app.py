@@ -33,7 +33,6 @@ from secret_rotator.ui.widgets import (
     TONE,
     TONE_COLOUR,
     TONES,
-    ActionButton,
     Box,
     BoxList,
     ButtonBar,
@@ -489,10 +488,7 @@ class RotatorApp(App[None]):
             empty = [f for f in area.of(CredentialField) if f.is_mounted and not f.value.strip()]
             if empty:
                 return empty[0].editor
-        return next(
-            (b for b in area.of(ActionButton) if b.is_mounted and b.focusable),
-            None,
-        )
+        return next((b for b in area.buttons() if b.is_mounted and b.focusable), None)
 
     # --- selection ----------------------------------------------------------
 
@@ -748,7 +744,7 @@ class RotatorApp(App[None]):
         box = self.box(self.selected)
         if box is None or self._next_empty_field(box):
             return
-        button = next((b for b in box.area.of(ActionButton) if b.action == CONTINUE), None)
+        button = next((b for b in box.area.buttons() if b.action == CONTINUE), None)
         if button is not None and button.focusable:
             button.focus()
         else:
