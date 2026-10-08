@@ -103,6 +103,19 @@ async def test_f_narrows_the_list_to_the_selected_box_s_type_and_f_again_shows_e
         assert app.selected == f"{PAT}#token"
 
 
+async def test_home_and_end_on_a_filtered_list_select_its_own_first_and_last_box():
+    """The approle filter's ends are neither of the whole list's."""
+    app = app_of(world())
+    async with app.run_test(size=SIZE) as pilot:
+        await select(pilot, app, f"{IAC_AGENT}#secret_id")
+        await pilot.press("f")
+        assert shown(app) == [IN_FLIGHT, f"{IAC_AGENT}#secret_id"]
+        await pilot.press("home")
+        assert app.selected == IN_FLIGHT
+        await pilot.press("end")
+        assert app.selected == f"{IAC_AGENT}#secret_id"
+
+
 async def test_the_label_counts_what_f_keeps_and_is_greyed_for_a_box_without_others():
     app = app_of(world())
     bells = []
