@@ -71,12 +71,8 @@ def listed(
     referenced = None if cluster is None else cluster.referenced()
     unexempted = audit(store, referenced, kinds)
     found = []
-    for path, leaf in sorted(store.items()):
-        if leaf.flight is None:
-            result = unexempted
-        else:
-            result = audit(store, exempt(store, path, referenced), kinds)
-        found += _of_leaf(store, path, result, kinds, cluster)
+    for path in sorted(store):
+        found += _of_leaf(store, path, unexempted, referenced, kinds, cluster)
     never = datetime.date.max
     return sorted(
         found,
@@ -94,10 +90,12 @@ def _of_leaf(
     store: Mapping[str, Leaf],
     path: str,
     result: Audit,
+    referenced: set[str] | None,
     kinds: Mapping[str, Kind],
     cluster: Cluster | None,
 ) -> list[Rotation]:
-    """The leaf's plans with an operator step."""
+    """The leaf's plans with an operator step. Only its plan in flight is built under the orphan
+    exemption (design §3.3); result is the audit without it."""
     leaf = store[path]
     flight = leaf.flight
     plans, _ = of_leaf(path, store, result, kinds, cluster)
@@ -106,8 +104,10 @@ def _of_leaf(
         for p in plans
         if p.plan is not None and (flight is None or (p.kind, p.keys) != (flight.kind, flight.keys))
     ]
-    if flight is not None and (taken_up := _in_flight(leaf, result, kinds, cluster)):
-        stood.append(taken_up)
+    if flight is not None:
+        exempted = audit(store, exempt(store, path, referenced), kinds)
+        if taken_up := _in_flight(leaf, exempted, kinds, cluster):
+            stood.append(taken_up)
     return [
         Rotation(
             plan,

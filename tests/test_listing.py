@@ -256,3 +256,12 @@ class TestWhereEachStands:
         (r,) = [r for r in listing(bao, Cluster(fake.kube())) if r.plan.target.leaf == LEAF]
         assert r.stand is Stand.IN_FLIGHT
         assert r.plan.steps[r.at].id == f"operator.confirm:{LEAF}:1"
+
+    def test_the_orphan_leaf_s_other_plans_stay_blocked_while_one_is_in_flight(self):
+        """The exemption is its plan in flight's alone: `run <path>` builds none of the others
+        once that one is done."""
+        bao = fake_of(store())
+        put_flight(bao, "manual", MIXED, ["password"], "kv.write")
+        rotations = listing(bao, Cluster(FakeCluster().kube()))  # references no leaf of MIXED's
+        mixed = [(keys, r.stand) for (path, keys), r in by_plan(rotations).items() if path == MIXED]
+        assert mixed == [(("password",), Stand.IN_FLIGHT)]
