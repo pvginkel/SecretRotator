@@ -122,7 +122,7 @@ class Item:
     @property
     def estimate(self) -> int:
         """Seconds, for its information line: the whole plan while it is due, else what remained
-        of it when listed, kept while the wizard runs (D24)."""
+        of it when listed, kept while the wizard runs (design §7.3)."""
         if self.phase is Phase.DUE:
             return sum(step.estimate for step in self.rotation.plan.steps)
         return self.rotation.estimate

@@ -845,8 +845,8 @@ class RotatorApp(App[None]):
         self._changed(item)
 
     def _due_again(self, item: Item) -> None:
-        """The box is due again, in place and still selected (D21); when nothing waits, the green
-        box tops the list."""
+        """The box is due again, in place and still selected (design §7.3); when nothing waits, the
+        green box tops the list."""
         item.due_again()
         self.drafts.pop(item.id, None)
         self._green_box()
@@ -858,8 +858,8 @@ class RotatorApp(App[None]):
 
     def _remove(self, item: Item) -> None:
         """A done box leaves the list; the box below it in the list shown is selected, the one
-        above when it was the last (D20). When it was the last that waits, the green box tops the
-        list; when it was the filter's last, the list says a filter is applied."""
+        above when it was the last (design §7.3). When it was the last that waits, the green box
+        tops the list; when it was the filter's last, the list says a filter is applied."""
         shown = self.shown()
         self.order.remove(item.id)
         self.done_count += 1

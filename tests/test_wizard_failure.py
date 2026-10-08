@@ -262,7 +262,7 @@ async def test_an_external_box_s_failed_stamp_shows_on_it_and_abort_cancels_it()
 
 async def test_abort_asks_once_then_rolls_back_on_its_own_screen_and_the_box_is_due_again():
     """The undos in reverse, then the activators re-run in order; then due, in place and still
-    selected (D21)."""
+    selected (design §7.3)."""
     sync, cue = Cue(), Cue()
     held = [
         Held("eso.sync:app/s", "sync ExternalSecret app/s", cue=sync, activator=True),
