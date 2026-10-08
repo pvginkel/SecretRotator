@@ -240,7 +240,6 @@ eso/prd/iac-provisioner/api/token:
 
 eso/prd/infra-statistics/prd/jenkins:
   kind: jenkins-token
-  args: {"legacy":"OpenBao"}
   interval: 14d
   activate: auto
 
@@ -308,14 +307,12 @@ eso/prd/jenkins-mcp/prd/config:
   keys:
     token:
       kind: jenkins-token
-      args: {"legacy":"Claude"}
       notes: "JenkinsDeploy's ExternalSecret templates the Basic <base64(user:token)> header that
         jenkins-mcp's mcp-filter sends to Jenkins' /mcp-server/stateless from user and token."
     user: {kind: none}
 
 eso/prd/jenkins-telegram-bot/prd/config:
   kind: jenkins-token
-  args: {"legacy":"JenkinsTelegramBot"}
   interval: 14d
   activate: auto
   keys:
@@ -416,7 +413,7 @@ eso/prd/kubecoder/prd/catalog:
     iotsupport-keycloak-admin-client-id: {kind: "copy:jenkins/keycloak-iotsupport-admin#client_id"}
     iotsupport-keycloak-admin-client-secret: {kind: "copy:jenkins/keycloak-iotsupport-admin#client_secret"}
     jenkins-mcp-token: {kind: "copy:eso/prd/jenkins-mcp/prd/config#bearer-token"}
-    jenkins-token: {kind: jenkins-token, args: {"legacy":"wrkdev"}, interval: 14d}
+    jenkins-token: {kind: jenkins-token, interval: 14d}
     jenkins-user: {kind: none}
     kubeconfig: {kind: k8s-sa-token}
     kubeconfig-dev-write: {kind: k8s-sa-token}
@@ -604,7 +601,6 @@ eso/prd/trello-mcp/prd/trello:
 
 eso/prd/version-poller/prd/jenkins:
   kind: jenkins-token
-  args: {"legacy":"VersionPoller"}
   interval: 14d
   activate: none
   keys:
@@ -821,7 +817,6 @@ shared/wifi-iot:
 
 rotator/jenkins:
   kind: jenkins-token
-  args: {"legacy":"secret-rotator"}
   interval: 365d
   activate: none
   keys:

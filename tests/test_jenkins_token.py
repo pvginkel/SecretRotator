@@ -1,9 +1,9 @@
-"""The jenkins-token kind (design §6) over the seed's rows: its args and the token each leaf held
-before the rotator; its plans, which sync every ExternalSecret that reads the leaf before the login
-and the revoke, whatever the leaf's activate; the runs, which mint on the admin account, revoke the
-legacy token on a leaf's first rotation and the rotator's own on the next, and rotate
-rotator/jenkins itself; their rollbacks and the failures that did not land; and the security page
-the kind finds the tokens on."""
+"""The jenkins-token kind (design §6) over the seed's rows, which take no args; its plans, which
+sync every ExternalSecret that reads the leaf before the login and the revoke, whatever the leaf's
+activate; the runs, which mint on the admin account, revoke the token of the leaf's name the last
+rotation minted and leave one the operator made by hand, and rotate rotator/jenkins itself; their
+rollbacks and the failures that did not land; and the security page the kind finds the tokens
+on."""
 
 import datetime
 import json
@@ -37,24 +37,24 @@ CATALOG = "eso/prd/kubecoder/prd/catalog"
 STATS = "eso/prd/infra-statistics/prd/jenkins"
 ROTATOR = "rotator/jenkins"
 ADMIN_PASSWORD = "shared/jenkins/admin-password"
-# Each leaf's key of the kind, and the name of the token it held before the rotator (2026-10-08).
+# Each leaf's key of the kind.
 LEAVES = {
-    MCP: ("token", "Claude"),
-    BOT: ("jenkins-token", "JenkinsTelegramBot"),
-    POLLER: ("token", "VersionPoller"),
-    CATALOG: ("jenkins-token", "wrkdev"),
-    STATS: ("token", "OpenBao"),
-    ROTATOR: ("token", "secret-rotator"),
+    MCP: "token",
+    BOT: "jenkins-token",
+    POLLER: "token",
+    CATALOG: "jenkins-token",
+    STATS: "token",
+    ROTATOR: "token",
 }
 DATA = {
-    MCP: {"bearer-token": "SECRET-bearer", "token": "SECRET-old-Claude", "user": USER},
+    MCP: {"bearer-token": "SECRET-bearer", "token": "SECRET-old-mcp", "user": USER},
     BOT: {
-        "jenkins-token": "SECRET-old-JenkinsTelegramBot",
+        "jenkins-token": "SECRET-old-bot",
         "telegram-bot-token": "SECRET-bot",
         "telegram-chat-id": "-100",
     },
-    POLLER: {"token": "SECRET-old-VersionPoller", "user": USER},
-    STATS: {"token": "SECRET-old-OpenBao"},
+    POLLER: {"token": "SECRET-old-poller", "user": USER},
+    STATS: {"token": "SECRET-old-stats"},
     ROTATOR: dict(CREDENTIALS),
 }
 ROLLED = {
@@ -164,30 +164,53 @@ def jenkins_objects():
     ]
 
 
+def own_names():
+    """The names the kind gives the leaves' tokens."""
+    return sorted(token_name(leaf, key) for leaf, key in LEAVES.items())
+
+
 class World:
     """The seed's store on the fake OpenBao; Jenkins, whose admin account holds each leaf's token
-    by its legacy name; and the readers of the leaves on the fake cluster."""
+    by the kind's name for it, as after the leaf's first rotation; and the readers of the leaves
+    on the fake cluster."""
 
     def __init__(self, store=None):
         self.store = store or seed_store()
         self.bao = fake_of(self.store, DATA)
         self.jenkins = FakeJenkins()
-        for leaf, (_, name) in LEAVES.items():
+        (own,) = self.jenkins.tokens.values()
+        own["name"] = token_name(ROTATOR, LEAVES[ROTATOR])
+        for leaf, key in LEAVES.items():
             if leaf != ROTATOR:
-                self.jenkins.add_token(name, self.held(leaf))
+                self.jenkins.add_token(token_name(leaf, key), self.held(leaf))
         self.cluster = FakeCluster(jenkins_objects())
         self.kind = JenkinsToken()
 
     def held(self, leaf):
         """The token the leaf holds."""
-        return self.bao.data(leaf)[LEAVES[leaf][0]]
+        return self.bao.data(leaf)[LEAVES[leaf]]
+
+    def hand_made(self, leaf, name):
+        """Names the token the leaf holds as the operator made it, before the leaf's first
+        rotation."""
+        for token in self.jenkins.tokens.values():
+            if token["value"] == self.held(leaf):
+                token["name"] = name
+
+    def values(self):
+        """The values of the admin account's tokens."""
+        return {token["value"] for token in self.jenkins.tokens.values()}
+
+    def held_values(self):
+        """The tokens the leaves hold."""
+        return {self.held(leaf) for leaf in LEAVES}
 
     def plan(self, leaf, *, cluster=True):
         return make(
             {KIND: self.kind},
             leaf,
             KIND,
-            [LEAVES[leaf][0]],
+            [LEAVES[leaf]],
             audit(self.store),
             Cluster(self.cluster.kube()) if cluster else None,
             jenkins=self.jenkins.jenkins(),
@@ -247,7 +270,7 @@ PAGE = f"/user/{USER}/security/"
 
 
 class TestTheSeed:
-    def test_each_leaf_of_the_kind_names_the_token_it_held_before(self):
+    def test_each_leaf_of_the_kind_has_one_key_of_it_and_no_args(self):
         entries = audit(seed_store()).entries
         found = {
             leaf: (key, entry.args)
@@ -255,10 +278,8 @@ class TestTheSeed:
             for key, entry in by_key.items()
             if entry.kind == KIND
         }
-        assert found == {leaf: (key, {"legacy": name}) for leaf, (key, name) in LEAVES.items()}
-        for leaf, (key, _) in LEAVES.items():
-            assert JenkinsToken().args_problems(entries[leaf][key].args) == [], leaf
-        intervals = {leaf: entries[leaf][key].interval for leaf, (key, _) in LEAVES.items()}
+        assert found == {leaf: (key, {}) for leaf, key in LEAVES.items()}
+        intervals = {leaf: entries[leaf][key].interval for leaf, key in LEAVES.items()}
         assert intervals == {leaf: 365 if leaf == ROTATOR else 14 for leaf in LEAVES}
 
     def test_jenkins_mcp_holds_a_user_and_a_token_and_no_header(self):
@@ -280,16 +301,10 @@ class TestTheSeed:
         due = aud.due_keys(store, result, datetime.date(2099, 1, 1))
         assert ADMIN_PASSWORD not in {s.leaf for s in due}
 
-    @pytest.mark.parametrize(
-        ("args", "problem"),
-        [
-            ({"name": "x"}, "name: not one of jenkins-token's legacy"),
-            ({"legacy": " "}, "legacy: not a token name"),
-            ({"legacy": 3}, "legacy: not a token name"),
-        ],
-    )
-    def test_args_it_cannot_use_are_named(self, args, problem):
-        assert JenkinsToken().args_problems(args) == [problem]
+    def test_args_it_cannot_use_are_named(self):
+        assert JenkinsToken().args_problems({"legacy": "Claude"}) == [
+            "legacy: jenkins-token takes no args"
+        ]
 
 
 class TestThePlans:
@@ -333,7 +348,7 @@ class TestThePlans:
         path = tmp_path / "snapshot.json"
         path.write_text(json.dumps(snapshot(jenkins_objects())))
         world = World()
-        for leaf, (key, _) in LEAVES.items():
+        for leaf, key in LEAVES.items():
             plan = make(
                 {KIND: world.kind},
                 leaf,
@@ -368,34 +383,32 @@ class TestThePlans:
         assert (revoke.mutates, revoke.undo) == (True, None)
         assert revoke.no_undo == "a revoked Jenkins API token cannot be restored"
         assert mint.title == f"mint a new Jenkins API token named {MCP}#token"
-        assert revoke.title == f"revoke any other token named {MCP}#token and any named Claude"
+        assert revoke.title == f"revoke any other token named {MCP}#token"
         assert not plan.needs_operator and plan.ask == ""
         assert plan.description == (
             f"The tool mints a new Jenkins API token named {MCP}#token and writes it to the leaf "
             f"and activates what reads it. Once every ExternalSecret that reads the leaf has "
             f"synced, it logs in with the new token and revokes any other token named "
-            f"{MCP}#token and any named Claude."
+            f"{MCP}#token."
         )
         assert world.plan(ROTATOR).description == (
             "The tool mints a new Jenkins API token named rotator/jenkins#token and writes it to "
             "the leaf. Once every ExternalSecret that reads the leaf has synced, it logs in with "
-            "the new token and revokes any other token named rotator/jenkins#token and any named "
-            "secret-rotator."
+            "the new token and revokes any other token named rotator/jenkins#token."
         )
         assert token_name(CATALOG, "jenkins-token") == f"{CATALOG}#jenkins-token"
 
 
 class TestTheRuns:
     @pytest.mark.parametrize("leaf", [MCP, BOT, CATALOG, STATS])
-    def test_a_first_rotation_activates_the_new_token_and_revokes_the_legacy_one(self, leaf):
+    def test_a_rotation_activates_the_new_token_and_revokes_the_old_one(self, leaf):
         world = World()
-        key, legacy = LEAVES[leaf]
+        key = LEAVES[leaf]
         old = world.held(leaf)
         assert world.run(leaf) is Outcome.DONE
         new = world.held(leaf)
         assert new != old and new.startswith("SECRET-minted-token-")
-        names = world.jenkins.token_names()
-        assert legacy not in names and f"{leaf}#{key}" in names
+        assert old not in world.values()
         assert {
             t["value"] for t in world.jenkins.tokens.values() if t["name"] == f"{leaf}#{key}"
         } == {new}
@@ -410,7 +423,7 @@ class TestTheRuns:
         assert world.run(MCP, day=1) is Outcome.DONE
         mine = [t for t in world.jenkins.tokens.values() if t["name"] == f"{MCP}#token"]
         assert [t["value"] for t in mine] == [world.held(MCP)] != [first]
-        assert world.jenkins.token_names().count("secret-rotator") == 1
+        assert world.jenkins.token_names().count(f"{ROTATOR}#token") == 1
 
     def test_version_poller_s_secret_syncs_before_the_revoke_and_nothing_rolls_out(self):
         world = World()
@@ -418,7 +431,7 @@ class TestTheRuns:
         world.jenkins.before_revoke = lambda uuid: seen.append(world.synced(SYNCED[POLLER]))
         assert world.run(POLLER) is Outcome.DONE
         assert seen == [True]
-        assert "VersionPoller" not in world.jenkins.token_names()
+        assert "SECRET-old-poller" not in world.values()
         assert not any(
             method == "PATCH" and "/deployments/" in path
             for method, path, _ in world.cluster.requests
@@ -429,7 +442,7 @@ class TestTheRuns:
         assert world.run(ROTATOR) is Outcome.DONE
         new = world.held(ROTATOR)
         assert new != TOKEN and world.bao.data(ROTATOR)["user"] == USER
-        assert "secret-rotator" not in world.jenkins.token_names()
+        assert TOKEN not in world.values()
         assert world.run(MCP) is Outcome.DONE
         assert world.run(ROTATOR, day=1) is Outcome.DONE
         mine = [
@@ -449,8 +462,8 @@ class TestTheRuns:
         )
         assert world.generation(ROLLED[MCP]) == 2
         assert executor.abort() is Outcome.ROLLED_BACK
-        assert world.held(MCP) == "SECRET-old-Claude"
-        assert world.jenkins.token_names() == sorted(name for _, name in LEAVES.values())
+        assert world.held(MCP) == "SECRET-old-mcp"
+        assert world.jenkins.token_names() == own_names()
         assert world.generation(ROLLED[MCP]) == 3
 
     @pytest.mark.parametrize(
@@ -473,10 +486,10 @@ class TestTheRuns:
         assert executor.run() is Outcome.FAILED
         failure = world.failure()
         assert failure.step.id == "jenkins_token.login" and failure.error == error
-        assert requests_to(world, REVOKE) == [] and "Claude" in world.jenkins.token_names()
+        assert requests_to(world, REVOKE) == [] and "SECRET-old-mcp" in world.values()
         assert executor.abort() is Outcome.ROLLED_BACK
-        assert world.held(MCP) == "SECRET-old-Claude"
-        assert world.jenkins.token_names() == sorted(name for _, name in LEAVES.values())
+        assert world.held(MCP) == "SECRET-old-mcp"
+        assert world.jenkins.token_names() == own_names()
 
     def test_a_mint_jenkins_refuses_mints_nothing_and_its_rollback_revokes_nothing(self):
         world = World()
@@ -486,7 +499,7 @@ class TestTheRuns:
         assert world.failure().error == f"POST {GENERATE}: HTTP 403"
         assert executor.abort_blocker() is None
         assert executor.abort() is Outcome.ROLLED_BACK
-        assert world.held(MCP) == "SECRET-old-Claude" and world.jenkins.minted == 0
+        assert world.held(MCP) == "SECRET-old-mcp" and world.jenkins.minted == 0
         assert requests_to(world, REVOKE) == []
 
     def test_a_revoke_jenkins_refuses_did_not_land_and_can_be_rolled_back(self):
@@ -498,9 +511,8 @@ class TestTheRuns:
         assert executor.abort_blocker() is None
         del world.jenkins.refused["POST", REVOKE]
         assert executor.abort() is Outcome.ROLLED_BACK
-        assert world.held(MCP) == "SECRET-old-Claude"
-        assert f"{MCP}#token" not in world.jenkins.token_names()
-        assert "Claude" in world.jenkins.token_names()
+        assert world.held(MCP) == "SECRET-old-mcp"
+        assert world.values() == world.held_values()
 
     def test_a_revoke_whose_answer_is_lost_cannot_be_aborted_and_a_retry_finishes(self):
         world = World()
@@ -511,7 +523,7 @@ class TestTheRuns:
             executor.abort()
         world.jenkins.broken.clear()
         assert world.run(MCP) is Outcome.DONE
-        assert "Claude" not in world.jenkins.token_names()
+        assert "SECRET-old-mcp" not in world.values()
         assert world.jenkins.minted == 1
 
     def test_a_page_the_kind_cannot_read_fails_the_mint_before_anything_is_written(self):
@@ -523,9 +535,9 @@ class TestTheRuns:
         assert world.failure().error.startswith(
             "the security page of Jenkins account admin lists no token "
         )
-        assert world.held(MCP) == "SECRET-old-Claude"
+        assert world.held(MCP) == "SECRET-old-mcp"
         assert executor.abort() is Outcome.ROLLED_BACK
-        assert f"{MCP}#token" not in world.jenkins.token_names()
+        assert world.values() == world.held_values()
 
     def test_a_page_that_no_longer_lists_the_new_token_revokes_nothing(self):
         world = World()
@@ -549,10 +561,10 @@ class TestTheRuns:
 
     def test_a_token_the_page_still_lists_after_its_revoke_fails_the_step_that_landed(self):
         world = World()
-        (uuid,) = [k for k, t in world.jenkins.tokens.items() if t["name"] == "Claude"]
-        claude = world.jenkins.tokens[uuid]
+        (uuid,) = [k for k, t in world.jenkins.tokens.items() if t["value"] == "SECRET-old-mcp"]
+        old = world.jenkins.tokens[uuid]
         original = world.jenkins.page
-        world.jenkins.page = lambda found: original(found | {uuid: claude})
+        world.jenkins.page = lambda found: original(found | {uuid: old})
         executor = world.executor(MCP)
         assert executor.run() is Outcome.FAILED
         assert world.failure().error == (
@@ -562,19 +574,18 @@ class TestTheRuns:
         with pytest.raises(AbortRefused, match="a revoked Jenkins API token cannot be restored"):
             executor.abort()
 
-    def test_no_token_of_the_leaf_s_names_leaves_nothing_to_revoke(self):
+    def test_a_first_rotation_leaves_the_token_the_operator_made_by_hand(self):
         world = World()
-        (legacy,) = [k for k, t in world.jenkins.tokens.items() if t["name"] == "OpenBao"]
-        del world.jenkins.tokens[legacy]
+        world.hand_made(STATS, "OpenBao")
         assert world.run(STATS) is Outcome.DONE
+        assert "OpenBao" in world.jenkins.token_names()
+        assert requests_to(world, REVOKE) == []
         (revoke,) = [
             e
             for e in world.recorder.events
             if isinstance(e, Finished) and e.step.id == "jenkins_token.revoke"
         ]
-        assert revoke.detail == (
-            f"nothing to revoke: no other token is named {STATS}#token or OpenBao"
-        )
+        assert revoke.detail == (f"nothing to revoke: no other token is named {STATS}#token")
 
 
 class Ctx:

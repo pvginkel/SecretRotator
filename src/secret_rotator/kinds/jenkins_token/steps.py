@@ -12,11 +12,6 @@ from secret_rotator.model import Context, Step, StepFailed, not_landed, value_na
 UUID = "jenkins-token:uuid"
 
 
-def replaced(name: str, legacy: str | None) -> str:
-    """The tokens a plan revokes, in words."""
-    return f"any other token named {name}" + (f" and any named {legacy}" if legacy else "")
-
-
 class Mint(Step):
     """Mints a new token of the account, named after the leaf and key it is for, which never
     expires, stages its value and uuid, and verifies it by finding that uuid under that name on the
@@ -95,10 +90,10 @@ class Login(Step):
 
 
 class Revoke(Step):
-    """Revokes each token of the account named the plan's name but the one the plan minted, and
-    each named the args' legacy name: the tokens the consumers held before, and a lost mint's. It
-    finds them on the account's security page, which must list the minted one, and verifies by
-    reading the page again. The plan puts it after the login with the new token.
+    """Revokes each token of the account named the plan's name but the one the plan minted: the
+    tokens the consumers held before, and a lost mint's. It finds them on the account's security
+    page, which must list the minted one, and verifies by reading the page again. The plan puts it
+    after the login with the new token.
 
     It has no undo. A failure before its first revoke, and that revoke refused (a 4xx answer),
     report that the step did not land."""
@@ -106,10 +101,10 @@ class Revoke(Step):
     type = "jenkins_token.revoke"
     mutates = True
 
-    def __init__(self, jenkins: Jenkins, name: str, legacy: str | None):
-        self.names = (name, legacy) if legacy else (name,)
-        super().__init__("jenkins_token.revoke", f"revoke {replaced(name, legacy)}")
+    def __init__(self, jenkins: Jenkins, name: str):
+        super().__init__("jenkins_token.revoke", f"revoke any other token named {name}")
         self.jenkins = jenkins
+        self.name = name
         self.no_undo = "a revoked Jenkins API token cannot be restored"
 
     def run(self, ctx: Context) -> str:
@@ -126,7 +121,7 @@ class Revoke(Step):
                     f"the security page of Jenkins account {user} lists no token {new}, the one "
                     f"the plan minted: which tokens it replaces is not known"
                 )
-            old = [token for token in found if token.uuid != new and token.name in self.names]
+            old = [token for token in found if token.uuid != new and token.name == self.name]
             for token in old:
                 sending = True
                 tokens.revoke(self.jenkins, user, token.uuid)
@@ -142,5 +137,5 @@ class Revoke(Step):
                 f"{', '.join(kept)} after their revoke"
             )
         if not old:
-            return f"nothing to revoke: no other token is named {' or '.join(self.names)}"
+            return f"nothing to revoke: no other token is named {self.name}"
         return "revoked " + ", ".join(f"{t.name} ({t.uuid})" for t in old)
