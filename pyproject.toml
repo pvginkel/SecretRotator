@@ -15,6 +15,7 @@ secret-rotator = "secret_rotator.cli:main"
 random = "secret_rotator.kinds.random:Random"
 manual = "secret_rotator.kinds.manual:Manual"
 approle = "secret_rotator.kinds.approle:AppRole"
+keycloak-client = "secret_rotator.kinds.keycloak_client:KeycloakClient"
 
 [tool.poetry]
 packages = [{ include = "secret_rotator", from = "src" }]

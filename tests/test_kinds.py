@@ -15,6 +15,7 @@ from secret_rotator.audit import Leaf, audit
 from secret_rotator.contract import MARKER_VALUE
 from secret_rotator.executor import Abandon, AbortRefused, Executor, Outcome
 from secret_rotator.kinds.approle import AppRole
+from secret_rotator.kinds.keycloak_client import KeycloakClient
 from secret_rotator.kinds.manual import TYPES, Manual, load_type
 from secret_rotator.kinds.random import Random
 from secret_rotator.model import StepFailed, expiry_name, value_name
@@ -77,9 +78,10 @@ def run(store, plan, *answers, data=None):
 
 class TestTheRegistry:
     def test_it_finds_the_kinds_this_distribution_ships_through_their_entry_points(self):
-        assert set(KINDS) == {"random", "manual", "approle"}
+        assert set(KINDS) == {"random", "manual", "approle", "keycloak-client"}
         assert isinstance(KINDS["random"], Random) and isinstance(KINDS["manual"], Manual)
         assert isinstance(KINDS["approle"], AppRole)
+        assert isinstance(KINDS["keycloak-client"], KeycloakClient)
 
     @pytest.mark.parametrize(
         ("found", "problem"),
@@ -102,14 +104,8 @@ class TestTheRegistry:
 
     def test_a_kind_without_a_plugin_has_no_plan(self):
         store = compliant_store()
-        with pytest.raises(PlanError, match="keycloak-client is not a kind this install has"):
-            make(
-                KINDS,
-                "eso/prd/app/prd/oidc",
-                "keycloak-client",
-                ["client_secret"],
-                audit(store),
-            )
+        with pytest.raises(PlanError, match="elastic-user is not a kind this install has"):
+            make(KINDS, "eso/prd/es/prd/creds", "elastic-user", ["password"], audit(store))
 
 
 class TestRandom:

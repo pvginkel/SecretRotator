@@ -87,6 +87,7 @@ eso/prd/dnsmasq/prd/management-api:
 
 eso/prd/dnsmasq/prd/oidc:
   kind: keycloak-client
+  args: {"realm":"homelab"}
   interval: 14d
   activate: auto
 
@@ -132,6 +133,7 @@ eso/prd/electronics-inventory/prd/mouser:
 
 eso/prd/electronics-inventory/prd/oidc:
   kind: keycloak-client
+  args: {"realm":"homelab"}
   interval: 14d
   activate: auto
 
@@ -169,6 +171,7 @@ eso/prd/fieldnotes/prd/mcp-token:
 
 eso/prd/fieldnotes/prd/oidc:
   kind: keycloak-client
+  args: {"realm":"homelab"}
   interval: 14d
   activate: auto
 
@@ -213,6 +216,7 @@ eso/prd/grafana/prd/admin:
 
 eso/prd/grafana/prd/oidc:
   kind: keycloak-client
+  args: {"realm":"homelab"}
   interval: 14d
   activate: auto
 
@@ -284,6 +288,7 @@ eso/prd/iot/prd/mqtt-cronjob:
 
 eso/prd/iot/prd/oidc:
   kind: keycloak-client
+  args: {"realm":"homelab"}
   interval: 14d
   activate: auto
 
@@ -503,6 +508,7 @@ eso/prd/newsfilter/prd/telegram:
 
 eso/prd/pgadmin/prd/oidc:
   kind: keycloak-client
+  args: {"realm":"homelab"}
   interval: 14d
   activate: auto
 
@@ -607,6 +613,7 @@ eso/prd/zigbee2mqtt/prd/app:
 
 eso/prd/zigbee2mqtt/prd/oidc:
   kind: keycloak-client
+  args: {"realm":"homelab"}
   interval: 14d
   activate: auto
 
@@ -684,6 +691,7 @@ jenkins/iot-mqtt:
 
 jenkins/iotsupport-pipeline-oidc:
   kind: keycloak-client
+  args: {"realm":"homelab"}
   interval: 14d
   activate: none
 
@@ -799,6 +807,28 @@ rotator/telegram:
 rotator/youtrack:
   kind: youtrack-token
   interval: 365d
+  activate: none
+
+# The keycloak-client kind's counterparts, one service-account client with manage-clients per
+# realm, minted by the operator; each is rotated by the kind itself.
+rotator/keycloak-client/homelab:
+  kind: keycloak-client
+  args: {"realm":"homelab"}
+  interval: 365d
+  activate: none
+
+rotator/keycloak-client/homelab-dev:
+  kind: keycloak-client
+  args: {"realm":"homelab-dev"}
+  interval: 365d
+  activate: none
+
+# OpenBao's own OIDC login client: the openbao role reads its secret from here, and its rotation
+# writes it into auth/oidc/config.
+rotator/oidc-auth-client:
+  kind: keycloak-client
+  args: {"realm":"homelab","client":"openbao","target":"auth/oidc/config"}
+  interval: 14d
   activate: none
 
 # Marker leaves for the AppRole secret_ids OpenBao does not keep in KV (R11).

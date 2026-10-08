@@ -418,6 +418,17 @@
     "token",
     "user"
   ],
+  "rotator/keycloak-client/homelab": [
+    "client_id",
+    "client_secret"
+  ],
+  "rotator/keycloak-client/homelab-dev": [
+    "client_id",
+    "client_secret"
+  ],
+  "rotator/oidc-auth-client": [
+    "client_secret"
+  ],
   "rotator/telegram": [
     "token"
   ],

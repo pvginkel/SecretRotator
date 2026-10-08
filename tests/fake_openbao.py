@@ -1,6 +1,7 @@
 """OpenBao over HTTP, as an opener for secret_rotator.openbao.OpenBao: AppRole login and the kv
-mount (KV v2 data with its versions, metadata and subkeys); and the AppRoles' secret_ids as the
-approle kind uses them, answering as OpenBao 2.5.4 does."""
+mount (KV v2 data with its versions, metadata and subkeys); the AppRoles' secret_ids as the
+approle kind uses them, answering as OpenBao 2.5.4 does; and the OIDC auth method's config, which a
+write replaces whole and a read gives without its client secret."""
 
 import copy
 import datetime
@@ -25,6 +26,35 @@ MINTED_AT = datetime.datetime(2026, 10, 5, 4, 30, tzinfo=datetime.UTC)  # plans.
 MAX_TTL = 8640 * 3600  # the approle mount's max_lease_ttl, as the openbao role tunes it
 # OpenBao reports times in its host's zone, to the nanosecond; in this one the date is not UTC's.
 ZONE = datetime.timezone(datetime.timedelta(hours=-5))
+OIDC_CONFIG = "auth/oidc/config"
+# What a read of the OIDC config gives for a field a write leaves out.
+OIDC_DEFAULTS = {
+    "bound_issuer": "",
+    "default_role": "",
+    "jwks_ca_pem": "",
+    "jwks_url": "",
+    "jwt_supported_algs": [],
+    "jwt_validation_pubkeys": [],
+    "namespace_in_state": True,
+    "oidc_client_id": "",
+    "oidc_discovery_ca_pem": "",
+    "oidc_discovery_url": "",
+    "oidc_response_mode": "",
+    "oidc_response_types": [],
+    "provider_config": {},
+}
+
+
+def oidc_config(**fields):
+    """An OIDC config as the openbao role writes it, with its client secret: the fields it writes
+    over every other one's default."""
+    return OIDC_DEFAULTS | {
+        "oidc_discovery_url": "https://auth.ginbov.nl/realms/homelab",
+        "oidc_client_id": "openbao",
+        "oidc_client_secret": "SECRET-old-openbao",
+        "default_role": "openbao-admin",
+        **fields,
+    }
 
 
 def approle(role_id, **secret_ids):
@@ -67,6 +97,8 @@ class FakeOpenBao:
         # refuses a token that has ended; a login carrying it is still answered.
         self.clock = clock
         self.token_ends = None
+        # The OIDC auth method's config with its client secret; None: the method has no config.
+        self.oidc = None
 
     def __call__(self, req):
         url = urllib.parse.urlsplit(req.full_url)
@@ -102,6 +134,8 @@ class FakeOpenBao:
             return self.answer(self.refuse[method, path], {"errors": errors})
         if found := APPROLE.fullmatch(path):
             return self.approle(method, found["role"], found["what"], body)
+        if path == OIDC_CONFIG:
+            return self.oidc_config(method, body)
         mount, area, leaf = path.split("/", 2)
         assert mount == "kv" and area in ("metadata", "data", "subkeys"), path
         handler = getattr(self, f"{method.lower()}_{area}", None)
@@ -260,6 +294,16 @@ class FakeOpenBao:
             "expiration_time": reported(expires),
             "metadata": {},
         }
+        return self.answer(200, {"data": data})
+
+    def oidc_config(self, method, body):
+        if method == "POST":
+            self.oidc = OIDC_DEFAULTS | {"oidc_client_secret": ""} | body
+            return self.answer(204, None)
+        assert method == "GET", method
+        if self.oidc is None:
+            return self.answer(404, {"errors": []})
+        data = {k: v for k, v in self.oidc.items() if k != "oidc_client_secret"}
         return self.answer(200, {"data": data})
 
     def live(self, role):
