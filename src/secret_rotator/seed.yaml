@@ -776,8 +776,8 @@ shared/jenkins/admin-password:
   interval: never
   activate: auto
   notes: "Not a password: the Jenkins admin account's API token OpenBao, which infra-statistics
-    reads until it reads eso/prd/infra-statistics/prd/jenkins, whose first rotation revokes it; the
-    leaf is then deleted (slice 047)."
+    reads until it reads eso/prd/infra-statistics/prd/jenkins. The operator revokes it after that
+    leaf's first rotation, then deletes this leaf (slice 047)."
 
 shared/prd/ceph-csi:
   kind: cephx
