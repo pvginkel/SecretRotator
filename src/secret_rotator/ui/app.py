@@ -153,7 +153,9 @@ class RotatorApp(App[None]):
         if not self.screen_stack or isinstance(self.screen, ModalScreen):
             return
         box = self.box(self.selected)
-        area = box.query(StateArea).first() if box is not None else None
+        # A box still composing, or being removed (the app closing), has no state area.
+        areas = box.query(StateArea) if box is not None else None
+        area = areas.first() if areas else None
         focused = self.focused
         if focused is not None and (
             area is None or not focused.is_attached or area not in focused.ancestors

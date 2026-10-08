@@ -352,6 +352,19 @@ async def test_enter_opens_the_box_on_its_first_button_and_esc_goes_back_to_the_
         assert app.selected == f"{HOOK}#secret"
 
 
+async def test_focus_leaves_a_selected_box_that_has_no_state_area():
+    """A box still composing, or being removed as the app closes, has no state area; the focus
+    timer ticks through it."""
+    app = app_of(world())
+    async with app.run_test(size=SIZE) as pilot:
+        await select(pilot, app, f"{PAT}#token")
+        await pilot.press("enter")
+        await until(pilot, lambda: in_box(app))
+        await app.box(app.selected).query_one(StateArea).remove()
+        app._ensure_focus()
+        assert app.focused is None
+
+
 async def test_up_down_home_and_end_select_even_with_a_button_focused():
     app = app_of(world())
     async with app.run_test(size=SIZE) as pilot:
