@@ -16,6 +16,7 @@ from secret_rotator.contract import MARKER_VALUE
 from secret_rotator.executor import Abandon, AbortRefused, Executor, Outcome
 from secret_rotator.kinds.approle import AppRole
 from secret_rotator.kinds.cnpg_role import CnpgRole
+from secret_rotator.kinds.grafana_admin import GrafanaAdmin
 from secret_rotator.kinds.jenkins_job_token import JenkinsJobToken
 from secret_rotator.kinds.jenkins_token import JenkinsToken
 from secret_rotator.kinds.keycloak_client import KeycloakClient
@@ -89,6 +90,7 @@ class TestTheRegistry:
             "cnpg-role",
             "jenkins-token",
             "jenkins-job-token",
+            "grafana-admin",
         }
         assert isinstance(KINDS["random"], Random) and isinstance(KINDS["manual"], Manual)
         assert isinstance(KINDS["approle"], AppRole)
@@ -96,6 +98,7 @@ class TestTheRegistry:
         assert isinstance(KINDS["cnpg-role"], CnpgRole)
         assert isinstance(KINDS["jenkins-token"], JenkinsToken)
         assert isinstance(KINDS["jenkins-job-token"], JenkinsJobToken)
+        assert isinstance(KINDS["grafana-admin"], GrafanaAdmin)
 
     @pytest.mark.parametrize(
         ("found", "problem"),
