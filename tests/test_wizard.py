@@ -42,6 +42,7 @@ from secret_rotator.kinds.external import RUNBOOK
 from secret_rotator.kinds.manual import TYPES
 from secret_rotator.lock import Lock
 from secret_rotator.model import Action
+from secret_rotator.staging import ROLLBACK
 from secret_rotator.ui.app import BUSY, BUSY_DONE, BUSY_OF, QUIT, QUIT_RUN, WAITS
 from secret_rotator.ui.item import Item, Line, LineState, Phase
 from secret_rotator.ui.widgets import (
@@ -587,6 +588,20 @@ async def test_one_plan_at_a_time_every_other_box_says_what_it_cannot_do():
         await select(pilot, app, PAT_ID)  # the wizard, where it is
         assert phase(app, PAT_ID) is Phase.WAITING
         assert app.box(PAT_ID).area.of(CredentialField)
+
+
+async def test_a_failed_rollback_says_it_cannot_retry_while_another_plan_runs():
+    bao = world()
+    put_flight(bao, "manual", PAT, ["token"], "kv.write", **{ROLLBACK: "0"})  # stopped at its undo
+    app = app_of(bao)
+    async with app.run_test(size=SIZE) as pilot:
+        await settled(pilot)
+        assert phase(app, PAT_ID) is Phase.ROLLBACK_FAILED
+        assert specs(app, PAT_ID)["retry"].enabled
+        await at_credential(pilot, app, WIFI_ID)
+        retry, details = specs(app, PAT_ID)["retry"], specs(app, PAT_ID)["details"]
+        assert (retry.enabled, retry.reason) == (False, BUSY_OF.format("retry"))
+        assert details.enabled  # reading is not running
 
 
 async def test_while_one_plan_of_a_leaf_is_in_flight_its_other_plans_wait():
