@@ -35,6 +35,7 @@ from secret_rotator.ui.collate import collate
 from secret_rotator.ui.widgets import (
     ERR,
     HEAD,
+    HELP_ROWS,
     ActionButton,
     Box,
     Description,
@@ -472,12 +473,15 @@ async def test_help_opens_on_question_mark_and_f1_and_lists_no_simulation_key():
 
 
 def test_the_keys_are_section_7_6_s_and_no_simulation_key_ships():
-    """The mock's f, + and -, ^T and r drive its simulation (A3)."""
+    """The mock's + and -, ^T and r drive its simulation, and its f failed the next tool step
+    (A3); here f is the filter (R89)."""
     keys = {key for binding in RotatorApp.BINDINGS for key in binding.key.split(",")}
-    assert keys == {"up", "down", "home", "end", "enter", "escape", "question_mark", "f1"} | {
+    assert keys == {"up", "down", "home", "end", "enter", "escape", "f", "question_mark", "f1"} | {
         "q",
         "ctrl+q",
     }
+    assert ("filter", "f") in {(b.action, b.key) for b in RotatorApp.BINDINGS}
+    assert "f" in {key for key, _, _ in HELP_ROWS}
     assert not RotatorApp.ENABLE_COMMAND_PALETTE
 
 
@@ -533,5 +537,6 @@ async def test_with_nothing_listed_the_green_box_is_the_list_s_only_box():
     async with app.run_test(size=SIZE) as pilot:
         await settled(pilot)
         assert [type(w) for w in app.box_list.children] == [EmptyState]
-        await pilot.press("down", "end", "home", "enter", "escape")
-        assert app.selected is None and app.focused is None
+        await pilot.press("down", "end", "home", "enter", "escape", "f")
+        assert app.selected is None and app.focused is None and app.filtered is None
+        assert "f filter · 0 items" in app.query_one("#footer", Static).content.plain

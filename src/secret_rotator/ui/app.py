@@ -1,6 +1,7 @@
 """`secret-rotator ui`'s app (design §7): the status bar, a box per listed rotation with the
-selected one expanded, the footer; a box's Start runs its plan as the wizard of §7.4, one plan at a
-time (§4.3), with Retry, Abort behind its guard, the rollback screen and Details (§4.5)."""
+selected one expanded, the footer with the filter on the selected box's type (R89); a box's Start
+runs its plan as the wizard of §7.4, one plan at a time (§4.3), with Retry, Abort behind its guard,
+the rollback screen and Details (§4.5)."""
 
 import datetime
 import time
@@ -26,6 +27,7 @@ from secret_rotator.ui.run import ExecutorOf, Run
 from secret_rotator.ui.widgets import (
     DIM,
     ERR,
+    GREYED,
     HEAD,
     OK,
     TONE,
@@ -43,6 +45,7 @@ from secret_rotator.ui.widgets import (
     DetailsModal,
     EmptyState,
     ExpiryField,
+    FilterNotice,
     HelpModal,
     Instruction,
     Notice,
@@ -58,7 +61,10 @@ from secret_rotator.ui.widgets import (
     title_markup,
 )
 
-FOOTER = " ↑↓ select · ⏎ open · Esc back · ? help · q quit"
+# The footer, the filter's label between its two parts.
+FOOTER = (" ↑↓ select · ⏎ open · Esc back · ", " · ? help · q quit")
+FILTER = "f filter · {}"
+CLEAR_FILTER = "f clear filter"
 # Why a box's Start is disabled (§7.5), and an external box's Done.
 WAITS = "cannot start while another rotation of its leaf is in flight"
 BUSY = "cannot start a rotation while a different one is in progress"
@@ -108,6 +114,7 @@ class RotatorApp(App[None]):
         Binding("end", "select_at(-1)", show=False),
         Binding("enter", "open", show=False),
         Binding("escape", "leave", show=False),
+        Binding("f", "filter", show=False),
         Binding("question_mark,f1", "help", show=False),
         Binding("q", "quit", show=False),
         Binding("ctrl+q", "quit", show=False, priority=True),
@@ -133,6 +140,7 @@ class RotatorApp(App[None]):
         self.items = {item.id: item for item in map(Item.of, rotations)}
         self.order = list(self.items)
         self.selected: str | None = self.order[0] if self.order else None
+        self.filtered: str | None = None  # the type the list is narrowed to; only f changes it
         self.done_count = 0
         self.runs: dict[str, Run] = {}  # a box's, from its first start, or from the start
         self.active: Run | None = None  # the one plan running (§4.3)
@@ -162,7 +170,7 @@ class RotatorApp(App[None]):
                 yield self.empty_state()
             for rid in self.order:
                 yield Box(self.items[rid])
-        yield Static(Text(FOOTER), id="footer")
+        yield Static(self.footer(), id="footer")
 
     def on_mount(self) -> None:
         self.box_list.can_focus = False
@@ -179,6 +187,17 @@ class RotatorApp(App[None]):
     def waiting(self) -> int:
         return sum(self.items[rid].waits_on_you(self.today) for rid in self.order)
 
+    def shown(self) -> list[str]:
+        """The boxes the list shows, in its order: every one, or the filter's type's."""
+        return [rid for rid in self.order if self.filtered in (None, self.items[rid].rotation.type)]
+
+    def similar(self) -> int:
+        """The boxes of the selected box's type, it included: what `f` keeps."""
+        if self.selected is None:
+            return 0
+        wanted = self.items[self.selected].rotation.type
+        return sum(self.items[rid].rotation.type == wanted for rid in self.order)
+
     @staticmethod
     def empty_state() -> EmptyState:
         return EmptyState(Text("Nothing waits on you.", style=f"bold {OK}"))
@@ -189,6 +208,7 @@ class RotatorApp(App[None]):
         self._refresh_status()
 
     def _refresh_status(self) -> None:
+        """The status bar, and the footer, whose filter label follows the selection."""
         self.query_one("#status", StatusBar).update(
             Text.assemble(
                 (" secret-rotator ui ", f"bold {HEAD}"),
@@ -196,6 +216,18 @@ class RotatorApp(App[None]):
                 f"{self.waiting()} waiting · {self.done_count} done this session",
             )
         )
+        self.query_one("#footer", Static).update(self.footer())
+
+    def footer(self) -> Text:
+        """The global keys, with the filter's label: `f clear filter` while the filter is on;
+        else the count of what `f` keeps, greyed when it keeps the selected box alone (R89)."""
+        if self.filtered is not None:
+            label = Text(CLEAR_FILTER)
+        elif (n := self.similar()) > 1:
+            label = Text(FILTER.format(f"{n} similar"))
+        else:
+            label = Text(FILTER.format(f"{n} item{'' if n == 1 else 's'}"), style=GREYED)
+        return Text.assemble(FOOTER[0], label, FOOTER[1])
 
     def _changed(self, item: Item) -> None:
         """Shows what changed of the item: its box, the selected box's buttons, the status bar."""
@@ -465,7 +497,7 @@ class RotatorApp(App[None]):
     # --- selection ----------------------------------------------------------
 
     def select(self, rid: str) -> None:
-        if rid == self.selected or rid not in self.order:
+        if rid == self.selected or rid not in self.shown():
             return
         old = self.box(self.selected)
         self.selected = rid
@@ -480,6 +512,7 @@ class RotatorApp(App[None]):
                 self.refresh_box(new)
             finally:
                 self._selecting = False
+        self._refresh_status()
         self._scroll_to_selected()
 
     def _scroll_to_selected(self) -> None:
@@ -505,13 +538,15 @@ class RotatorApp(App[None]):
     def action_move(self, delta: int) -> None:
         if isinstance(self.screen, ModalScreen) or self.selected is None:
             return
-        index = self.order.index(self.selected) + delta
-        self.select(self.order[max(0, min(len(self.order) - 1, index))])
+        shown = self.shown()
+        index = shown.index(self.selected) + delta
+        self.select(shown[max(0, min(len(shown) - 1, index))])
 
     def action_select_at(self, index: int) -> None:
-        if isinstance(self.screen, ModalScreen) or not self.order:
+        shown = self.shown()
+        if isinstance(self.screen, ModalScreen) or not shown:
             return
-        self.select(self.order[index])
+        self.select(shown[index])
 
     def action_open(self) -> None:
         """⏎ in the list: focus moves into the selected box, to its first control. A box whose
@@ -538,6 +573,35 @@ class RotatorApp(App[None]):
 
     def action_help(self) -> None:
         self.push_screen(HelpModal())
+
+    def action_filter(self) -> None:
+        """f: narrows the list to the selected box's type, or shows every box again (R89). A box
+        with no others of its type has nothing to narrow to. Cleared from an emptied list, the
+        first box is selected."""
+        if isinstance(self.screen, ModalScreen):
+            return
+        if self.filtered is None and self.similar() < 2:
+            self.bell()
+            return
+        on = self.filtered is None
+        self.filtered = self.items[self.selected].rotation.type if on else None
+        self._refresh_filter()
+        self._refresh_status()
+        if self.selected is None and self.order:
+            self.select(self.order[0])
+        else:
+            self._scroll_to_selected()
+
+    def _refresh_filter(self) -> None:
+        """Shows the filter's boxes; a filtered list gone empty says so."""
+        shown = set(self.shown())
+        for box in self.query(Box):
+            box.display = box.item.id in shown
+        empty = self.filtered is not None and not shown
+        if empty and not self.query(FilterNotice):
+            self.box_list.mount(FilterNotice())
+        elif not empty:
+            self.query(FilterNotice).remove()
 
     # --- the buttons' actions -------------------------------------------------
 
@@ -793,22 +857,25 @@ class RotatorApp(App[None]):
             self.box_list.mount(self.empty_state(), before=0)
 
     def _remove(self, item: Item) -> None:
-        """A done box leaves the list; the box below it is selected, the one above when it was
-        the last (D20). When it was the last that waits, the green box tops the list."""
-        index = self.order.index(item.id)
+        """A done box leaves the list; the box below it in the list shown is selected, the one
+        above when it was the last (D20). When it was the last that waits, the green box tops the
+        list; when it was the filter's last, the list says a filter is applied."""
+        shown = self.shown()
         self.order.remove(item.id)
         self.done_count += 1
         box = self.box(item.id)
         if box is not None:
             box.remove()
         if self.selected == item.id:
-            self.selected = self.order[min(index, len(self.order) - 1)] if self.order else None
+            index, rest = shown.index(item.id), self.shown()
+            self.selected = rest[min(index, len(rest) - 1)] if rest else None
             self._focus_into = None
             new = self.box(self.selected)
             if new is not None:
                 self.refresh_box(new)
                 self._scroll_to_selected()
         self._green_box()
+        self._refresh_filter()
         self._refresh_status()
 
     # --- quit -----------------------------------------------------------------

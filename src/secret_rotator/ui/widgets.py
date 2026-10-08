@@ -37,6 +37,7 @@ ERR = "#D17E92"  # $text-error
 RUN = "#57A5E2"  # $text-primary
 DIM = "#8a8f98"
 DUE = "#C0C0C0"  # untouched, due or not
+GREYED = "#777E84"  # $text-disabled on the footer's $panel: a disabled key
 
 GLYPH = {
     Phase.DUE: "○",
@@ -638,6 +639,19 @@ class EmptyState(Static):
     pass
 
 
+class FilterNotice(Static):
+    """What a filtered list gone empty shows (§7.7)."""
+
+    DEFAULT_CSS = "FilterNotice { height: auto; padding: 1 1 0 1; color: $text-muted; }"
+
+    def __init__(self) -> None:
+        super().__init__(
+            Text.assemble(
+                "A filter is applied — ", ("f", f"bold {ACCENT}"), " shows every box again."
+            )
+        )
+
+
 # --- dialogs ------------------------------------------------------------------
 
 
@@ -711,6 +725,7 @@ HELP_ROWS = [
     ("Tab  ⇧Tab", "in a box", "move between the fields and the buttons"),
     ("← →", "on a button", "the next / previous button"),
     ("Esc", "in a box", "back to the list"),
+    ("f", "outside a field", "filter to the selected box's type; again, every box"),
     ("?  F1", "", "this help; F1 also in a field"),
     ("q  ^Q", "", "quit (asks while a tool step runs); ^Q also in a field"),
 ]
