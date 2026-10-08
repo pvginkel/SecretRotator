@@ -151,6 +151,11 @@ class Step(abc.ABC):
         runs it again, so it must be idempotent."""
 
 
+def label(step: Step, action: Action) -> str:
+    """A line's words: the step's title, marked as an undo or a re-run by a rollback."""
+    return {Action.RUN: "", Action.UNDO: "undo: ", Action.RERUN: "again: "}[action] + step.title
+
+
 @dataclass(frozen=True)
 class Started:
     step: Step

@@ -1,8 +1,9 @@
 """The executor (design §4.5): a plan runs under the lock, its place kept in its staging leaf and
 its outcome in the run state; a failure stops it, Retry and a new process resume it, Abort rolls
-it back or cancels it, and a dry run touches nothing."""
+it back or cancels it, a front end stops it from another thread, and a dry run touches nothing."""
 
 import datetime
+import time
 
 import pytest
 from fixtures import AUTO, annotated, compliant_store, data_of, edit, fields_of
@@ -16,6 +17,8 @@ from plans import (
     RandomLike,
     Recorder,
     Tool,
+    Waiting,
+    Worker,
     client,
     fake,
     flight_of,
@@ -600,6 +603,115 @@ class TestAbort:
         assert e.rollback() == [] and e.abort_blocker() is None
         assert e.abort() is Outcome.CANCELLED
         assert bao.meta(LEAF) == fake().meta(LEAF) and state_of(bao, LEAF) == LeafState()
+
+
+class StopsAsItEnds(Step):
+    """A mutating tool step during whose run, past its last progress detail, a front end asks
+    the executor to stop."""
+
+    type = "test.stops"
+    mutates = True
+
+    def __init__(self, id, journal, choice):
+        super().__init__(id, f"do {id}")
+        self.journal = journal
+        self.choice = choice
+        self.executor = None
+
+    def run(self, ctx):
+        self.journal.append(("run", self.id))
+        self.executor.stop(self.choice)
+        return f"{self.id} done"
+
+    def undo(self, ctx):
+        self.journal.append(("undo", self.id))
+        return f"{self.id} undone"
+
+
+class TestStop:
+    """A front end that runs the executor off its own thread stops a running tool step (design
+    §4.5): Abort rolls the plan back with that step's undo, an exit leaves it in flight there."""
+
+    def started(self, bao, step, *more):
+        e = executor(bao, plan_of(step, *more), Recorder())
+        worker = Worker(e.run)
+        assert step.waiting.wait(10)
+        return e, worker
+
+    def test_abort_while_a_tool_step_runs_stops_it_and_its_undo_runs(self):
+        bao = fake()
+        j = Journal()
+        e, worker = self.started(bao, Waiting("rollout", j), Confirm("check"))
+        assert [(step.id, action) for step, action in e.rollback()] == [
+            ("rollout", Action.UNDO),
+            ("kv.copy:iac/copy#token", Action.UNDO),
+            ("kv.write", Action.UNDO),
+        ]
+        e.stop(Abandon.ABORT)
+        assert worker.join() is Outcome.ROLLED_BACK
+        assert j == [("run", "rollout"), ("undo", "rollout")]
+        assert bao.data(LEAF)["token"] == OLD and flight_of(bao, LEAF) is None
+        assert bao.data(LOCK_LEAF) == {} and state_of(bao, LEAF) == LeafState()
+
+    def test_exit_while_a_tool_step_runs_leaves_the_plan_in_flight_there_and_a_resume_reruns_it(
+        self,
+    ):
+        bao = fake()
+        j = Journal()
+        e, worker = self.started(bao, Waiting("rollout", j), Confirm("check"))
+        e.stop(Abandon.EXIT)
+        assert worker.join() is Outcome.EXITED
+        assert flight_of(bao, LEAF) == InFlight("random", ("token",), "rollout")
+        assert bao.data(LOCK_LEAF) == {} and state_of(bao, LEAF) == LeafState()
+        new = bao.data(LEAF)["token"]
+        e = executor(bao, plan_of(Tool("rollout", j), Confirm("check")), Recorder({}))
+        assert e.load() is Stand.IN_FLIGHT
+        assert e.run() is Outcome.DONE
+        assert j == [("run", "rollout"), ("run", "rollout")]
+        assert bao.data(LEAF)["token"] == new
+
+    def test_abort_is_refused_while_a_step_without_an_undo_runs(self):
+        bao = fake()
+        e, worker = self.started(bao, Waiting("irrev", Journal(), undoable=False))
+        assert e.abort_blocker() == "irrev cannot be taken back"
+        e.stop(Abandon.ABORT)
+        with pytest.raises(AbortRefused, match="irrev cannot be taken back"):
+            worker.join()
+        assert flight_of(bao, LEAF).step == "irrev" and bao.data(LOCK_LEAF) == {}
+
+    @pytest.mark.parametrize("choice", [Abandon.ABORT, Abandon.EXIT])
+    def test_a_stop_asked_for_as_a_step_finishes_lands_before_the_next_step(self, choice):
+        bao = fake()
+        j = Journal()
+        step = StopsAsItEnds("t", j, choice)
+        e = executor(bao, plan_of(step, Tool("next", j)), Recorder())
+        step.executor = e
+        if choice is Abandon.ABORT:
+            assert e.run() is Outcome.ROLLED_BACK
+            assert j == [("run", "t"), ("undo", "t")] and flight_of(bao, LEAF) is None
+        else:
+            assert e.run() is Outcome.EXITED
+            assert j == [("run", "t")] and flight_of(bao, LEAF).step == "t"
+        assert bao.data(LOCK_LEAF) == {}
+
+    def test_a_rollback_stops_on_exit_only_and_a_resume_continues_it(self):
+        bao = fake()
+        j = Journal()
+        step = Waiting("t", j, run_waits=False, undo_waits=True)
+        e = executor(bao, plan_of(step, Confirm("check")), Recorder(Abandon.ABORT))
+        worker = Worker(e.run)
+        assert step.waiting.wait(10)  # its undo, in the rollback the Abort at check began
+        e.stop(Abandon.ABORT)
+        time.sleep(0.05)
+        assert step.waiting.is_set()
+        e.stop(Abandon.EXIT)
+        assert worker.join() is Outcome.EXITED
+        assert flight_of(bao, LEAF).step == "check" and bao.data(LOCK_LEAF) == {}
+        e = executor(bao, plan_of(Tool("t", j), Confirm("check")), Recorder())
+        assert e.load() is Stand.ROLLING_BACK
+        assert e.run() is Outcome.ROLLED_BACK
+        assert j == [("run", "t"), ("undo", "t"), ("undo", "t")]
+        assert bao.data(LEAF)["token"] == OLD and flight_of(bao, LEAF) is None
 
 
 class TestDryRun:

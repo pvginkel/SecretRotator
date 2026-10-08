@@ -95,6 +95,8 @@ class _RunContext:
         self.now = executor.clock()
 
     def progress(self, detail: str) -> None:
+        if (stop := self.executor._stop_in(self.action)) is not None:
+            raise _Abandoned(stop)
         self.executor.renderer.event(Progress(self.step, self.action, detail))
 
     def stage(self, name: str, value: str) -> None:
@@ -113,7 +115,7 @@ class _RunContext:
 class Executor:
     """Runs one plan. run() starts it, resumes it and retries its failed step; abort() rolls it
     back. Each takes the lock for as long as it runs. In a dry run nothing runs and nothing is
-    read or written."""
+    read or written. A front end that runs it off its own thread stops it with stop()."""
 
     def __init__(
         self,
@@ -138,6 +140,21 @@ class Executor:
         self.stand = Stand.FRESH
         self.at = 0  # the index of the step the plan is at
         self.kind = plan.target.kind
+        self.failure: Finished | None = None  # the last failed line: Details, the Telegram message
+        self._stop: Abandon | None = None
+
+    def stop(self, choice: Abandon) -> None:
+        """Stops the run under way from another thread, as the operator's answer at an operator
+        step does: the tool step running stops at its next progress detail, else the plan before
+        its next step. ABORT then rolls the plan back, the step it stopped counting as run, so its
+        undo runs; it is refused, as Abort is, while abort_blocker() names a reason. EXIT leaves
+        the plan in flight at that step, which a resume runs again, and releases the lock. A
+        rollback stops on EXIT only, being an abort already."""
+        self._stop = choice
+
+    def _stop_in(self, action: Action) -> Abandon | None:
+        """The stop asked for, where it applies to a line of this action."""
+        return self._stop if self._stop is Abandon.EXIT or action is Action.RUN else None
 
     def load(self) -> Stand:
         flight = flights(self.bao).get(self.leaf)
@@ -171,6 +188,7 @@ class Executor:
             for step in self.plan.steps:
                 self.renderer.event(Skipped(step, "dry run"))
             return Outcome.DRY_RUN
+        self._stop = None
         with self.lock.held(self.plan.name):
             if self.load() is Stand.ROLLING_BACK:
                 return self._roll_back()
@@ -179,6 +197,7 @@ class Executor:
     def abort(self) -> Outcome:
         if self.dry_run:
             return Outcome.DRY_RUN
+        self._stop = None
         with self.lock.held(self.plan.name):
             stand = self.load()
             if stand is Stand.ROLLING_BACK:
@@ -231,11 +250,14 @@ class Executor:
             self.state.update(self.leaf, failed)
         except OpenBaoError as e2:
             error += f" The failure is not recorded in the run state: {e2}"
-        self.renderer.event(Finished(step, action, False, error=error, technical=technical))
+        self.failure = Finished(step, action, False, error=error, technical=technical)
+        self.renderer.event(self.failure)
         return Outcome.FAILED if action is Action.RUN else Outcome.ROLLBACK_FAILED
 
     def _advance(self) -> Outcome:
         for at in range(self.at, len(self.plan.steps)):
+            if (stop := self._stop_in(Action.RUN)) is not None:
+                return self._abandon(stop)
             self.at = at
             step = self.plan.steps[at]
             self.renderer.event(Started(step))
@@ -246,12 +268,15 @@ class Executor:
                 self.staging.record(self.plan.target.keys, step.id, self.plan.derived)
                 detail = step.run(_RunContext(self, step, Action.RUN))
             except _Abandoned as a:
-                return Outcome.EXITED if a.choice is Abandon.EXIT else self._abort()
+                return self._abandon(a.choice)
             except Exception as e:
                 return self._fail(step, Action.RUN, e, unlanded=unlanded)
             self.renderer.event(Finished(step, Action.RUN, True, detail or ""))
         self.staging.destroy()
         return Outcome.DONE
+
+    def _abandon(self, choice: Abandon) -> Outcome:
+        return Outcome.EXITED if choice is Abandon.EXIT else self._abort()
 
     def _abort(self) -> Outcome:
         if reason := self.abort_blocker():
@@ -266,6 +291,8 @@ class Executor:
         items = self.rollback()
         for done in range(int(self.staging.get(ROLLBACK)), len(items)):
             step, action = items[done]
+            if self._stop_in(action) is not None:
+                return Outcome.EXITED
             self.renderer.event(Started(step, action))
             try:
                 run = step.undo if action is Action.UNDO else step.run

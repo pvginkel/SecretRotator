@@ -3,23 +3,27 @@
 or is shown is never echoed or printed: only Reveal puts a shown one on the screen, until Enter."""
 
 import datetime
+import functools
 import time
 from collections.abc import Callable, Mapping
 
 from secret_rotator.audit import Audit, Leaf, audit, copies_in, live_store
 from secret_rotator.cluster import Cluster
 from secret_rotator.console import Console
-from secret_rotator.executor import (
-    Abandon,
-    AbortRefused,
-    Executor,
-    Outcome,
-    PlanMismatch,
-    Stand,
-)
+from secret_rotator.executor import Abandon, Executor, Outcome, PlanMismatch, Stand
 from secret_rotator.kube import KubeError
-from secret_rotator.lock import Holder, Lock, LockError, LockHeld
-from secret_rotator.model import Action, Actor, Event, Finished, Progress, Skipped, Started, Step
+from secret_rotator.lock import Lock
+from secret_rotator.model import (
+    Action,
+    Actor,
+    Event,
+    Finished,
+    Progress,
+    Skipped,
+    Started,
+    Step,
+    label,
+)
 from secret_rotator.openbao import OpenBao, OpenBaoError
 from secret_rotator.opsteps import (
     EXPIRY,
@@ -30,12 +34,19 @@ from secret_rotator.opsteps import (
     expiry_problem,
 )
 from secret_rotator.plan import Kind, LeafPlan, Plan, PlanError, make, of_leaf
+from secret_rotator.session import Choice, Session, abort_question
 from secret_rotator.state import LeafState, State
-from secret_rotator.telegram import failed
 
-Choice = tuple[str, str]  # the letter that answers it, and the word it is in
-ABORT: Choice = ("a", "abort")
-EXIT: Choice = ("x", "exit")
+Letter = tuple[str, str]  # the letter that answers it, and the word it is in
+ABORT: Letter = ("a", "abort")
+EXIT: Letter = ("x", "exit")
+LETTERS: dict[Choice, Letter] = {
+    Choice.RESUME: ("r", "resume"),
+    Choice.RETRY: ("r", "retry"),
+    Choice.ABORT: ABORT,
+    Choice.DETAILS: ("d", "details"),
+    Choice.EXIT: EXIT,
+}
 
 
 def due_text(due_at: datetime.date | None, today: datetime.date) -> str:
@@ -99,11 +110,7 @@ def took(seconds: float) -> str:
     return f"{int(seconds // 60)}m {int(seconds % 60):02d}s"
 
 
-def label(step: Step, action: Action) -> str:
-    return {Action.RUN: "", Action.UNDO: "undo: ", Action.RERUN: "again: "}[action] + step.title
-
-
-def menu(console: Console, choices: list[Choice]) -> str:
+def menu(console: Console, choices: list[Letter]) -> str:
     """The letter of one of the choices, asked again until the answer is one."""
     words = [word.replace(letter, f"[{letter}]", 1) for letter, word in choices]
     question = (", ".join(words[:-1]) + f" or {words[-1]}" if len(words) > 1 else words[0]) + "? "
@@ -117,12 +124,10 @@ def yes(console: Console, question: str) -> bool:
 
 
 def guard(console: Console, executor: Executor) -> bool:
-    """Abort's one question (design §4.5); its count is the steps the rollback runs."""
-    n = len(executor.rollback())
-    return yes(console, f"Abort and roll back {n} step{'' if n == 1 else 's'}?" if n else "Abort?")
+    return yes(console, abort_question(executor))
 
 
-def endings(console: Console, executor: Executor) -> list[Choice]:
+def endings(console: Console, executor: Executor) -> list[Letter]:
     """Abort, while the plan can be aborted, and exit; says why Abort is not possible."""
     blocker = executor.abort_blocker()
     if blocker:
@@ -161,7 +166,6 @@ class TerminalRenderer:
         self.executor: Executor | None = None  # set by its driver: Abort's count and blocker
         self.began: dict[tuple[str, Action], float] = {}
         self.rolling_back = False
-        self.failure: Finished | None = None  # the last failed line, for Details
 
     def event(self, event: Event) -> None:
         c, step = self.console, event.step
@@ -182,7 +186,6 @@ class TerminalRenderer:
             began = self.began.pop((step.id, event.action), None)
             spent = "" if began is None else f"  {took(self.clock() - began)}"
             if not event.ok:
-                self.failure = event
                 c.line(f"✗ {label(step, event.action)}{spent}")
                 c.line(f"    {event.error}")
             elif step.actor is Actor.OPERATOR:
@@ -212,7 +215,7 @@ class TerminalRenderer:
             return Abandon.EXIT
         return Abandon.ABORT if guard(self.console, self.executor) else None
 
-    def _endings(self) -> list[Choice]:
+    def _endings(self) -> list[Letter]:
         """A rollback is an Abort under way: its prompts offer exit only."""
         return [EXIT] if self.rolling_back else endings(self.console, self.executor)
 
@@ -318,22 +321,13 @@ def choose(
 
 
 class Driver:
-    """Runs one plan to an end: Retry, Abort and Details after a failure, the rollback's Retry,
-    and the offer to break a dead holder's lock. notify: where each failure, of the plan or of
-    its rollback, is told in Telegram too (design R66)."""
+    """Runs one plan to an end through its session, the session's offers as menus."""
 
-    def __init__(
-        self,
-        console: Console,
-        executor: Executor,
-        renderer: TerminalRenderer,
-        notify: Callable[[str], None] | None = None,
-    ):
+    def __init__(self, console: Console, session: Session):
         self.console = console
-        self.executor = executor
-        self.renderer = renderer
-        self.leaf = executor.leaf
-        self.notify = notify
+        self.session = session
+        self.executor = session.executor
+        self.leaf = self.executor.leaf
 
     def go(self, stand: Stand, state: LeafState) -> int:
         e, c = self.executor, self.console
@@ -341,10 +335,10 @@ class Driver:
         if stand is Stand.FRESH:
             if all(step.silent for step in e.plan.steps):
                 c.line("Working…")
-            outcome = self.attempt(e.run)
+            outcome = self.session.attempt(e.run)
         elif stand is Stand.IN_FLIGHT:
             c.line(f"It stopped at step {e.at + 1} of {len(e.plan.steps)}: {at.title}.")
-            outcome = self.stopped()
+            outcome = self.offered(Stand.IN_FLIGHT)
         else:
             what = "Its rollback stopped at" if stand is Stand.ROLLING_BACK else "It failed at"
             c.line(f"{what} step {e.at + 1} of {len(e.plan.steps)}: {at.title}.")
@@ -355,7 +349,8 @@ class Driver:
     def settle(self, outcome: Outcome | None) -> int:
         c, keys = self.console, ", ".join(self.executor.plan.target.keys)
         while outcome in (Outcome.FAILED, Outcome.ROLLBACK_FAILED):
-            outcome = self.failed(rollback=outcome is Outcome.ROLLBACK_FAILED)
+            rollback = outcome is Outcome.ROLLBACK_FAILED
+            outcome = self.offered(Stand.ROLLING_BACK if rollback else Stand.FAILED)
         if outcome is Outcome.DONE:
             c.line(f"Done: {keys} of {self.leaf} rotated.")
         elif outcome is Outcome.CANCELLED:
@@ -366,99 +361,34 @@ class Driver:
             c.line(f"Left in flight: `secret-rotator run {self.leaf}` takes it up there.")
         return 1 if outcome is None else 0
 
-    def stopped(self) -> Outcome | None:
-        """A plan left in flight: resume, abort or exit."""
-        ending = endings(self.console, self.executor)
-        while True:
-            letter = menu(self.console, [("r", "resume"), *ending])
-            if letter == "r":
-                return self.attempt(self.executor.run)
-            if letter == EXIT[0]:
-                return Outcome.EXITED
-            if guard(self.console, self.executor):
-                return self.attempt(self.executor.abort)
-
-    def failed(self, *, rollback: bool) -> Outcome | None:
-        """Retry, Details, and Abort where it is possible: never on a rollback, which is one."""
+    def offered(self, stand: Stand) -> Outcome | None:
+        """The operator's choice of what the session offers where the plan stands, done."""
         e, c = self.executor, self.console
-        blocker = None if rollback else e.abort_blocker()
-        if blocker:
-            c.line(f"Abort is not possible: {blocker}")
-        aborts = [] if rollback or blocker else [ABORT]
+        offer = self.session.offer(stand)
+        if offer.blocker:
+            c.line(f"Abort is not possible: {offer.blocker}")
+        letters = {LETTERS[choice][0]: choice for choice in offer.choices}
         while True:
-            letter = menu(c, [("r", "retry"), *aborts, ("d", "details"), EXIT])
-            if letter == "r":
-                return self.attempt(e.run)
-            if letter == "d":
-                self.details()
-            elif letter == EXIT[0]:
-                what = "Its rollback stays stopped part-way" if rollback else "It stays stopped"
+            choice = letters[menu(c, [LETTERS[choice] for choice in offer.choices])]
+            if choice in (Choice.RESUME, Choice.RETRY):
+                return self.session.attempt(e.run)
+            if choice is Choice.DETAILS:
+                c.line(self.session.details())
+            elif choice is Choice.EXIT:
+                if stand is Stand.IN_FLIGHT:
+                    return Outcome.EXITED
+                what = (
+                    "Its rollback stays stopped part-way"
+                    if stand is Stand.ROLLING_BACK
+                    else "It stays stopped"
+                )
                 c.line(
                     f"{what} at: {e.plan.steps[e.at].title}. "
                     f"`secret-rotator run {self.leaf}` takes it up there."
                 )
                 return None
             elif guard(c, e):
-                return self.attempt(e.abort)
-
-    def details(self) -> None:
-        failure = self.renderer.failure
-        if failure is not None:
-            self.console.line(failure.technical.rstrip())
-            return
-        state = self.executor.state.of(self.leaf)
-        self.console.line(f"{state.last_run or '?'}: {state.last_error or 'no error recorded'}")
-
-    def attempt(self, action: Callable[[], Outcome]) -> Outcome | None:
-        """The executor's run or abort, offering to break a dead holder's lock; None when it did
-        not get to an outcome."""
-        e, c = self.executor, self.console
-        while True:
-            try:
-                outcome = action()
-            except LockHeld as held:
-                if not self.break_lock(held.holder):
-                    return None
-                continue
-            except KeyboardInterrupt:
-                c.line()
-                c.line(
-                    f"Interrupted at: {e.plan.steps[e.at].title}. It is left in flight there: "
-                    f"`secret-rotator run {self.leaf}` takes it up, running that step again."
-                )
-                return None
-            except (AbortRefused, PlanMismatch, OpenBaoError, LockError) as err:
-                c.line(f"error: {err}")
-                return None
-            if self.notify is not None and outcome in (Outcome.FAILED, Outcome.ROLLBACK_FAILED):
-                failure, plan = self.renderer.failure, e.plan
-                self.notify(
-                    f"In `secret-rotator run {self.leaf}`: "
-                    + failed(
-                        plan.name,
-                        plan.target.keys,
-                        label(failure.step, failure.action),
-                        failure.error,
-                        rollback=outcome is Outcome.ROLLBACK_FAILED,
-                    )
-                )
-            return outcome
-
-    def break_lock(self, holder: Holder) -> bool:
-        c = self.console
-        c.line(f"Another plan runs: {holder}.")
-        if not yes(c, f"Is {holder.who} gone? Break its lock?"):
-            return False
-        try:
-            self.executor.lock.break_held(holder)
-        except LockHeld as held:
-            c.line(f"Not broken: it was taken since. {held.holder}.")
-            return False
-        except OpenBaoError as err:
-            c.line(f"error: {err}")
-            return False
-        c.line("The lock is broken.")
-        return True
+                return self.session.attempt(e.abort)
 
 
 def run_leaf(
@@ -518,8 +448,15 @@ def run_leaf(
         state = State(bao, store)
         executor = Executor(bao, plan, renderer, Lock(bao, holder), state=state, dry_run=False)
         renderer.executor = executor
+        session = Session(
+            executor,
+            say=console.line,
+            confirm=functools.partial(yes, console),
+            notify=notify,
+            command=f"secret-rotator run {leaf}",
+        )
         stand = Stand.FRESH if flight is None else executor.load()
-        return Driver(console, executor, renderer, notify).go(stand, store[leaf].state)
+        return Driver(console, session).go(stand, store[leaf].state)
     except (PlanMismatch, OpenBaoError, KubeError) as e:
         console.line(f"error: {e}")
         return 1

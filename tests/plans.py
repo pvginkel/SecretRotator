@@ -1,10 +1,12 @@
 """Test doubles for the plan model: a store on the fake OpenBao with its run state and plans in
-flight, a kind built like `random`, steps whose behaviour a test sets, and a renderer that records
-events and answers asks."""
+flight, a kind built like `random`, steps whose behaviour a test sets, a renderer that records
+events and answers asks, and a thread that runs a plan as a front end with an event loop does."""
 
 import dataclasses
 import datetime
 import json
+import threading
+import time
 
 from fake_openbao import TOKEN, FakeOpenBao
 from fixtures import COMPLIANT, compliant_store, data_of
@@ -133,6 +135,67 @@ class Tool(Step):
             self.undo_fail -= 1
             raise StepFailed(f"the undo of {self.id} failed")
         return f"{self.id} undone"
+
+
+class Waiting(Step):
+    """A mutating tool step whose run, or undo, reports a progress detail over and over until the
+    executor stops it, as a wait on the cluster does; waiting is set while it does."""
+
+    type = "test.waiting"
+    mutates = True
+
+    def __init__(self, id, journal, *, undoable=True, run_waits=True, undo_waits=False):
+        super().__init__(id, f"wait for {id}")
+        self.journal = journal
+        self.run_waits = run_waits
+        self.undo_waits = undo_waits
+        self.waiting = threading.Event()
+        if not undoable:
+            self.undo = None
+            self.no_undo = f"{id} cannot be taken back"
+
+    def run(self, ctx):
+        self.journal.append(("run", self.id))
+        return self._wait(ctx) if self.run_waits else f"{self.id} done"
+
+    def undo(self, ctx):
+        self.journal.append(("undo", self.id))
+        return self._wait(ctx) if self.undo_waits else f"{self.id} undone"
+
+    def _wait(self, ctx):
+        self.waiting.set()
+        try:
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                ctx.progress("waiting")
+                time.sleep(0.005)
+            return "never stopped"
+        finally:
+            self.waiting.clear()
+
+
+class Worker:
+    """fn run on a thread of its own, as a front end whose event loop answers the renderer runs
+    the executor."""
+
+    def __init__(self, fn):
+        self.result = self.error = None
+        self.thread = threading.Thread(target=self._run, args=(fn,), daemon=True)
+        self.thread.start()
+
+    def _run(self, fn):
+        try:
+            self.result = fn()
+        except Exception as e:
+            self.error = e
+
+    def join(self):
+        """What fn returned, once it has; what it raised is raised."""
+        self.thread.join(10)
+        assert not self.thread.is_alive(), "it never ended"
+        if self.error is not None:
+            raise self.error
+        return self.result
 
 
 class Confirm(Step):

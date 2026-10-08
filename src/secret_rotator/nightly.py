@@ -18,7 +18,7 @@ from secret_rotator.cluster import Cluster
 from secret_rotator.executor import Executor, Outcome
 from secret_rotator.k8ssteps import K8sRollout
 from secret_rotator.lock import Holder, Lock, LockHeld, utcnow
-from secret_rotator.model import Event, Finished, Started, Step
+from secret_rotator.model import Event, Finished, Started, Step, label
 from secret_rotator.openbao import OpenBao
 from secret_rotator.plan import Kind, Plan, PlanError, make, split
 from secret_rotator.schedule import KeySchedule
@@ -27,7 +27,7 @@ from secret_rotator.state import LeafState, State
 from secret_rotator.switches import Switches
 from secret_rotator.telegram import TOKEN as BOT_TOKEN
 from secret_rotator.telegram import Telegram, TelegramError, failed
-from secret_rotator.terminal import due_text, label, plan_lines, took
+from secret_rotator.terminal import due_text, plan_lines, took
 from secret_rotator.youtrack import TOKEN as CARD_TOKEN
 from secret_rotator.youtrack import Card, YouTrack, YouTrackError
 
