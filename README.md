@@ -18,7 +18,7 @@ The rotator's run state — each key's rotation stamp, each leaf's status — is
 |---|---|
 | `secret-rotator audit [--keys FILE]` | Checks every leaf against the annotation contract. Offline with `--keys`: the seed over FILE's key names. |
 | `secret-rotator annotate [--apply]` | Makes each seed leaf's custom metadata exactly its `rotation_<key>` entries by metadata patch: it adds or changes the entries, removes every other key, sets an automatic leaf's `max_versions` to 20, and creates the marker leaves the seed declares. A dry run without `--apply` lists every write. |
-| `secret-rotator plan <path> [--keys FILE]` | Prints the leaf's plans and executes nothing. Offline with `--keys`. |
+| `secret-rotator plan <path> [--keys FILE [--snapshot FILE]]` | Prints the leaf's plans and executes nothing. Offline with `--keys`; with `--snapshot`, the plan takes the ExternalSecrets it syncs and the workloads it rolls out from FILE, a read-only snapshot of the prd cluster's ExternalSecrets, Deployments, StatefulSets and DaemonSets (`plan --help` prints the `kubectl get` that takes it). Without it, an offline plan of a leaf activated through the cluster cannot be built. |
 | `secret-rotator run <path>` | Runs one plan of the leaf in the terminal, its operator steps as prompts. A plan a failure stopped offers Retry, Abort (roll back) and Details. Then pushes the run state's metrics. |
 | `secret-rotator run` | The nightly run. It ends by pushing its metrics. |
 | `secret-rotator stamp <path> <key> [--rotated-at DATE] [--expires-at DATE \| --clear-expires-at]` | Sets the key's rotation stamp in the run state to the date its current value was written, for a value written outside a rotation; sets or clears the `expires_at` in its entry. Takes at least one option. Then pushes the run state's metrics. |
@@ -81,9 +81,13 @@ series `metrics.HELP` names.
   flight (`staging`) and the run state (`state`), the generic steps
   (`kvsteps`, `k8ssteps`, `jenkinssteps`, `ansiblesteps`, `opsteps`), the nightly run (`nightly`),
   the standing card, the metrics (`metrics`), and the clients for OpenBao, Kubernetes, Jenkins, YouTrack and Telegram.
-- `src/secret_rotator/kinds/<name>/` holds one package per kind: `random`, `manual` and `approle`.
-  Each is registered as a `secret_rotator.kinds` entry point in `pyproject.toml`. The leaves of a kind
-  the contract knows but no package implements are skipped. `kinds/manual/types/<type>.md` holds one
+- `src/secret_rotator/kinds/<name>/` holds one package per kind: `random`, `manual`, `approle`,
+  `keycloak_client`, `cnpg_role`, `jenkins_token`, `jenkins_job_token` and `grafana_admin`. Each is
+  registered as a `secret_rotator.kinds` entry point in `pyproject.toml`, under its kind's name
+  (`keycloak-client` for `keycloak_client`). The leaves of a kind the contract knows but no package
+  implements are skipped. A kind that reaches a system of its own keeps that system's address in
+  its package: Keycloak's two realms (`keycloak_client`, the one place a realm's URL is set),
+  Postgres (`cnpg_role`) and Grafana (`grafana_admin`). `kinds/manual/types/<type>.md` holds one
   document per credential type: the standard instructions a `manual` key's `type` arg picks, under
   a front matter of the credential's name, the shape a pasted value has and whether it expires.
 - `src/secret_rotator/seed.yaml` holds the annotations `annotate` writes, transcribed from the
@@ -96,5 +100,5 @@ series `metrics.HELP` names.
 
 Python 3.13 and poetry live in the KubeCoder `iac` sidecar. `kc project setup`, `lint` and `test`
 run them there: `ruff check`, `ruff format --check` and `pytest`. The tests drive fakes of OpenBao,
-the cluster with the Pushgateway behind it, Jenkins, YouTrack, Telegram and `ansible-playbook`,
-never a live system.
+the cluster with the Pushgateway behind it, CloudNativePG with its Postgres login, Keycloak,
+Jenkins, Grafana, YouTrack, Telegram and `ansible-playbook`, never a live system.
