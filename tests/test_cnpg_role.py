@@ -173,9 +173,10 @@ class TestThePlans:
             "eso.sync:postgres-pas-prd/postgres-terraform-admin",
         ]
 
+    @pytest.mark.parametrize("cluster", [True, False])
     @pytest.mark.parametrize("leaf", [DEV_PGADMIN, DEV_TERRAFORM])
-    def test_a_dev_twin_is_a_kv_write_also_offline(self, leaf):
-        plan = World().plan(leaf, cluster=False)
+    def test_a_dev_twin_is_a_kv_write_also_offline(self, leaf, cluster):
+        plan = World().plan(leaf, cluster=cluster)
         assert ids(plan) == ["random.generate:password", "kv.write", "kv.stamp"]
         assert plan.description == (
             "The tool generates a new password and writes it to the leaf: the role is on the dev "
@@ -397,11 +398,12 @@ class TestTheRuns:
         assert world.run(TERRAFORM) is Outcome.FAILED
         assert (world.failure().step.id, world.failure().error) == ("cnpg.reconcile", error)
 
+    @pytest.mark.parametrize("cluster", [True, False])
     @pytest.mark.parametrize("leaf", [DEV_PGADMIN, DEV_TERRAFORM])
-    def test_a_dev_twin_writes_the_leaf_and_reaches_no_cluster_and_no_postgres(self, leaf):
+    def test_a_dev_twin_writes_the_leaf_and_reaches_no_cluster_and_no_postgres(self, leaf, cluster):
         world = World()
         before = world.password(leaf)
-        assert world.run(leaf, cluster=False) is Outcome.DONE
+        assert world.run(leaf, cluster=cluster) is Outcome.DONE
         assert world.password(leaf) != before
         assert world.cluster.requests == [] and world.postgres.logins == []
         assert state_of(world.bao, leaf).stamps == {"password": "2026-10-05"}
