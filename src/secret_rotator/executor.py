@@ -148,7 +148,7 @@ class Executor:
         step does: the tool step running stops at its next progress detail, else the plan before
         its next step. ABORT then rolls the plan back, the step it stopped counting as run, so its
         undo runs; it is refused, as Abort is, while abort_blocker() names a reason. EXIT leaves
-        the plan in flight at that step, which a resume runs again, and releases the lock. A
+        the plan in flight at that step, which a resume runs, and releases the lock. A
         rollback stops on EXIT only, being an abort already."""
         self._stop = choice
 
@@ -256,10 +256,15 @@ class Executor:
 
     def _advance(self) -> Outcome:
         for at in range(self.at, len(self.plan.steps)):
+            step = self.plan.steps[at]
             if (stop := self._stop_in(Action.RUN)) is not None:
+                if at > self.at:  # the step before finished, so the plan is at this one, unrun
+                    self.at = at
+                    self.staging.record(
+                        self.plan.target.keys, step.id, self.plan.derived, unrun=True
+                    )
                 return self._abandon(stop)
             self.at = at
-            step = self.plan.steps[at]
             self.renderer.event(Started(step))
             # A step judges only its own run, so one the plan was already at counts as landed
             # unless every run of it so far failed reporting it did not land.

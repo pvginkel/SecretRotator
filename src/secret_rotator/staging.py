@@ -13,8 +13,8 @@ from secret_rotator.contract import STAGING_PREFIX
 from secret_rotator.openbao import OpenBao
 
 # The record's names among the staged ones: the plan's keys, a JSON array, the id of the step the
-# plan is at, what it derived from the cluster (Derived.dump), and that step's id once every run of
-# it failed reporting it did not land (model.StepFailed.landed), which the next record drops.
+# plan is at, what it derived from the cluster (Derived.dump), and that step's id while no run of it
+# landed: none ran, or every one failed reporting it did not land (model.StepFailed.landed).
 KEYS = "keys"
 STEP = "step"
 DERIVED = "derived"
@@ -62,10 +62,12 @@ class Staging:
     def get(self, name: str) -> str | None:
         return self.data.get(name)
 
-    def record(self, keys: tuple[str, ...], step: str, derived: Derived) -> None:
-        """The plan is in flight at this step: written before it runs, so it has not failed."""
+    def record(self, keys: tuple[str, ...], step: str, derived: Derived, *, unrun=False) -> None:
+        """The plan is in flight at this step: written before it runs, so it has not failed.
+        unrun: the step does not run now, so it is recorded as not landed."""
         kept = {name: value for name, value in self.data.items() if name != NOT_LANDED}
-        self._write(kept | {KEYS: json.dumps(list(keys)), STEP: step, DERIVED: derived.dump()})
+        record = {KEYS: json.dumps(list(keys)), STEP: step, DERIVED: derived.dump()}
+        self._write(kept | record | ({NOT_LANDED: step} if unrun else {}))
 
     def put(self, name: str, value: str) -> None:
         self._write(self.data | {name: value})

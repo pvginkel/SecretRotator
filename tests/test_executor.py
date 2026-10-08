@@ -628,6 +628,30 @@ class StopsAsItEnds(Step):
         return f"{self.id} undone"
 
 
+class StopsWhenAnswered(Recorder):
+    """Answers every ask, and asks the executor to stop as the operator answers `at`, as a front
+    end does whose stop waited on a dialog while the plan moved on to that step."""
+
+    def __init__(self, at, choice):
+        super().__init__()
+        self.at = at
+        self.choice = choice
+        self.executor = None
+
+    def ask(self, step, request):
+        self.asked.append((step.id, request))
+        if step.id == self.at:
+            self.executor.stop(self.choice)
+        return {}
+
+
+def stopped_when_answered(bao, plan, at, choice):
+    r = StopsWhenAnswered(at, choice)
+    e = executor(bao, plan, r)
+    r.executor = e
+    return e, r
+
+
 class TestStop:
     """A front end that runs the executor off its own thread stops a running tool step (design
     §4.5): Abort rolls the plan back with that step's undo, an exit leaves it in flight there."""
@@ -691,8 +715,45 @@ class TestStop:
             assert j == [("run", "t"), ("undo", "t")] and flight_of(bao, LEAF) is None
         else:
             assert e.run() is Outcome.EXITED
-            assert j == [("run", "t")] and flight_of(bao, LEAF).step == "t"
+            assert j == [("run", "t")] and flight_of(bao, LEAF).step == "next"
+            assert bao.data(STAGING)[NOT_LANDED] == "next"
         assert bao.data(LOCK_LEAF) == {}
+
+    def test_an_abort_that_lands_as_an_operator_step_is_answered_counts_that_step_done(self):
+        bao = fake()
+        j = Journal()
+        plan = plan_of(Confirm("revoke", irreversible="the old token is revoked"), Tool("next", j))
+        e, _ = stopped_when_answered(bao, plan, "revoke", Abandon.ABORT)
+        with pytest.raises(AbortRefused, match="the old token is revoked"):
+            e.run()
+        assert j == [] and bao.data(LEAF)["token"] != OLD and bao.data(LOCK_LEAF) == {}
+        assert flight_of(bao, LEAF).step == "next" and bao.data(STAGING)[NOT_LANDED] == "next"
+        r = Recorder()
+        e = executor(bao, plan, r)
+        assert e.load() is Stand.IN_FLIGHT and e.abort_blocker() == "the old token is revoked"
+        assert e.run() is Outcome.DONE
+        assert j == [("run", "next")] and r.asked == []
+
+    def test_an_abort_that_lands_as_an_activator_is_answered_asks_for_it_again(self):
+        bao = fake()
+        j = Journal()
+        plan = plan_of(Confirm("act", activator=True), Tool("next", j))
+        e, r = stopped_when_answered(bao, plan, "act", Abandon.ABORT)
+        assert e.run() is Outcome.ROLLED_BACK
+        assert [step for step, _ in r.asked] == ["act", "act"] and j == []
+        assert ("ok", "act", Action.RERUN) in r.lines()
+        assert bao.data(LEAF)["token"] == OLD and flight_of(bao, LEAF) is None
+
+    def test_an_exit_that_lands_as_an_operator_step_is_answered_resumes_past_it(self):
+        bao = fake()
+        j = Journal()
+        plan = plan_of(Confirm("check"), Tool("next", j))
+        e, _ = stopped_when_answered(bao, plan, "check", Abandon.EXIT)
+        assert e.run() is Outcome.EXITED
+        assert flight_of(bao, LEAF).step == "next" and bao.data(LOCK_LEAF) == {}
+        r = Recorder()
+        assert executor(bao, plan, r).run() is Outcome.DONE
+        assert j == [("run", "next")] and r.asked == []
 
     def test_a_rollback_stops_on_exit_only_and_a_resume_continues_it(self):
         bao = fake()

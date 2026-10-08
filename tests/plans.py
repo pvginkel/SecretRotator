@@ -199,16 +199,19 @@ class Worker:
 
 
 class Confirm(Step):
-    """An operator step: asks, and is done when answered."""
+    """An operator step: asks, and is done when answered; an activator one is asked again by a
+    rollback."""
 
     type = "test.confirm"
     actor = Actor.OPERATOR
 
-    def __init__(self, id, *, irreversible=""):
+    def __init__(self, id, *, irreversible="", activator=False):
         super().__init__(id, f"confirm {id}")
         if irreversible:
             self.mutates = True
             self.no_undo = irreversible
+        if activator:
+            self.mutates = self.activator = True
 
     def run(self, ctx):
         ctx.ask(f"please {self.id}")
