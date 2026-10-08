@@ -4,8 +4,8 @@ version = "0.1.0"
 description = "Automated OpenBao secret rotation for the homelab"
 authors = [{ name = "Pieter van Ginkel", email = "pvginkel@gmail.com" }]
 readme = "README.md"
-requires-python = ">=3.13"
-dependencies = ["pyyaml (>=6.0,<7)", "psycopg[binary] (>=3.2,<4)"]
+requires-python = ">=3.13,<4.0"
+dependencies = ["pyyaml (>=6.0,<7)", "psycopg[binary] (>=3.2,<4)", "textual (>=8,<9)"]
 
 [project.scripts]
 secret-rotator = "secret_rotator.cli:main"
@@ -38,9 +38,12 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [dependency-groups]
 dev = [
     "pytest (>=9.1.1,<10.0.0)",
-    "ruff (>=0.16.10,<0.17.0)"
+    "ruff (>=0.16.10,<0.17.0)",
+    "pytest-asyncio (>=1.0,<2)"
 ]

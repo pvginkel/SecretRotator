@@ -1,0 +1,90 @@
+Screen {
+    background: $background;
+}
+
+#status {
+    dock: top;
+    height: 1;
+    background: $panel;
+}
+
+#footer {
+    dock: bottom;
+    height: 1;
+    background: $panel;
+    color: $text-muted;
+}
+
+#list {
+    height: 1fr;
+    padding: 0 1;
+    scrollbar-size-vertical: 1;
+}
+
+/* Every box, selected or not, takes its state's colour, border and title alike (§7.2). */
+Box {
+    height: auto;
+    border: round $foreground 40%;
+    border-title-color: $foreground 55%;
+    padding: 0 1;
+}
+
+Box:hover {
+    background: $boost;
+}
+
+Box.-due { border: round #C0C0C0; border-title-color: #C0C0C0; }
+Box.-accent { border: round $accent; border-title-color: $accent; }
+Box.-error { border: round $error; border-title-color: $text-error; }
+
+Box > .info {
+    height: 1;
+}
+
+Box > StateArea {
+    display: none;
+}
+
+Box.-selected > StateArea {
+    display: block;
+}
+
+/* A focused button turns light as a whole, its label in the button's colour. */
+ActionButton:focus {
+    background: $foreground;
+    color: $surface;
+    text-style: bold;
+}
+
+ActionButton.-primary:focus { color: $primary; }
+ActionButton.-error:focus { color: $error; }
+
+ActionButton:disabled {
+    background: $panel;
+    color: $text-disabled;
+    text-style: none;
+}
+
+EmptyState {
+    height: auto;
+    border: round $success;
+    padding: 0 1;
+}
+
+HelpModal {
+    align: center middle;
+    background: $background 60%;
+}
+
+.dialog {
+    width: auto;
+    max-width: 100;
+    height: auto;
+    border: round $accent;
+    padding: 1 2;
+    background: $surface;
+}
+
+.dialog > Static {
+    width: auto;
+}

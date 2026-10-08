@@ -4,6 +4,7 @@ file."""
 import datetime
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -32,6 +33,7 @@ from secret_rotator.contract import LOCK_LEAF, STATE_LEAF
 from secret_rotator.openbao import OpenBao
 from secret_rotator.switches import Switches, SwitchesError
 from secret_rotator.telegram import Telegram
+from secret_rotator.ui.app import RotatorApp
 from secret_rotator.youtrack import YouTrack
 
 SOURCE = "commit 0394711c7d5e4b0f8a1d2c3b4a5968778695a4b3"
@@ -66,7 +68,15 @@ def test_the_live_audit_takes_no_seed():
 
 @pytest.mark.parametrize(
     "argv",
-    [["audit"], ["annotate"], ["annotate", "--apply"], ["plan", "x/y"], ["run", "x/y"], ["run"]],
+    [
+        ["audit"],
+        ["annotate"],
+        ["annotate", "--apply"],
+        ["plan", "x/y"],
+        ["run", "x/y"],
+        ["run"],
+        ["ui"],
+    ],
 )
 def test_a_live_command_without_the_rotators_approle_is_a_usage_error(argv):
     code, err = usage(*argv)
@@ -74,7 +84,7 @@ def test_a_live_command_without_the_rotators_approle_is_a_usage_error(argv):
     assert "SECRET_ROTATOR_ROLE_ID and SECRET_ROTATOR_SECRET_ID are not set" in err
 
 
-@pytest.mark.parametrize("argv", [["audit"], ["plan", "x/y"], ["run", "x/y"], ["run"]])
+@pytest.mark.parametrize("argv", [["audit"], ["plan", "x/y"], ["run", "x/y"], ["run"], ["ui"]])
 def test_a_live_command_that_reads_the_cluster_without_its_token_is_a_usage_error(argv):
     env = {"SECRET_ROTATOR_ROLE_ID": "r", "SECRET_ROTATOR_SECRET_ID": "s"}
     code, err = usage(*argv, env=env)
@@ -127,6 +137,27 @@ def test_run_takes_a_leaf_and_runs_its_plan_in_the_terminal():
     assert bao.data(WIFI) == {"password": "SECRET-psk"}
     assert "SECRET" not in con.stdout.getvalue()
     assert bao.data(LOCK_LEAF) == {} and bao.version(LOCK_LEAF) == 2
+
+
+def test_ui_lists_every_rotation_with_an_operator_step_in_full_colour(monkeypatch):
+    shown = []
+    monkeypatch.setattr(RotatorApp, "run", lambda app: shown.append(app))
+    for name in ("COLORTERM", "TEXTUAL_COLOR_SYSTEM"):
+        monkeypatch.setenv(name, "")
+        monkeypatch.delenv(name)
+    bao = fake_of(store_of(**ACTIVATE_NONE))
+    env = {
+        "SECRET_ROTATOR_ROLE_ID": ROLE_ID,
+        "SECRET_ROTATOR_SECRET_ID": SECRET_ID,
+        "SECRET_ROTATOR_K8S_TOKEN": TOKEN,
+    }
+    code = cli.main(["ui"], opener=bao, out=pytest.fail, environ=env, kube=FakeCluster().kube)
+    assert code == 0
+    (app,) = shown
+    assert f"{WIFI}#password" in app.order
+    assert all(item.rotation.plan.needs_operator for item in app.items.values())
+    assert app.today == datetime.datetime.now(datetime.UTC).date()
+    assert os.environ["COLORTERM"] == "truecolor"
 
 
 ENV = {

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from secret_rotator import annotate as ann
 from secret_rotator import audit as aud
-from secret_rotator import metrics, nightly, provenance, registry, terminal
+from secret_rotator import metrics, nightly, provenance, registry, terminal, ui
 from secret_rotator.cluster import SNAPSHOT, Cluster, SnapshotError
 from secret_rotator.console import Console
 from secret_rotator.contract import (
@@ -158,6 +158,14 @@ def parser() -> argparse.ArgumentParser:
         help="the key's current credential does not expire",
     )
     stamp.set_defaults(keys=None, seed=None)
+    ui_command = commands.add_parser(
+        "ui",
+        help="the operator's terminal UI over every rotation with a step of theirs",
+        description="Lists every plan with an operator step as a box: the plans in flight and "
+        "failed first, then by when they fall due, the earliest first, then those without a due "
+        "date.",
+    )
+    ui_command.set_defaults(keys=None, seed=None)
     return p
 
 
@@ -235,7 +243,7 @@ def main(
     try:
         if args.command == "run" and args.path is None:
             return run_nightly(environ, opener, out, kube, switches(), youtrack, telegram, clock)
-        kinds = registry.load() if args.command in ("audit", "plan", "run", "stamp") else {}
+        kinds = registry.load() if args.command in ("audit", "plan", "run", "stamp", "ui") else {}
         if offline:
             store = ann.offline_store(args.keys, ann.load_seed(seed_path), out)
             if args.command == "plan":
@@ -265,6 +273,8 @@ def main(
                     out(f"metrics: the state group is not pushed: {K8S_TOKEN_ENV} is not set")
             return code
         cluster = Cluster(kube(environ[K8S_TOKEN_ENV]))
+        if args.command == "ui":
+            return ui.main(bao, kinds, cluster, today)
         if args.command == "run":
             con = console()
             code = terminal.run_leaf(
