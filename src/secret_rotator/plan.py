@@ -1,6 +1,6 @@
 """Building a plan (design §4.3): the entries of the keys it writes resolved into a Target, the
 kind's steps built with the step factory, and kv.stamp appended by the core. A leaf has one plan
-per kind with a plugin, one per key for a per-key kind (manual)."""
+per kind with a plugin, one per key for a per-key kind (manual, external)."""
 
 import datetime
 from collections.abc import Iterable, Mapping
@@ -135,7 +135,8 @@ class StepFactory:
     ) -> list[Step]:
         """The operator mints the plan's keys elsewhere and enters them, one masked input each;
         expires: with the new credential's expiry."""
-        return [OperatorCredential(self.target.keys, title, instruction, shape, expires=expires)]
+        t = self.target
+        return [OperatorCredential(t.leaf, t.keys, title, instruction, shape, expires=expires)]
 
     def show(
         self, name: str, title: str, instruction: str, *, irreversible: str = ""

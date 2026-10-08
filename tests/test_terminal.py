@@ -449,13 +449,16 @@ class TestTheLock:
         assert bao.data(LEAF)["token"] == f"SECRET-{LEAF}-token"
 
 
-class TestTheMarker:
-    def test_run_confirms_the_rotation_at_its_source(self):
+class TestExternal:
+    def test_run_shows_the_notes_and_the_runbook_then_done_stamps_and_rewrites_nothing(self):
         store = store_of()
         bao = fake_of(store, {SEAL: {"seal-key": MARKER_VALUE}})
         code, out = run(bao, SEAL, "y", "d")
-        assert code == 0 and "── Rotate seal-key at its source" in out
-        assert bao.data(SEAL)["seal-key"].startswith(MARKER_VALUE + "; rotated ")
+        assert code == 0 and "── Rotate seal-key outside the tool" in out
+        assert "the bootstrap tier, rotated by hand at its source" in out
+        assert "Runbook: Ansible docs/runbooks/external-key-due.md" in out
+        assert bao.data(SEAL) == {"seal-key": MARKER_VALUE} and bao.version(SEAL) == 1
+        assert set(state_of(bao, SEAL).stamps) == {"seal-key"}
 
 
 class TestHiddenEntry:

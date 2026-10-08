@@ -61,8 +61,8 @@ MARKERS = {
     },
     "rotator/bootstrap/seal-key": {
         "marker": "seal-key",
-        "kind": "manual",
-        "interval": "never",
+        "kind": "external",
+        "interval": "365d",
         "activate": "none",
         "notes": "the bootstrap tier",
     },

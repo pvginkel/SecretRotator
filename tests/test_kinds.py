@@ -1,6 +1,7 @@
-"""The kinds as plugins (design §6): found through their entry points, random and manual with their
-args, ask and description, manual one plan per key and on a marker leaf, the operator steps, and
-the activation the primary's plan composes for its leaf and its copies' leaves (design §4.3)."""
+"""The kinds as plugins (design §6): found through their entry points, random, manual and external
+with their args, ask and description, manual and external one plan per key, external's
+confirmation and stamp, the operator steps, a marker leaf's credential never asked for, and the
+activation the primary's plan composes for its leaf and its copies' leaves (design §4.3)."""
 
 import datetime
 import re
@@ -13,9 +14,10 @@ from plans import COPY, LEAF, NOW, Recorder, client, fake_of, lock, run_state, s
 from secret_rotator import registry
 from secret_rotator.audit import Leaf, audit
 from secret_rotator.contract import MARKER_VALUE
-from secret_rotator.executor import Abandon, AbortRefused, Executor, Outcome
+from secret_rotator.executor import Abandon, Executor, Outcome
 from secret_rotator.kinds.approle import AppRole
 from secret_rotator.kinds.cnpg_role import CnpgRole
+from secret_rotator.kinds.external import RUNBOOK, External
 from secret_rotator.kinds.grafana_admin import GrafanaAdmin
 from secret_rotator.kinds.jenkins_job_token import JenkinsJobToken
 from secret_rotator.kinds.jenkins_token import JenkinsToken
@@ -23,6 +25,7 @@ from secret_rotator.kinds.keycloak_client import KeycloakClient
 from secret_rotator.kinds.manual import TYPES, Manual, load_type
 from secret_rotator.kinds.random import Random
 from secret_rotator.model import StepFailed, expiry_name, value_name
+from secret_rotator.openbao import Version
 from secret_rotator.opsteps import (
     EXPIRY,
     ConfirmRequest,
@@ -37,7 +40,7 @@ from secret_rotator.plan import PlanError, make, of_leaf
 KINDS = registry.load()
 TRELLO = "eso/prd/trello/prd/trello"  # manual api-key and token (never), random bearer-token
 WIFI = "shared/wifi"  # manual password, never, activate none
-SEAL = "rotator/bootstrap/seal-key"
+SEAL = "rotator/bootstrap/seal-key"  # a marker leaf, external
 
 
 def store_of(**activate):
@@ -52,8 +55,8 @@ def store_of(**activate):
         annotated(
             {
                 "seal-key": {
-                    "kind": "manual",
-                    "interval": "never",
+                    "kind": "external",
+                    "interval": "365d",
                     "activate": "none",
                     "notes": "the bootstrap tier, rotated by hand at its source",
                 }
@@ -91,6 +94,7 @@ class TestTheRegistry:
             "jenkins-token",
             "jenkins-job-token",
             "grafana-admin",
+            "external",
         }
         assert isinstance(KINDS["random"], Random) and isinstance(KINDS["manual"], Manual)
         assert isinstance(KINDS["approle"], AppRole)
@@ -99,6 +103,7 @@ class TestTheRegistry:
         assert isinstance(KINDS["jenkins-token"], JenkinsToken)
         assert isinstance(KINDS["jenkins-job-token"], JenkinsJobToken)
         assert isinstance(KINDS["grafana-admin"], GrafanaAdmin)
+        assert isinstance(KINDS["external"], External)
 
     @pytest.mark.parametrize(
         ("found", "problem"),
@@ -186,7 +191,7 @@ class TestRandom:
 class TestCredentialTypes:
     """manual's documents (design §6, ruling 054 D1): one per credential type of the catalog."""
 
-    def test_the_plugin_documents_the_catalogs_nine_types(self):
+    def test_the_plugin_documents_the_catalogs_eleven_types(self):
         assert set(TYPES) == {
             "argocd-token",
             "github-pat",
@@ -196,6 +201,7 @@ class TestCredentialTypes:
             "ssh-private-key",
             "telegram-bot-token",
             "torguard-wireguard",
+            "trello-api-credential",
             "tvdb-api-key",
         }
 
@@ -234,6 +240,11 @@ class TestCredentialTypes:
             ),
             ("argocd-token", ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln"], ["eyJhbGc", "a.b.c"]),
             ("grafana-api-key", ["glsa_AbC123_0a1b2c3d"], ["eyJrIjoi", "glsa"]),
+            (
+                "trello-api-credential",
+                ["0123456789abcdef" * 2, "0123456789abcdef" * 4, "ATTA" + "0a1B" * 17],
+                ["0123456789abcdef", "ATTA", "Bearer 0123456789abcdef0123456789abcdef"],
+            ),
             (
                 "ssh-private-key",
                 [
@@ -377,34 +388,100 @@ class TestManual:
         with pytest.raises(PlanError, match=re.escape(f"rotation_password args: {problem}")):
             plan_for(WIFI, "manual", ["password"], store)
 
-    def test_on_a_marker_leaf_it_confirms_at_the_source_and_rewrites_the_marker_key(self):
+    def test_on_a_marker_leaf_still_annotated_manual_it_never_asks_for_the_credential(self):
+        # A store annotated from a seed before the bootstrap markers were external (design R82).
         store = store_of()
+        edit(store[SEAL].meta, "seal-key", kind="manual", interval="never")
         plan = plan_for(SEAL, "manual", ["seal-key"], store)
-        assert [s.id for s in plan.steps] == [
-            "manual.marker:seal-key",
-            "operator.confirm:source",
-            "kv.write",
-            "kv.stamp",
-        ]
-        assert plan.ask == "rotate it at its source"
-        bao, outcome, r = run(store, plan, {}, data={SEAL: {"seal-key": MARKER_VALUE}})
+        bao, outcome, r = run(store, plan, data={SEAL: {"seal-key": MARKER_VALUE}})
+        assert outcome is Outcome.FAILED and r.asked == []
+        assert r.failures()[0].error == (
+            f"{SEAL}#seal-key holds the marker text: a marker leaf's credential never enters "
+            f"OpenBao"
+        )
+        assert bao.data(SEAL) == {"seal-key": MARKER_VALUE} and bao.version(SEAL) == 1
+        assert state_of(bao, SEAL).stamps == {}
+
+
+EXTERNAL = {
+    "kind": "external",
+    "interval": "365d",
+    "activate": "none",
+    "notes": "Rotated by the app's own procedure.",
+}
+
+
+class TestExternal:
+    def store(self):
+        """The random leaf's token, copied to COPY, as an external key."""
+        store = store_of(**ACTIVATE_NONE)
+        edit(store[LEAF].meta, "token", **EXTERNAL)
+        return store
+
+    def test_its_plan_is_the_operator_s_confirmation_then_the_stamp(self):
+        plan = plan_for(LEAF, "external", ["token"], self.store())
+        assert [s.id for s in plan.steps] == ["operator.confirm:done", "kv.stamp"]
+        assert plan.needs_operator and plan.ask == "rotate it outside the tool"
+        assert plan.description == (
+            "You rotate token outside the tool, as its notes say, and confirm it. The tool stamps "
+            "the key and changes nothing else (Ansible docs/runbooks/external-key-due.md)."
+        )
+        confirm = plan.steps[0]
+        assert confirm.title == "Rotate token outside the tool"
+        assert confirm.instruction == (
+            "Rotated by the app's own procedure.\n\n"
+            "Runbook: Ansible docs/runbooks/external-key-due.md"
+        )
+        assert not confirm.mutates and confirm.undo is None
+
+    def test_without_notes_the_instruction_is_the_runbook(self):
+        store = self.store()
+        edit(store[LEAF].meta, "token", notes=None)
+        (confirm, _) = plan_for(LEAF, "external", ["token"], store).steps
+        assert confirm.instruction == f"Runbook: {RUNBOOK}"
+
+    def test_done_stamps_the_key_and_changes_no_value_and_no_copy(self):
+        store = self.store()
+        plan = plan_for(LEAF, "external", ["token"], store)
+        bao, outcome, r = run(store, plan, {})
         assert outcome is Outcome.DONE
         ((_, request),) = r.asked
-        assert isinstance(request, ConfirmRequest)
-        assert request.title == "Rotate seal-key at its source"
-        assert request.instruction == "the bootstrap tier, rotated by hand at its source"
-        assert bao.data(SEAL) == {"seal-key": f"{MARKER_VALUE}; rotated 2026-10-05T04:30:00+00:00"}
-        assert bao.version(SEAL) == 2
+        assert request == ConfirmRequest(plan.steps[0].title, plan.steps[0].instruction)
+        assert bao.data(LEAF) == {"token": f"SECRET-{LEAF}-token"} and bao.version(LEAF) == 1
+        assert bao.data(COPY) == {"token": f"SECRET-{COPY}-token"} and bao.version(COPY) == 1
+        written = {path for _, path, *_ in bao.writes()}
+        assert not written & {
+            f"kv/{a}/{leaf}" for a in ("data", "metadata") for leaf in (LEAF, COPY)
+        }
+        assert state_of(bao, LEAF).stamps == {"token": "2026-10-05"}
+
+    def test_on_a_marker_leaf_nothing_is_rewritten(self):
+        store = store_of()
+        plan = plan_for(SEAL, "external", ["seal-key"], store)
+        assert [s.id for s in plan.steps] == ["operator.confirm:done", "kv.stamp"]
+        bao, outcome, _ = run(store, plan, {}, data={SEAL: {"seal-key": MARKER_VALUE}})
+        assert outcome is Outcome.DONE
+        assert bao.data(SEAL) == {"seal-key": MARKER_VALUE} and bao.version(SEAL) == 1
         assert state_of(bao, SEAL).stamps == {"seal-key": "2026-10-05"}
 
-    def test_once_confirmed_at_the_source_a_marker_rotation_cannot_be_aborted(self):
-        store = store_of()
-        bao = fake_of(store, {SEAL: {"seal-key": MARKER_VALUE}})
-        bao.refuse["PATCH", f"kv/data/{SEAL}"] = 403
-        plan = plan_for(SEAL, "manual", ["seal-key"], store)
+    def test_a_leaf_with_several_external_keys_has_one_plan_per_key(self):
+        store = store_of(**ACTIVATE_NONE)
+        for key in ("api-key", "token"):
+            edit(store[TRELLO].meta, key, **EXTERNAL)
+        plans, _ = of_leaf(TRELLO, store, audit(store), KINDS)
+        assert [(p.kind, p.keys) for p in plans] == [
+            ("external", ("api-key",)),
+            ("external", ("token",)),
+            ("random", ("bearer-token",)),
+        ]
+
+    def test_a_failed_stamp_can_be_retried_or_aborted_and_stamps_nothing(self):
+        store = self.store()
+        bao = fake_of(store)
+        bao.refuse["GET", f"kv/metadata/{LEAF}"] = 403
         e = Executor(
             client(bao),
-            plan,
+            plan_for(LEAF, "external", ["token"], store),
             Recorder({}),
             lock(bao),
             state=run_state(bao),
@@ -412,16 +489,15 @@ class TestManual:
             clock=lambda: NOW,
         )
         assert e.run() is Outcome.FAILED
-        with pytest.raises(AbortRefused, match="seal-key was rotated at its source"):
-            e.abort()
+        assert e.abort_blocker() is None
+        assert e.abort() is Outcome.CANCELLED
+        assert state_of(bao, LEAF).stamps == {}
 
-    def test_a_marker_leaf_that_holds_a_credential_is_not_overwritten(self):
-        store = store_of()
-        plan = plan_for(SEAL, "manual", ["seal-key"], store)
-        bao, outcome, r = run(store, plan, data={SEAL: {"seal-key": "SECRET-the-seal-key"}})
-        assert outcome is Outcome.FAILED and r.asked == []
-        assert "does not hold the marker text" in r.failures()[0].error
-        assert bao.data(SEAL) == {"seal-key": "SECRET-the-seal-key"}
+    def test_it_takes_no_args(self):
+        store = self.store()
+        edit(store[LEAF].meta, "token", args={"type": "github-pat"})
+        with pytest.raises(PlanError, match="rotation_token args: type: external takes no args"):
+            plan_for(LEAF, "external", ["token"], store)
 
 
 class TestActivation:
@@ -466,10 +542,15 @@ class TestOperatorSteps:
     class Ctx:
         now = NOW
 
-        def __init__(self, answer=None, staged=None):
+        def __init__(self, answer=None, staged=None, held=None):
             self.answer = answer
             self.values = dict(staged or {})
             self.asked = []
+            self.bao = self
+            self.held = held
+
+        def read(self, leaf):
+            return None if self.held is None else Version(1, self.held)
 
         def ask(self, request):
             self.asked.append(request)
@@ -482,14 +563,14 @@ class TestOperatorSteps:
             return self.values.get(name)
 
     def test_a_credential_stages_each_value_and_keeps_one_entered_before(self):
-        step = OperatorCredential(("a", "b"), "enter them", "at the vendor")
+        step = OperatorCredential("x", ("a", "b"), "enter them", "at the vendor")
         ctx = self.Ctx({"a": "SECRET-a", "b": "SECRET-bb"})
         assert step.run(ctx) == "a: 8 characters, b: 9 characters"
         assert ctx.values == {value_name("a"): "SECRET-a", value_name("b"): "SECRET-bb"}
         assert step.run(ctx) == "entered before" and len(ctx.asked) == 1
 
     def test_a_credential_that_expires_stages_its_expiry_for_each_key_before_the_values(self):
-        step = OperatorCredential(("a", "b"), "t", "i", expires=True)
+        step = OperatorCredential("x", ("a", "b"), "t", "i", expires=True)
         ctx = self.Ctx({"a": "SECRET-a", "b": "SECRET-bb", EXPIRY: "2027-01-04"})
         assert step.run(ctx) == "a: 8 characters, b: 9 characters; expires 2027-01-04"
         assert ctx.asked[0].expires
@@ -503,7 +584,8 @@ class TestOperatorSteps:
 
     def test_a_blank_expiry_is_staged_as_none(self):
         ctx = self.Ctx({"a": "SECRET-a", EXPIRY: ""})
-        assert OperatorCredential(("a",), "t", "i", expires=True).run(ctx).endswith("; no expiry")
+        step = OperatorCredential("x", ("a",), "t", "i", expires=True)
+        assert step.run(ctx).endswith("; no expiry")
         assert ctx.values[expiry_name("a")] == ""
 
     @pytest.mark.parametrize(
@@ -516,12 +598,18 @@ class TestOperatorSteps:
     def test_an_expiry_that_is_no_date_after_today_fails_and_stages_nothing(self, expiry, problem):
         ctx = self.Ctx({"a": "SECRET-a", EXPIRY: expiry})
         with pytest.raises(StepFailed, match=f"the expiry entered is no expiry: {problem}"):
-            OperatorCredential(("a",), "t", "i", expires=True).run(ctx)
+            OperatorCredential("x", ("a",), "t", "i", expires=True).run(ctx)
         assert ctx.values == {}
+
+    def test_a_credential_of_a_key_that_holds_the_marker_text_fails_without_asking(self):
+        ctx = self.Ctx({"a": "SECRET-a", "b": "SECRET-b"}, held={"a": "x", "b": MARKER_VALUE})
+        with pytest.raises(StepFailed, match="^x#b holds the marker text: a marker leaf's"):
+            OperatorCredential("x", ("a", "b"), "t", "i").run(ctx)
+        assert ctx.asked == [] and ctx.values == {}
 
     def test_a_credential_answered_without_a_value_fails(self):
         with pytest.raises(StepFailed, match="no value was entered for b"):
-            OperatorCredential(("a", "b"), "t", "i").run(self.Ctx({"a": "x", "b": ""}))
+            OperatorCredential("x", ("a", "b"), "t", "i").run(self.Ctx({"a": "x", "b": ""}))
 
     def test_show_hands_the_staged_value_to_the_renderer_and_never_prints_it(self):
         ctx = self.Ctx({}, {"minted": "SECRET-minted"})

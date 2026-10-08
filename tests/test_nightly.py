@@ -262,6 +262,31 @@ class TestAdmission:
         assert night.telegram.messages == [f"Secret rotation, 2026-10-05\n{line}"]
         assert f"### Manual rotations due\n- {line}" in night.card()["description"]
 
+    def test_an_external_key_is_warned_of_and_marked_due_as_a_manual_one(self):
+        bao = world(due=())
+        edit(
+            bao.leaves[BOT_LEAF]["meta"],
+            "telegram-bot-token",
+            kind="external",
+            activate="none",
+            notes="Rotated at the vendor.",
+        )
+        before = dict(bao.data(BOT_LEAF))
+        night = Night(bao)
+        line = f"Manual rotation of telegram-bot-token at `{BOT_LEAF}` is due"
+        manual_due_in(bao, 28)
+        night(kinds_enabled=frozenset({"random", "external"}))
+        on = TODAY + 28 * DAY
+        assert night.telegram.messages == [
+            f"Secret rotation, 2026-10-05\n{line} in 28 days, on {on}"
+        ]
+        manual_due_in(bao, 0)
+        assert night(now=NOW + DAY, kinds_enabled=frozenset({"random", "external"})) == 0
+        assert state_of(bao, BOT_LEAF).status == "manual-due" and flight_of(bao, BOT_LEAF) is None
+        assert bao.data(BOT_LEAF) == before
+        assert state_of(bao, BOT_LEAF).stamps["telegram-bot-token"] == str(TODAY - 365 * DAY)
+        assert f"### Manual rotations due\n- {line}" in night.card()["description"]
+
     @pytest.mark.parametrize("status", ["failed", "failed-activation"])
     def test_a_manual_due_leaf_keeps_the_failed_status_of_its_other_plan(self, status):
         bao = world(due=())

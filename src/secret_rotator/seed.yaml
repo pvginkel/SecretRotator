@@ -221,10 +221,12 @@ eso/prd/grafana/prd/oidc:
   activate: auto
 
 eso/prd/homeapps/extension-signing:
-  kind: manual
-  interval: never
+  kind: external
+  interval: 365d
   activate: none
-  notes: "rotating invalidates distributed extensions"
+  notes: "Signs the homeapps browser extensions; rotating it invalidates every distributed
+    extension. No rotation procedure is written down; its setup is pvginkel/Home README, Operator
+    one-time setup."
 
 eso/prd/homeassistant-mcp/prd/homeassistant:
   kind: home-assistant-token
@@ -385,15 +387,18 @@ eso/prd/kubecoder/prd/bot-token:
     alerts group, where it must be a member that can post."
 
 # The keys without a kind of their own are the leaf's manual ones: argocd-token, grafana-api-key,
-# openai-api-key, ssh-key-pve, and ansible-vault-password, the bootstrap tier, which never falls due.
+# openai-api-key and ssh-key-pve. ansible-vault-password is the bootstrap tier, external.
 eso/prd/kubecoder/prd/catalog:
   kind: manual
   interval: 365d
   activate: k8s-rollout:kubecoder-prd/deployment/kubecoder-controller
   keys:
     ansible-vault-password:
-      interval: never
-      notes: "the bootstrap tier, rotated by hand at its source and never asked for (R78)"
+      kind: external
+      activate: none
+      notes: "The bootstrap tier: the Ansible Vault passphrase, for the Ansible environments.
+        Rotated with rotator/bootstrap/ansible-vault-passphrase by SOPs
+        bootstrap-secrets-rotation.md §1, whose step 9 writes this key."
     argocd-token:
       args: {"type":"argocd-token"}
       notes: "Argo CD's local account kubecoder (role:readonly), for every prd environment: argocd
@@ -563,10 +568,12 @@ eso/prd/storage/prd/backup-server:
   activate: auto
 
 eso/prd/storage/prd/s3-mirror:
-  kind: manual
-  interval: never
+  kind: external
+  interval: 365d
   activate: none
-  notes: "rclone crypt key of the existing mirror"
+  notes: "The S3 mirror's rclone crypt password and salt (Ansible docs/runbooks/s3-mirror.md,
+    Credentials; RoboForm). Every mirrored object is encrypted with them; no rotation procedure is
+    written down."
 
 eso/prd/telegram-mcp/prd/telegram:
   kind: manual
@@ -579,15 +586,21 @@ eso/prd/telegram-mcp/prd/telegram:
     chat-ids: {kind: none}
 
 eso/prd/trello-mcp/prd/trello:
-  kind: manual
-  interval: never
+  kind: random
+  interval: 14d
   activate: auto
   keys:
     api-key:
-      notes: "cannot be rotated (operator, 2026-10-04)"
-    bearer-token: {kind: random, interval: 14d}
+      kind: manual
+      args: {"type":"trello-api-credential"}
+      interval: 365d
+      notes: "The Trello MCP server's TRELLO_API_KEY. How it really rotates is ANS-285's."
     token:
-      notes: "cannot be rotated (operator, 2026-10-04)"
+      kind: manual
+      args: {"type":"trello-api-credential"}
+      interval: 365d
+      notes: "The Trello MCP server's TRELLO_TOKEN, a user token that authorizes api-key. How it
+        really rotates is ANS-285's."
 
 eso/prd/version-poller/prd/jenkins:
   kind: jenkins-token
@@ -647,16 +660,17 @@ iac/proxmox:
 
 iac/tf-backend:
   kind: manual
-  interval: never
+  interval: 365d
   activate: none
   keys:
     age_public_key: {kind: none}
     age_secret_key:
-      notes: "it encrypts every Terraform state, and re-encrypting them all is a project, not a
-        rotation"
+      kind: external
+      notes: "The age key of every Terraform state, one pair with age_public_key. Ansible
+        docs/runbooks/iac-agent.md, State encryption keypair: encrypt to old and new, let applies
+        rewrite every state, drop the old; then both keys' copies in the KubeCoder catalog bags."
     github_token:
       args: {"type":"github-pat"}
-      interval: 365d
       notes: "The break-glass terraform-backend-git on the operator workstation (Ansible
         scripts/tf-backend.sh): pushes pvginkel/TerraformState on main."
 
@@ -794,10 +808,14 @@ shared/samba/users:
       notes: "another person's own password, not rotated on a schedule"
 
 shared/wifi-iot:
-  kind: manual
-  interval: never
+  kind: external
+  interval: 365d
   activate: none
-  notes: "PSK in every provisioned device"
+  notes: "IoT Wi-Fi (SSID Thing-Fish), flashed into every device by IoTSupport. Add the new password
+    on the router beside the old; write it to this key, where IoTSupport picks it up; let
+    IoTSupport's device key rotation deliver it; check every device is on the new one; remove the
+    old from the router. Re-provision by hand a device offline throughout. Two router passwords at
+    once: unverified."
 
 # --- rotator: the rotator's own leaves; the rotator and iac-impl read them at every run ---------
 
@@ -888,46 +906,56 @@ rotator/approle/openbao-admin:
   interval: 90d
   activate: none
 
-# Marker leaves for the bootstrap tier, rotated by hand at its source; the credential never
-# enters OpenBao.
+# Marker leaves for the bootstrap tier, rotated outside the tool by the procedure each one's notes
+# name; the credential never enters OpenBao.
 rotator/bootstrap/age-private-key:
   marker: age-private-key
-  kind: manual
-  interval: never
+  kind: external
+  interval: 365d
   activate: none
-  notes: "the bootstrap tier, rotated by hand at its source"
+  notes: "The bootstrap tier: the backups' age key, its private half in RoboForm only; rotated on
+    compromise only, the old key kept until the backups encrypted to it age out. No procedure is
+    written down (SOPs bootstrap-secrets-rotation.md)."
 
 rotator/bootstrap/ansible-vault-passphrase:
   marker: ansible-vault-passphrase
-  kind: manual
-  interval: never
+  kind: external
+  interval: 365d
   activate: none
-  notes: "the bootstrap tier, rotated by hand at its source"
+  notes: "The bootstrap tier: the Ansible Vault passphrase. Rotate it by SOPs
+    bootstrap-secrets-rotation.md §1, which also writes the KubeCoder prd catalog's
+    ansible-vault-password."
 
 rotator/bootstrap/git-api-token:
   marker: git-api-token
-  kind: manual
-  interval: never
+  kind: external
+  interval: 365d
   activate: none
-  notes: "the bootstrap tier, rotated by hand at its source"
+  notes: "The bootstrap tier: srviac's GIT_API_TOKEN, the PAT for TerraformState. Rotate it by SOPs
+    bootstrap-secrets-rotation.md §3 (Ansible docs/runbooks/iac-agent.md, GIT_API_TOKEN)."
 
 rotator/bootstrap/jenkins-agent-secret:
   marker: jenkins-agent-secret
-  kind: manual
-  interval: never
+  kind: external
+  interval: 365d
   activate: none
-  notes: "the bootstrap tier, rotated by hand at its source"
+  notes: "The bootstrap tier: srviac's Jenkins inbound-agent secret. Rotate it by SOPs
+    bootstrap-secrets-rotation.md §4 (Ansible docs/runbooks/iac-agent.md, JENKINS_AGENT_SECRET)."
 
 rotator/bootstrap/jwk-provisioner-password:
   marker: jwk-provisioner-password
-  kind: manual
-  interval: never
+  kind: external
+  interval: 365d
   activate: none
-  notes: "the bootstrap tier, rotated by hand at its source"
+  notes: "The bootstrap tier: step-ca's JWK provisioner password. Rotate it by SOPs
+    bootstrap-secrets-rotation.md §2 (Ansible docs/runbooks/step-ca-bootstrap.md, JWK provisioner
+    password rotation)."
 
 rotator/bootstrap/seal-key:
   marker: seal-key
-  kind: manual
-  interval: never
+  kind: external
+  interval: 365d
   activate: none
-  notes: "the bootstrap tier, rotated by hand at its source"
+  notes: "The bootstrap tier: OpenBao's static seal key, rotated on compromise only (SOPs
+    bootstrap-secrets-rotation.md). Its seal migration is sketched in Ansible
+    docs/runbooks/openbao.md §5, Static seal key."

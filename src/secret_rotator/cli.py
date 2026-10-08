@@ -96,8 +96,9 @@ def parser() -> argparse.ArgumentParser:
     plan = commands.add_parser(
         "plan",
         help="print a leaf's plans and execute nothing",
-        description="Prints each plan of the leaf — one per kind, one per key for manual — with "
-        "when it falls due and every step with its target, then why each other key has none.",
+        description="Prints each plan of the leaf — one per kind, one per key for manual and "
+        "external — with when it falls due and every step with its target, then why each other "
+        "key has none.",
     )
     plan.add_argument("path", help="the leaf, a path of the kv mount")
     plan.add_argument(

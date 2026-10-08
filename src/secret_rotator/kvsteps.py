@@ -43,8 +43,8 @@ class RandomGenerate(Step):
 class Marker(Step):
     """Stages a marker key's new text for the kv.write: the marker text and when it rotated, so
     each rotation is a KV version. A key that does not hold the marker text is a credential the
-    write would overwrite: the step fails there. Its type is its kind's (manual.marker,
-    approle.marker), a step of that kind's plans."""
+    write would overwrite: the step fails there. Its type is its kind's (approle.marker), a step
+    of that kind's plans."""
 
     silent = True
 

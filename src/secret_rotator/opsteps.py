@@ -6,7 +6,7 @@ import datetime
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from secret_rotator.contract import ContractError, parse_date
+from secret_rotator.contract import MARKER_VALUE, ContractError, parse_date
 from secret_rotator.model import Actor, Context, Step, StepFailed, expiry_name, value_name
 
 # The answer's name of the new credential's expiry, beside the fields' keys.
@@ -59,16 +59,18 @@ class ConfirmRequest:
 
 class OperatorCredential(Step):
     """The operator mints a value elsewhere and enters it: each key's value is staged as its new
-    value, for the kv.write after it. A value staged before an exit or a crash is kept. For a
-    credential that expires (design §6) it asks the expiry too, staged for each key, empty for
-    none, for kv.stamp to write as its expires_at; staged before the values, so a value staged
-    has its expiry staged."""
+    value, for the kv.write to the leaf after it. A value staged before an exit or a crash is
+    kept. For a credential that expires (design §6) it asks the expiry too, staged for each key,
+    empty for none, for kv.stamp to write as its expires_at; staged before the values, so a value
+    staged has its expiry staged. A key that holds the marker text is a marker leaf's, whose
+    credential never enters OpenBao (R11): the step fails there without asking."""
 
     type = "operator.credential"
     actor = Actor.OPERATOR
 
     def __init__(
         self,
+        leaf: str,
         keys: tuple[str, ...],
         title: str,
         instruction: str,
@@ -77,6 +79,7 @@ class OperatorCredential(Step):
         expires: bool = False,
     ):
         super().__init__(f"operator.credential:{','.join(keys)}", title)
+        self.leaf = leaf
         self.keys = keys
         self.instruction = instruction
         self.shape = shape
@@ -86,6 +89,13 @@ class OperatorCredential(Step):
         names = {key: value_name(key) for key in self.keys}
         if all(ctx.staged(name) is not None for name in names.values()):
             return "entered before"
+        current = ctx.bao.read(self.leaf)
+        held = {} if current is None else current.data
+        if markers := [key for key in self.keys if held.get(key, "").startswith(MARKER_VALUE)]:
+            raise StepFailed(
+                f"{self.leaf}#{', '.join(markers)} holds the marker text: a marker leaf's "
+                f"credential never enters OpenBao"
+            )
         fields = tuple(Field(key, self.shape) for key in self.keys)
         answer = ctx.ask(CredentialRequest(self.title, self.instruction, fields, self.expires))
         if empty := [key for key in self.keys if not answer.get(key)]:

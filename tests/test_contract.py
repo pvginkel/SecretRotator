@@ -23,6 +23,7 @@ DESIGN_6_KINDS = {
     "mosquitto-user",
     "samba-user",
     "manual",
+    "external",
     # second table
     "k8s-sa-token",
     "cephx",

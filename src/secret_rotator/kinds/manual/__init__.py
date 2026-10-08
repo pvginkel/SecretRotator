@@ -1,8 +1,6 @@
 """The manual kind (design §6): a vendor-minted credential. The operator mints it and enters it,
 then the write, the copies and the activation; with its operator step it never runs nightly. One
-plan per key. On a marker leaf of the bootstrap tier the operator rotates the credential at its
-source and confirms it, and the plan rewrites the marker key: the credential never enters
-OpenBao.
+plan per key.
 
 A key's one arg, `type`, names its credential type: one document in types/ each, `<type>.md`, the
 type's standard instructions for minting it under a YAML front matter of what the credential is,
@@ -21,8 +19,6 @@ from secret_rotator.model import Step
 from secret_rotator.opsteps import Shape
 from secret_rotator.plan import PlanContext, Target, tool_part
 
-# The manual kind's marker leaves (catalog § rotator/).
-MARKERS = "rotator/bootstrap/"
 DOCUMENT = re.compile(r"---\n(.*?)\n---\n(.*)", re.DOTALL)
 
 
@@ -55,10 +51,6 @@ TYPES = {
 }
 
 
-def _marker(leaf: Target) -> bool:
-    return leaf.leaf.startswith(MARKERS)
-
-
 def _entry(leaf: Target):
     """The entry of the plan's one key."""
     return leaf.entries[leaf.keys[0]]
@@ -84,30 +76,13 @@ class Manual:
         return problems
 
     def ask(self, leaf: Target) -> str:
-        return "rotate it at its source" if _marker(leaf) else f"paste a new {_what(leaf)}"
+        return f"paste a new {_what(leaf)}"
 
     def description(self, leaf: Target) -> str:
-        if _marker(leaf):
-            return (
-                f"You rotate {_what(leaf)} at its source and confirm it. The tool records the "
-                f"rotation on this marker leaf; the credential never enters OpenBao."
-            )
         return f"You mint a new {_what(leaf)} and enter it. The tool {tool_part(leaf)}."
 
     def plan(self, leaf: Target, ctx: PlanContext) -> list[Step]:
         notes = _entry(leaf).notes
-        if _marker(leaf):
-            return [
-                *ctx.steps.marker(),
-                *ctx.steps.confirm(
-                    "source",
-                    f"Rotate {_what(leaf)} at its source",
-                    notes,
-                    irreversible=f"{_what(leaf)} was rotated at its source",
-                ),
-                *ctx.steps.write(),
-                *ctx.steps.activate(),
-            ]
         known = _type(leaf)
         instruction = (
             known.instructions

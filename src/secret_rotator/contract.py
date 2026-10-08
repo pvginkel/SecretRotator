@@ -63,6 +63,7 @@ KINDS: dict[str, KindSpec] = {
     "mosquitto-user": KindSpec(ONE),
     "samba-user": KindSpec(ONE),
     "manual": KindSpec(ALL),
+    "external": KindSpec(ALL),
     "k8s-sa-token": KindSpec(ONE),
     "cephx": KindSpec(ONE),
     "rgw-admin": KindSpec(ONE),

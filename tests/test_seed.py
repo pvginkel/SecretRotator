@@ -105,13 +105,13 @@ def test_it_holds_until_jenkins_grafana_token_is_stored(store):
 def test_the_per_key_cadences_of_ruling_q1(entries):
     want = {
         "eso/prd/trello-mcp/prd/trello": {
-            "api-key": ("manual", "never"),
+            "api-key": ("manual", "365d"),
             "bearer-token": ("random", "14d"),
-            "token": ("manual", "never"),
+            "token": ("manual", "365d"),
         },
         "iac/tf-backend": {
             "age_public_key": ("none", None),
-            "age_secret_key": ("manual", "never"),
+            "age_secret_key": ("external", "365d"),
             "github_token": ("manual", "365d"),
         },
         "shared/samba/users": {
@@ -123,17 +123,14 @@ def test_the_per_key_cadences_of_ruling_q1(entries):
         got = {key: (f["kind"], f.get("interval")) for key, f in entries[leaf].items()}
         assert got == keys, leaf
     trello = entries["eso/prd/trello-mcp/prd/trello"]
-    assert (
-        trello["api-key"]["notes"]
-        == trello["token"]["notes"]
-        == ("cannot be rotated (operator, 2026-10-04)")
-    )
+    for key in ("api-key", "token"):
+        assert trello[key]["notes"].endswith("How it really rotates is ANS-285's."), key
 
 
-def test_every_never_key_and_every_manual_key_carries_its_own_notes(entries):
+def test_every_never_manual_and_external_key_carries_its_own_notes(entries):
     for leaf, by_key in entries.items():
         for key, fields in by_key.items():
-            if fields.get("interval") == "never" or fields["kind"] == "manual":
+            if fields.get("interval") == "never" or fields["kind"] in ("manual", "external"):
                 assert fields.get("notes", "").strip(), (leaf, key)
 
 
@@ -157,7 +154,7 @@ def test_a_note_the_catalog_gives_one_key_of_a_leaf_is_that_key_s_alone(entries)
     }
     for leaf, keys in noted.items():
         assert {k for k, f in entries[leaf].items() if "notes" in f} == keys, leaf
-    assert entries[CATALOG]["ansible-vault-password"]["notes"].startswith("the bootstrap tier")
+    assert entries[CATALOG]["ansible-vault-password"]["notes"].startswith("The bootstrap tier")
     assert entries["eso/prd/calendar-support/prd/google-service-account"]["key_json"]["notes"] == (
         "GCP project calendar-display-437018."
     )
@@ -169,19 +166,72 @@ def test_the_elastic_leaves_carry_no_note(entries):
         assert not any("notes" in f for f in entries[leaf].values()), leaf
 
 
-def test_the_bags_vault_passphrase_is_the_bootstrap_tier_and_never_due(seed, entries):
-    assert entries[CATALOG]["ansible-vault-password"]["interval"] == "never"
+def test_the_bags_vault_passphrase_is_the_bootstrap_tier_external_and_activates_nothing(
+    seed, entries
+):
+    assert entries[CATALOG]["ansible-vault-password"] | {"notes": ""} == {
+        "kind": "external",
+        "interval": "365d",
+        "activate": "none",
+        "notes": "",
+    }
     store = ann.offline_store(Path(str(ann.DEFAULT_KEYS)), seed, print)
     result = aud.audit(store)
     assert result.findings == []
-    assert (CATALOG, "ansible-vault-password") in result.never
     due = [s for s in aud.due_keys(store, result, datetime.date(2026, 10, 6)) if s.leaf == CATALOG]
-    assert "ansible-vault-password" not in {s.key for s in due}
+    assert {s.key for s in due if s.kind == "external"} == {"ansible-vault-password"}
     assert {s.key for s in due if s.kind == "manual"} == {
         "argocd-token",
         "grafana-api-key",
         "openai-api-key",
         "ssh-key-pve",
+    }
+
+
+def test_the_keys_rotated_outside_the_tool_are_external_at_365_days(entries):
+    # design R82
+    want = {
+        *((f"rotator/bootstrap/{b}", b) for b in BOOTSTRAP),
+        (CATALOG, "ansible-vault-password"),
+        ("eso/prd/homeapps/extension-signing", "private-key"),
+        ("shared/wifi-iot", "password"),
+        ("iac/tf-backend", "age_secret_key"),
+        ("eso/prd/storage/prd/s3-mirror", "password"),
+        ("eso/prd/storage/prd/s3-mirror", "salt"),
+    }
+    external = {
+        (leaf, key): fields
+        for leaf, by_key in entries.items()
+        for key, fields in by_key.items()
+        if fields["kind"] == "external"
+    }
+    assert set(external) == want
+    for at, fields in external.items():
+        assert (fields["interval"], fields["activate"], "args" in fields) == ("365d", "none", False)
+        assert fields["notes"].strip(), at
+    markers = [external[f"rotator/bootstrap/{b}", b]["notes"] for b in BOOTSTRAP]
+    assert len(set(markers)) == len(BOOTSTRAP)
+    assert all(n.startswith("The bootstrap tier: ") for n in markers)
+    wifi = external["shared/wifi-iot", "password"]["notes"]
+    assert "beside the old" in wifi and "remove the old from the router" in wifi
+
+
+def test_the_never_keys_that_stay_until_their_cards_land(entries):
+    # design R84
+    never = {
+        (leaf, key, fields["kind"])
+        for leaf, by_key in entries.items()
+        for key, fields in by_key.items()
+        if fields.get("interval") == "never"
+    }
+    assert never == {
+        ("jenkins/mydownloads-android-keystore", "password", "manual"),
+        ("jenkins/scantopdf-android-keystore", "password", "manual"),
+        ("eso/prd/prometheus/prd/healthchecks", "ping_url", "manual"),
+        ("jenkins/iot-mqtt", "password", "manual"),
+        ("eso/prd/media/prd/mydownloads-users", "users.yml", "manual"),
+        ("shared/samba/users", "mvdbovenkamp", "manual"),
+        ("rotator/approle/eso-dev", "secret_id", "approle"),
     }
 
 
@@ -234,6 +284,8 @@ def test_every_scheduled_manual_key_names_the_type_the_catalog_gives_it(entries)
         (CATALOG, "grafana-api-key"): "grafana-api-key",
         ("jenkins/grafana-api", "token"): "grafana-api-key",
         (CATALOG, "ssh-key-pve"): "ssh-private-key",
+        ("eso/prd/trello-mcp/prd/trello", "api-key"): "trello-api-credential",
+        ("eso/prd/trello-mcp/prd/trello", "token"): "trello-api-credential",
     }
     manual = {
         (leaf, key): fields
@@ -258,9 +310,10 @@ def test_the_catalog_corrections(entries):
     )
     for stage in ("prd", "dev"):
         bag = entries[f"eso/prd/kubecoder/{stage}/catalog"]
-        assert {f.get("activate") for k, f in bag.items() if f["kind"] != "none"} == {
-            f"k8s-rollout:kubecoder-{stage}/deployment/kubecoder-controller"
+        activated = {
+            f.get("activate") for f in bag.values() if f["kind"] not in ("none", "external")
         }
+        assert activated == {f"k8s-rollout:kubecoder-{stage}/deployment/kubecoder-controller"}
 
 
 def test_the_rotators_own_leaves_are_annotated(entries):
