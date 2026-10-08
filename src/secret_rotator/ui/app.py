@@ -103,6 +103,9 @@ class RotatorApp(App[None]):
     CSS_PATH = "app.tcss"
     TITLE = "secret-rotator ui"
     ENABLE_COMMAND_PALETTE = False
+    # Textual's default, "*", focuses the first focusable widget of a screen that resumes with
+    # nothing focused: after a dialog, the selected box's first button (§7.6). Dialogs set theirs.
+    AUTO_FOCUS = None
 
     # §7.6: the list has the keys until a box is opened; a focused button or field takes ⏎ and
     # what it types itself. Letters type in a field, so ? and q have F1 and ^Q twins.

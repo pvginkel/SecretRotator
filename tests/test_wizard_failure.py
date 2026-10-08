@@ -9,7 +9,21 @@ from plans import LEAF, fake, flight_of, put_flight, put_state, state_of
 from sim import REVOKED, Cue, Held, again
 from sim import vendor as vendor_rotation
 from test_listing import PAT, SEAL
-from test_ui import FAILED, SIZE, app_of, in_box, info, select, settled, slow_loop, until, world
+from test_ui import (
+    FAILED,
+    ON_EITHER_LOOP,
+    SIZE,
+    app_of,
+    closed_and_left,
+    in_box,
+    info,
+    select,
+    settled,
+    slow_loop,
+    slowed,
+    until,
+    world,
+)
 from test_wizard import (
     TOKEN,
     VENDOR,
@@ -183,6 +197,39 @@ async def test_details_shows_the_technical_detail_over_the_box_and_the_arrows_re
         assert phase(app, VENDOR) is Phase.FAILED
 
 
+@ON_EITHER_LOOP
+async def test_details_and_abort_s_question_give_focus_back_to_their_button_when_they_close(slow):
+    """Esc taken before the list's screen resumes: the resume does not focus the box again."""
+    cue = Cue()
+    bao, app, _ = vendor_run(Held("rollout", ROLLOUT, cue=cue))
+    async with app.run_test(size=SIZE) as pilot:
+        await failed(pilot, app, cue)
+        with slowed(slow):
+            await pilot.press("right", "right")
+            assert app.focused.label.plain == "Details"
+            await pilot.press("enter")
+            await until(pilot, lambda: isinstance(app.screen, DetailsModal))
+            await pilot.press("escape")
+            await until(pilot, lambda: not isinstance(app.screen, DetailsModal))
+            await settled(pilot)
+            assert in_box(app) and app.focused.label.plain == "Details"
+            await pilot.press("enter")
+            await until(pilot, lambda: isinstance(app.screen, DetailsModal))
+            closed_and_left(app)
+            await settled(pilot)
+            assert app.focused is None
+            await abort(pilot, app)
+            await pilot.press("n")
+            await until(pilot, lambda: not isinstance(app.screen, ConfirmModal))
+            await settled(pilot)
+            assert in_box(app) and app.focused.label.plain == "Abort"
+            await pilot.press("enter")
+            await asked(pilot, app)
+            closed_and_left(app, False)
+            await settled(pilot)
+            assert app.focused is None and phase(app, VENDOR) is Phase.FAILED
+
+
 async def test_an_earlier_session_s_failure_shows_its_screen_and_the_run_state_s_error():
     bao = world()
     put_state(bao, FAILED.split("#")[0], last_run="2026-10-07T04:30:00+00:00")
@@ -202,7 +249,6 @@ async def test_an_earlier_session_s_failure_shows_its_screen_and_the_run_state_s
         assert app.screen.text == "2026-10-07T04:30:00+00:00: kv.write: HTTP 403"
         await pilot.press("enter")  # Close
         await until(pilot, lambda: not isinstance(app.screen, DetailsModal) and in_box(app))
-        await pilot.pause()  # the list's screen resumes first: it focuses a button when none is
         await pilot.press("escape")  # back to the list
         assert app.focused is None
 

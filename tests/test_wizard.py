@@ -21,7 +21,19 @@ from test_listing import (
     leaf,
     store,
 )
-from test_ui import FAILED, IN_FLIGHT, SIZE, app_of, in_box, select, settled, until, world
+from test_ui import (
+    FAILED,
+    IN_FLIGHT,
+    ON_EITHER_LOOP,
+    SIZE,
+    app_of,
+    in_box,
+    select,
+    settled,
+    slowed,
+    until,
+    world,
+)
 from test_ui import tones as ui_tones
 from textual.widgets import Input, Static
 
@@ -665,6 +677,30 @@ async def test_quitting_while_a_tool_step_runs_asks_then_leaves_the_plan_in_flig
         await pilot.press("y")
         await until(pilot, lambda: app.return_code == 0)
     assert flight_of(bao, LEAF).step == "rollout" and bao.data(LOCK_LEAF) == {}
+
+
+@ON_EITHER_LOOP
+async def test_the_quit_question_answered_no_from_the_list_leaves_focus_nowhere(slow):
+    cue = Cue()
+    bao, app = vendor_app(Held("rollout", "roll out app/deployment/app", cue=cue))
+    async with app.run_test(size=SIZE) as pilot:
+        await at_credential(pilot, app, VENDOR)
+        await pilot.press(*TOKEN)
+        await submit(pilot, app)
+        await until(pilot, lambda: cue.holding.is_set())
+        await pilot.press("escape")
+        assert app.focused is None
+        with slowed(slow):
+            await pilot.press("q")
+            await asked(pilot, app)
+            await pilot.press("n")
+            await until(pilot, lambda: not isinstance(app.screen, ConfirmModal))
+            await settled(pilot)
+            assert app.focused is None and phase(app, VENDOR) is Phase.RUNNING
+        await pilot.press("ctrl+q")
+        await asked(pilot, app)
+        await pilot.press("y")
+        await until(pilot, lambda: app.return_code == 0)
 
 
 # --- a value that spans lines ---------------------------------------------------------

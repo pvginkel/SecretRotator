@@ -9,8 +9,9 @@ import datetime
 import os
 import time
 
+import pytest
 from fake_openbao import WRITTEN_AT
-from plans import client, fake_of, lock, put_flight, put_state, run_state
+from plans import client, fake_of, lock, put_flight, put_state, run_state, state_of
 from rich.text import Text
 from test_listing import (
     BOT,
@@ -34,6 +35,7 @@ from secret_rotator.staging import ROLLBACK
 from secret_rotator.ui import full_colour
 from secret_rotator.ui.app import WAITS, RotatorApp
 from secret_rotator.ui.collate import collate
+from secret_rotator.ui.item import Phase
 from secret_rotator.ui.widgets import (
     ERR,
     HEAD,
@@ -140,6 +142,14 @@ def slow_loop(lag=0.1):
         yield
     finally:
         handle.cancel()
+
+
+def slowed(slow):
+    """slow_loop() when slow, else the loop as it is."""
+    return slow_loop() if slow else contextlib.nullcontext()
+
+
+ON_EITHER_LOOP = pytest.mark.parametrize("slow", [False, True], ids=["loop", "slow-loop"])
 
 
 async def select(pilot, app, rid):
@@ -492,6 +502,76 @@ async def test_help_opens_on_question_mark_and_f1_and_lists_no_simulation_key():
             assert not isinstance(app.screen, HelpModal)
         table = HelpModal.table().plain
         assert "Esc" in table and "mock" not in table.lower() and "^T" not in table
+
+
+async def help_and_back(pilot, app):
+    """? opens the help, Esc closes it."""
+    await pilot.press("question_mark")
+    await until(pilot, lambda: isinstance(app.screen, HelpModal))
+    await pilot.press("escape")
+    await until(pilot, lambda: not isinstance(app.screen, HelpModal))
+
+
+def closed_and_left(app, answer=None):
+    """The dialog closes with the answer, and Esc is handled before the list's screen has handled
+    its resume (B9 saw a slowed loop take them in this order)."""
+    app.screen.dismiss(answer)
+    app.action_leave()
+
+
+@ON_EITHER_LOOP
+async def test_a_dialog_closed_from_the_list_leaves_the_list_with_the_keys(slow):
+    """Focus stays nowhere, so ⏎ opens the selected box on its first button (R60) and presses
+    nothing."""
+    rid = f"{PAT}#token"
+    app = app_of(world())
+    async with app.run_test(size=SIZE) as pilot:
+        await select(pilot, app, rid)
+        await settled(pilot)
+        with slowed(slow):
+            await help_and_back(pilot, app)
+            await settled(pilot)
+            assert app.focused is None
+            await pilot.press("enter")
+            await until(pilot, lambda: in_box(app))
+            await settled(pilot)
+            assert app.focused.label.plain == "Start"
+            assert app.items[rid].phase is Phase.DUE and app.active is None
+
+
+@ON_EITHER_LOOP
+async def test_a_dialog_closed_from_the_list_never_lets_enter_mark_an_external_key_done(slow):
+    bao = world()
+    app = app_of(bao)
+    async with app.run_test(size=SIZE) as pilot:
+        await select(pilot, app, f"{SEAL}#seal-key")
+        await settled(pilot)
+        with slowed(slow):
+            await help_and_back(pilot, app)
+            await pilot.press("enter")
+            await until(pilot, lambda: in_box(app))
+            await settled(pilot)
+            assert app.focused.label.plain == "Done" and f"{SEAL}#seal-key" in app.order
+    assert state_of(bao, SEAL).stamps["seal-key"] == "2026-05-01"
+
+
+@ON_EITHER_LOOP
+async def test_a_dialog_closed_from_a_box_gives_focus_back_and_esc_then_leaves_it(slow):
+    """Esc taken before the list's screen resumes: the resume does not focus the box again."""
+    app = app_of(world())
+    async with app.run_test(size=SIZE) as pilot:
+        await select(pilot, app, f"{PAT}#token")
+        await pilot.press("enter")
+        await until(pilot, lambda: in_box(app))
+        with slowed(slow):
+            await help_and_back(pilot, app)
+            await settled(pilot)
+            assert in_box(app) and app.focused.label.plain == "Start"
+            await pilot.press("question_mark")
+            await until(pilot, lambda: isinstance(app.screen, HelpModal))
+            closed_and_left(app)
+            await settled(pilot)
+            assert app.focused is None
 
 
 def test_the_keys_are_section_7_6_s_and_no_simulation_key_ships():
