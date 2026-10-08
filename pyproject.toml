@@ -5,7 +5,7 @@ description = "Automated OpenBao secret rotation for the homelab"
 authors = [{ name = "Pieter van Ginkel", email = "pvginkel@gmail.com" }]
 readme = "README.md"
 requires-python = ">=3.13,<4.0"
-dependencies = ["pyyaml (>=6.0,<7)", "psycopg[binary] (>=3.2,<4)", "textual (>=8,<9)"]
+dependencies = ["pyyaml (>=6.0,<7)", "psycopg[binary] (>=3.2,<4)", "textual (>=8.2,<8.3)"]
 
 [project.scripts]
 secret-rotator = "secret_rotator.cli:main"
