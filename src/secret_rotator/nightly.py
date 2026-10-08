@@ -113,7 +113,6 @@ class LogRenderer:
         self.out = out
         self.clock = clock
         self.began: dict[tuple[str, str], float] = {}
-        self.failure: Finished | None = None  # the last failed line
 
     def event(self, event: Event) -> None:
         step = event.step
@@ -125,7 +124,6 @@ class LogRenderer:
             began = self.began.pop((step.id, event.action), None)
             spent = "" if began is None else f"  {took(self.clock() - began)}"
             if not event.ok:
-                self.failure = event
                 self.out(f"    ✗ {label(step, event.action)}{spent}")
                 self.out(f"        {event.error}")
                 for line in event.technical.rstrip().splitlines():
@@ -375,7 +373,7 @@ class Night:
             self.rotated.append(str(due))
             self.refresh(leaf)
             return
-        failure = renderer.failure
+        failure = executor.failure
         message = failed(plan.name, plan.target.keys, failure.step.title, failure.error)
         if blocker := executor.abort_blocker():
             self.send(
@@ -386,7 +384,7 @@ class Night:
         else:
             self.send(f"{sentence(message)} The run rolls it back; the leaf is due again.")
             if executor.abort() is Outcome.ROLLBACK_FAILED:
-                undo = renderer.failure
+                undo = executor.failure
                 text = failed(
                     plan.name,
                     plan.target.keys,
