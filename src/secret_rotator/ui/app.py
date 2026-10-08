@@ -190,8 +190,8 @@ class RotatorApp(App[None]):
         self._scroll_to_selected()
 
     def _scroll_to_selected(self) -> None:
-        """Scrolls once the new layout is known, painting nothing in between: else the list is
-        drawn at the old position with the new box expanded, then jumps (R63)."""
+        """Lays out and scrolls, painting nothing in between: else the list is drawn at the old
+        position with the new box expanded, then jumps (R63)."""
         batch = self.batch_update()
         batch.__enter__()
 
@@ -199,7 +199,11 @@ class RotatorApp(App[None]):
             try:
                 box = self.box(self.selected)
                 if box is not None:
+                    # Textual lays nothing out while a batch is open (Screen._on_timer_update),
+                    # and paints the layout last made when it closes.
+                    self.screen._refresh_layout()
                     self.box_list.scroll_to_widget(box, animate=False, immediate=True)
+                    self.screen._refresh_layout(scroll=True)
             finally:
                 batch.__exit__(None, None, None)
 

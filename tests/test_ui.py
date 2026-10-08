@@ -23,6 +23,7 @@ from test_listing import (
     listing,
     store,
 )
+from textual.screen import Screen
 from textual.widgets import Static
 
 from secret_rotator.model import Actor
@@ -367,6 +368,35 @@ async def test_up_down_home_and_end_select_even_with_a_button_focused():
         assert app.selected == ORDER[0]
         await pilot.press("down", "down")
         assert app.selected == ORDER[2]
+
+
+async def test_every_paint_after_a_selection_shows_the_box_whole_on_a_list_taller_than_the_terminal(
+    monkeypatch,
+):
+    app = app_of(world())
+    painted = []
+    paint = Screen._compositor_refresh
+
+    def spy(screen):
+        if screen is app.screen and not app._batch_count:
+            painted.append(app.box(app.selected).region)
+        paint(screen)
+
+    async with app.run_test(size=(110, 16)) as pilot:
+        await settled(pilot)
+        monkeypatch.setattr(Screen, "_compositor_refresh", spy)
+        view = app.box_list.region
+        presses = ["down"] * (len(ORDER) - 1) + ["home", "end"] + ["up"] * (len(ORDER) - 1)
+        for key in presses:
+            painted.clear()
+            await pilot.press(key)
+            await pilot.pause(0.1)
+            assert painted, key
+            assert all(view.y <= box.y and box.bottom <= view.bottom for box in painted), (
+                key,
+                app.selected,
+                painted,
+            )
 
 
 async def test_buttons_carry_no_key_and_tab_reaches_them():
