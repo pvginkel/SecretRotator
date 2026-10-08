@@ -42,10 +42,10 @@ SEAL_ID = f"{SEAL}#seal-key"
 PAT_ID = f"{PAT}#token"
 
 
-def vendor_run(*held, notify=None):
+def vendor_run(*held, after=(), notify=None):
     """The fake, the app over the vendor plan around the held steps, and that plan as listed."""
     bao = fake()
-    listed = vendor_rotation(*held)
+    listed = vendor_rotation(*held, after=after)
     return bao, app_of(bao, rotations=[listed], notify=notify), listed
 
 
@@ -210,6 +210,29 @@ async def test_a_failed_stamp_shows_on_the_confirm_it_rides_on_with_abort_refuse
         assert len(told) == 1 and "failed at stamp token" in told[0]
         del bao.refuse[("PATCH", f"kv/metadata/{LEAF}")]
         await pilot.press("enter")  # Retry
+        await until(pilot, lambda: VENDOR not in app.order)
+    assert state_of(bao, LEAF).stamps == {"token": "2026-10-08"}
+
+
+async def test_abort_is_disabled_with_its_reason_on_the_screen_that_runs_after_the_revoke():
+    cue = Cue()
+    bao, app, _ = vendor_run(after=[Held("cleanup", "clean up app/s", cue=cue)])
+    async with app.run_test(size=SIZE) as pilot:
+        await at_credential(pilot, app, VENDOR)
+        await pilot.press(*TOKEN)
+        await submit(pilot, app)
+        await until(pilot, lambda: app.items[VENDOR].screen.index == 2 and in_box(app))
+        assert specs(app, VENDOR)["abort"].enabled
+        await pilot.press("enter")  # Done: the old token is revoked
+        await until(pilot, lambda: cue.holding.is_set() and phase(app, VENDOR) is Phase.RUNNING)
+        assert app.items[VENDOR].screen.index == 3
+        abort = specs(app, VENDOR)["abort"]
+        assert (abort.enabled, abort.reason) == (False, NO_ROLLBACK.format(REVOKED))
+        reason = app.box(VENDOR).query_one(".reason", Static)
+        await until(pilot, lambda: reason.content.plain == NO_ROLLBACK.format(REVOKED))
+        (button,) = [b for b in app.box(VENDOR).query(ActionButton) if b.label.plain == "Abort"]
+        assert button.disabled
+        cue.go()
         await until(pilot, lambda: VENDOR not in app.order)
     assert state_of(bao, LEAF).stamps == {"token": "2026-10-08"}
 

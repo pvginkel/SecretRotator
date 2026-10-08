@@ -80,13 +80,14 @@ class Held(Step):
 class Vendor:
     """A vendor key's plan, the mock's GitHub token's: you mint a token and enter it with its
     expiry; the tool writes it and runs the held steps; you revoke the old token, which cannot be
-    undone, and the stamp rides on that."""
+    undone; the tool runs the steps held after it, and the stamp rides on the last screen."""
 
     name = "random"
     per_key = False
 
-    def __init__(self, *held):
+    def __init__(self, *held, after=()):
         self.held = held
+        self.after = after
 
     def args_problems(self, args):
         return []
@@ -113,6 +114,7 @@ class Vendor:
                 "Vendor → Settings → Tokens → Revoke",
                 irreversible=REVOKED,
             ),
+            *self.after,
         ]
 
 
@@ -121,9 +123,9 @@ def rotation(plan, due_at=datetime.date(2026, 9, 1)):
     return Rotation(plan, Stand.FRESH, 0, due_at, None, "vendor token", "vendor")
 
 
-def vendor(*held, leaf="eso/prd/app/prd/token", store=None):
+def vendor(*held, after=(), leaf="eso/prd/app/prd/token", store=None):
     """The vendor plan of a random leaf of the store, the compliant one by default."""
-    return rotation(plan_of(kind=Vendor(*held), leaf=leaf, store=store))
+    return rotation(plan_of(kind=Vendor(*held, after=after), leaf=leaf, store=store))
 
 
 def again(bao, listed):
