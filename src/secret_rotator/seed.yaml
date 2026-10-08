@@ -261,6 +261,7 @@ eso/prd/iot/prd/app:
 
 eso/prd/iot/prd/architecture-pipeline:
   kind: jenkins-job-token
+  args: {"job":"AaC/IoTSupport"}
   interval: 365d
   activate: auto
 

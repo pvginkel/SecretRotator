@@ -18,6 +18,7 @@ approle = "secret_rotator.kinds.approle:AppRole"
 keycloak-client = "secret_rotator.kinds.keycloak_client:KeycloakClient"
 cnpg-role = "secret_rotator.kinds.cnpg_role:CnpgRole"
 jenkins-token = "secret_rotator.kinds.jenkins_token:JenkinsToken"
+jenkins-job-token = "secret_rotator.kinds.jenkins_job_token:JenkinsJobToken"
 
 [tool.poetry]
 packages = [{ include = "secret_rotator", from = "src" }]

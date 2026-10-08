@@ -1,7 +1,8 @@
 """Jenkins over HTTP, as an opener for secret_rotator.jenkins.Jenkins: jobs by full name, the build
 queue and builds, the credentials of the system store's global domain, whose config.xml it gives
-with every secret redacted, and the admin account's API tokens, which its security page lists as
-Jenkins 2.568.3 does and each of which authenticates a request as the user it is taken for. A
+with every secret redacted, the admin account's API tokens, which its security page lists as
+Jenkins 2.568.3 does and each of which authenticates a request as the user it is taken for, and
+the config.xml of AaC/IoTSupport, which it gives as stored and stores as posted, re-serialized. A
 queued build starts and ends once the fake clock, which the client's sleep advances, has passed
 its lag."""
 
@@ -25,6 +26,8 @@ YT = "YouTrack/YouTrackConfiguration"
 APPROLE = "724520d1-a0c1-4fa3-8a9e-a027de7f469a"
 REDACTED = "<secret-redacted/>"
 FORM = "application/x-www-form-urlencoded"
+IOT = "AaC/IoTSupport"
+TRIGGER_TOKEN = "SECRET-old-trigger-token"  # the remote-trigger token AaC/IoTSupport holds
 
 VAULT_APPROLE = f"""<com.datapipe.jenkins.vault.credentials.VaultAppRoleCredential plugin="vault">
   <scope>GLOBAL</scope>
@@ -87,6 +90,42 @@ TOKEN_CARD = (
     "</div></div>"
 )
 
+# AaC/IoTSupport's config.xml as Jenkins stores it (2026-10-08), abridged, its authToken element a
+# format field.
+JOB_CONFIG = """<?xml version='1.1' encoding='UTF-8'?>
+<flow-definition plugin="workflow-job@1602.v2a_70b_80a_2396">
+  <actions/>
+  <description></description>
+  <keepDependencies>false</keepDependencies>
+  <properties>
+    <org.jenkinsci.plugins.workflow.job.properties.DisableConcurrentBuildsJobProperty>
+      <abortPrevious>true</abortPrevious>
+    </org.jenkinsci.plugins.workflow.job.properties.DisableConcurrentBuildsJobProperty>
+  </properties>
+  <definition class="org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition">
+    <scm class="hudson.plugins.git.GitSCM" plugin="git@5.10.1">
+      <configVersion>2</configVersion>
+      <userRemoteConfigs>
+        <hudson.plugins.git.UserRemoteConfig>
+          <url>https://github.com/pvginkel/IoTSupport.git</url>
+        </hudson.plugins.git.UserRemoteConfig>
+      </userRemoteConfigs>
+    </scm>
+    <scriptPath>Jenkinsfile.architecture</scriptPath>
+    <lightweight>true</lightweight>
+  </definition>
+  <triggers/>
+  {auth_token}
+  <disabled>false</disabled>
+</flow-definition>"""
+
+
+def job_config(token):
+    """AaC/IoTSupport's config.xml with that remote-trigger token; None: with none."""
+    auth_token = "" if token is None else f"<authToken>{token}</authToken>"
+    return JOB_CONFIG.format(auth_token=auth_token).encode()
+
+
 USERNAME = """<com.cloudbees.plugins.credentials.impl.UsernameCredentialsImpl>
   <scope>GLOBAL</scope>
   <id>a-username</id>
@@ -146,7 +185,9 @@ class FakeJenkins:
         self.add_token("secret-rotator", TOKEN)
         self.before_revoke = None  # called with the uuid before each revoke
         self.page = security_page  # renders the security page from the tokens
-        self.mangle = set()  # credential ids whose description a POST changes
+        self.configs = {IOT: job_config(TRIGGER_TOKEN)}  # job -> its config.xml
+        self.before_config = None  # called with the job and the posted XML before a config POST
+        self.mangle = set()  # credential ids and jobs whose description a POST changes
         self.requests = []  # (method, path, query, body)
         self.broken = {}  # (method, path) -> the OSError it raises
         self.refused = {}  # (method, path) -> the HTTP status it answers
@@ -177,6 +218,11 @@ class FakeJenkins:
     def secret(self, id, field=None):
         secrets = self.credentials[id]["secrets"]
         return secrets[field] if field else next(iter(secrets.values()))
+
+    def auth_token(self, job=IOT):
+        """The remote-trigger token the job holds; None: none."""
+        found = ET.fromstring(self.configs[job]).find("authToken")
+        return None if found is None else found.text
 
     def triggered(self):
         """(job, params) of every build it queued, in order."""
@@ -212,6 +258,8 @@ class FakeJenkins:
         if path == f"{PROPERTY}/revoke":
             assert method == "POST" and req.get_header("Content-type") == FORM
             return self.revoke(dict(urllib.parse.parse_qsl(body)))
+        if found := re.fullmatch(r"((?:/job/[^/]+)+)/config\.xml", path):
+            return self.config(self.job_of(found[1]), method, req)
         if found := re.fullmatch(r"((?:/job/[^/]+)+)/(build|buildWithParameters)", path):
             assert method == "POST"
             return self.trigger(self.job_of(found[1]), found[2], query)
@@ -302,6 +350,24 @@ class FakeJenkins:
             posted.find("description").text = "changed by someone else"
         ET.indent(posted)
         cred["xml"] = ET.tostring(posted, encoding="unicode")
+        return FakeResponse(200, b"")
+
+    def config(self, job, method, req):
+        stored = self.configs.get(job)
+        if stored is None:
+            return self.error(404)
+        if method == "GET":
+            return FakeResponse(200, stored)
+        assert method == "POST" and req.get_header("Content-type").startswith("application/xml")
+        if self.before_config:
+            self.before_config(job, req.data)
+        posted = ET.fromstring(req.data)
+        if posted.tag != ET.fromstring(stored).tag:
+            return self.error(400)
+        if job in self.mangle:
+            posted.find("description").text = "changed by someone else"
+        ET.indent(posted)
+        self.configs[job] = ET.tostring(posted, encoding="utf-8")
         return FakeResponse(200, b"")
 
     @staticmethod

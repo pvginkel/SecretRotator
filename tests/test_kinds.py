@@ -16,6 +16,7 @@ from secret_rotator.contract import MARKER_VALUE
 from secret_rotator.executor import Abandon, AbortRefused, Executor, Outcome
 from secret_rotator.kinds.approle import AppRole
 from secret_rotator.kinds.cnpg_role import CnpgRole
+from secret_rotator.kinds.jenkins_job_token import JenkinsJobToken
 from secret_rotator.kinds.jenkins_token import JenkinsToken
 from secret_rotator.kinds.keycloak_client import KeycloakClient
 from secret_rotator.kinds.manual import TYPES, Manual, load_type
@@ -87,12 +88,14 @@ class TestTheRegistry:
             "keycloak-client",
             "cnpg-role",
             "jenkins-token",
+            "jenkins-job-token",
         }
         assert isinstance(KINDS["random"], Random) and isinstance(KINDS["manual"], Manual)
         assert isinstance(KINDS["approle"], AppRole)
         assert isinstance(KINDS["keycloak-client"], KeycloakClient)
         assert isinstance(KINDS["cnpg-role"], CnpgRole)
         assert isinstance(KINDS["jenkins-token"], JenkinsToken)
+        assert isinstance(KINDS["jenkins-job-token"], JenkinsJobToken)
 
     @pytest.mark.parametrize(
         ("found", "problem"),
