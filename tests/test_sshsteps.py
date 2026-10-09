@@ -1,8 +1,8 @@
 """ssh.set_password (design §4.2): one user's password on one host by `sudo -n chpasswd` over SSH,
 logged in as ansible with the Ansible key, the host key checked against the homelab SSH host CA and
 never with checking off; the password on chpasswd's stdin, never on its command line, in a detail
-or in an error; its undo the password the leaf holds. ssh is played by fake_ssh.py, and the real
-ssh -G reads the options back."""
+or in an error; its undo the password the leaf holds; a failure to reach the host before chpasswd
+not landed. ssh is played by fake_ssh.py, and the real ssh -G reads the options back."""
 
 import datetime
 import json
@@ -16,7 +16,7 @@ import pytest
 from secret_rotator.model import StepFailed, value_name
 from secret_rotator.openbao import Version
 from secret_rotator.plan import StepFactory, Target
-from secret_rotator.sshsteps import CHPASSWD, KNOWN_HOSTS, Ssh, SshSetPassword
+from secret_rotator.sshsteps import CHPASSWD, KNOWN_HOSTS, REACH, Ssh, SshSetPassword
 
 FAKE = str(Path(__file__).with_name("fake_ssh.py"))
 LEAF = "iac/proxmox"
@@ -63,6 +63,11 @@ def calls(tmp_path):
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
 
 
+def sets(tmp_path):
+    """The calls that ran chpasswd."""
+    return [c for c in calls(tmp_path) if c["remote"] == list(CHPASSWD)]
+
+
 def passwords(tmp_path):
     path = tmp_path / "passwords.json"
     return json.loads(path.read_text()) if path.exists() else {}
@@ -73,11 +78,10 @@ def scenario(tmp_path, **hosts):
 
 
 class TestTheRun:
-    def test_it_sets_the_staged_password_by_chpasswd_on_its_stdin_never_its_command_line(
-        self, tmp_path
-    ):
+    def test_it_reaches_the_host_then_sets_the_password_by_chpasswd_on_its_stdin(self, tmp_path):
         assert step(tmp_path).run(Ctx()) == "root's password set on pve1"
-        (call,) = calls(tmp_path)
+        reach, call = calls(tmp_path)
+        assert (reach["host"], reach["remote"], reach["stdin"]) == ("pve1", list(REACH), "")
         assert (call["host"], call["remote"]) == ("pve1", ["sudo", "-n", "chpasswd"])
         assert call["stdin"] == f"root:{NEW}\n"
         assert NEW not in " ".join(call["argv"])
@@ -87,8 +91,9 @@ class TestTheRun:
         self, tmp_path
     ):
         step(tmp_path).run(Ctx())
-        (call,) = calls(tmp_path)
-        assert call["login"] == "ansible"
+        reach, call = calls(tmp_path)
+        assert reach["login"] == call["login"] == "ansible"
+        assert reach["options"] == call["options"]
         assert call["options"] == {
             "-F": "none",
             "-T": True,
@@ -131,7 +136,7 @@ class TestTheRun:
         set_password = step(tmp_path)
         set_password.run(Ctx())
         set_password.run(Ctx())
-        assert [c["stdin"] for c in calls(tmp_path)] == [f"root:{NEW}\n"] * 2
+        assert [c["stdin"] for c in sets(tmp_path)] == [f"root:{NEW}\n"] * 2
         assert passwords(tmp_path) == {"pve1": {"root": NEW}}
 
 
@@ -166,15 +171,29 @@ class TestTheFailures:
                 "host",
             ),
             ("hostkey", "ssh to pve1 as ansible failed: Host key verification failed."),
-            ("sudo", "sudo -n chpasswd on pve1 exited 1: sudo: a password is required"),
+            ("sudo", "sudo -n true on pve1 exited 1: sudo: a password is required"),
         ],
     )
-    def test_a_failure_names_the_host_and_what_ssh_or_the_host_said(self, tmp_path, played, error):
+    def test_a_failure_to_reach_the_host_names_what_it_said_and_did_not_land(
+        self, tmp_path, played, error
+    ):
         scenario(tmp_path, pve1=played)
         with pytest.raises(StepFailed) as e:
             step(tmp_path).run(Ctx())
         assert e.value.error == error
         assert e.value.technical.splitlines()[-1] == error.split(": ", 1)[1]
+        assert not e.value.landed
+        assert [c["remote"] for c in calls(tmp_path)] == [list(REACH)]
+
+    def test_a_connection_lost_after_chpasswd_ran_counts_as_landed(self, tmp_path):
+        scenario(tmp_path, pve1="drop")
+        with pytest.raises(StepFailed) as e:
+            step(tmp_path).run(Ctx())
+        assert e.value.error == (
+            "ssh to pve1 as ansible failed: Connection to pve1 closed by remote host."
+        )
+        assert e.value.landed
+        assert passwords(tmp_path) == {"pve1": {"root": NEW}}
 
     def test_what_chpasswd_says_is_kept_with_the_password_redacted(self, tmp_path):
         scenario(tmp_path, pve1="echo")
@@ -184,6 +203,7 @@ class TestTheFailures:
             "sudo -n chpasswd on pve1 exited 1: chpasswd: error detected, changes ignored"
         )
         assert "cannot set root:<redacted>" in e.value.technical
+        assert e.value.landed
         with pytest.raises(StepFailed) as undone:
             step(tmp_path).undo(Ctx())
         texts = [e.value.error, e.value.technical, undone.value.error, undone.value.technical]
@@ -192,32 +212,38 @@ class TestTheFailures:
     def test_a_run_past_its_bound_is_killed(self, tmp_path):
         scenario(tmp_path, pve1="hang")
         started = time.monotonic()
-        with pytest.raises(StepFailed, match="ssh to pve1 did not finish within 1 s"):
+        with pytest.raises(StepFailed, match="ssh to pve1 did not finish within 1 s") as e:
             step(tmp_path, bound=1).run(Ctx())
         assert time.monotonic() - started < 30
+        assert not e.value.landed and sets(tmp_path) == []
 
     def test_no_staged_value_fails_before_ssh_runs(self, tmp_path):
-        with pytest.raises(StepFailed, match="no new password is staged"):
+        with pytest.raises(StepFailed, match="no new password is staged") as e:
             step(tmp_path).run(Ctx(staged={}))
-        assert calls(tmp_path) == []
+        assert not e.value.landed and calls(tmp_path) == []
 
     @pytest.mark.parametrize("value", ["", "SECRET\nroot:other"])
     def test_an_empty_or_multi_line_password_is_refused_before_ssh_runs(self, tmp_path, value):
-        with pytest.raises(StepFailed, match="the new password is empty or more than one line"):
+        with pytest.raises(
+            StepFailed, match="the new password is empty or more than one line"
+        ) as refused:
             step(tmp_path).run(Ctx(staged={value_name(KEY): value}))
+        assert not refused.value.landed
         with pytest.raises(
             StepFailed, match="the password iac/proxmox holds is empty or more than one line"
         ):
             step(tmp_path).undo(Ctx(held={LEAF: {KEY: value}}))
         assert calls(tmp_path) == []
 
-    def test_no_ca_file_or_no_ssh_fails_the_step(self, tmp_path):
+    def test_no_ca_file_or_no_ssh_fails_the_step_not_landed(self, tmp_path):
         absent = Ssh(tmp_path / "absent", (sys.executable, FAKE, str(tmp_path)))
-        with pytest.raises(StepFailed, match="there is no homelab SSH host CA file at"):
+        with pytest.raises(StepFailed, match="there is no homelab SSH host CA file at") as e:
             SshSetPassword(absent, "pve1", "root", LEAF, KEY).run(Ctx())
+        assert not e.value.landed
         no_ssh = Ssh(ssh(tmp_path).known_hosts, ("ssh-that-is-not-there",))
-        with pytest.raises(StepFailed, match="ssh-that-is-not-there is not on the PATH"):
+        with pytest.raises(StepFailed, match="ssh-that-is-not-there is not on the PATH") as e:
             SshSetPassword(no_ssh, "pve1", "root", LEAF, KEY).run(Ctx())
+        assert not e.value.landed
         assert calls(tmp_path) == []
 
 

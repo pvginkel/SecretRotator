@@ -8,7 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from secret_rotator.ansiblesteps import ANSIBLE_DIR, Ran, redact
-from secret_rotator.model import Context, Step, StepFailed, value_name
+from secret_rotator.model import Context, Step, StepFailed, not_landed, value_name
 
 # Ansible's connection settings (Ansible ansible/ansible.cfg ssh_args, group_vars/all
 # ansible_user): the known_hosts file whose one @cert-authority line is the homelab SSH host CA,
@@ -19,6 +19,7 @@ IDENTITY = "~/.ssh/id_ed25519_ansible"
 LOGIN = "ansible"
 COMMAND = ("ssh",)
 CHPASSWD = ("sudo", "-n", "chpasswd")
+REACH = ("sudo", "-n", "true")
 CONNECT_TIMEOUT = 15  # seconds
 RUN_BOUND = 60  # seconds
 
@@ -80,9 +81,13 @@ class SshSetPassword(Step):
     `sudo -n chpasswd` over SSH, the user and password on its stdin. Nothing verifies it (design
     §4.2); a re-run sets it again.
 
+    Its run first reaches the host as the set does, by `sudo -n true`: a failure there (ssh, the
+    CA file, the connection, the host key, the login, sudo) ran no chpasswd, so it reports the set
+    not landed and a rollback leaves the host alone. Any failure after that counts as landed.
+
     Its undo sets back the password the leaf's key holds, read from KV when it runs: the plan puts
     the step before kv.write, whose undo a rollback runs first, so KV holds the password from
-    before the plan again. A set that did not land is left as it is."""
+    before the plan again."""
 
     type = "ssh.set_password"
     mutates = True
@@ -98,8 +103,13 @@ class SshSetPassword(Step):
     def run(self, ctx: Context) -> str:
         new = ctx.staged(value_name(self.key))
         if new is None:
-            raise StepFailed("no new password is staged")
-        self._set(new, "the new password")
+            raise StepFailed("no new password is staged", landed=False)
+        _refuse(new, "the new password")
+        try:
+            self._call(REACH, "", "")
+        except StepFailed as e:
+            raise not_landed(e) from e
+        self._call(CHPASSWD, f"{self.user}:{new}\n", new)
         return f"{self.user}'s password set on {self.host}"
 
     def undo(self, ctx: Context) -> str:
@@ -107,13 +117,12 @@ class SshSetPassword(Step):
         old = None if version is None else version.data.get(self.key)
         if old is None:
             raise StepFailed(f"{self.leaf} holds no {self.key} to set back")
-        self._set(old, f"the password {self.leaf} holds")
+        _refuse(old, f"the password {self.leaf} holds")
+        self._call(CHPASSWD, f"{self.user}:{old}\n", old)
         return f"{self.user}'s password on {self.host} set back to the one {self.leaf} holds"
 
-    def _set(self, password: str, what: str) -> None:
-        if not password or "\n" in password:
-            raise StepFailed(f"{what} is empty or more than one line: refused for chpasswd")
-        ran = self.ssh.run(self.host, CHPASSWD, f"{self.user}:{password}\n")
+    def _call(self, remote: tuple[str, ...], stdin: str, password: str) -> None:
+        ran = self.ssh.run(self.host, remote, stdin)
         output = redact(ran.output, {"password": password}).strip()
         said = f": {output.splitlines()[-1]}" if output else ""
         if ran.code is None:
@@ -121,4 +130,11 @@ class SshSetPassword(Step):
         if ran.code == 255:
             raise StepFailed(f"ssh to {self.host} as {LOGIN} failed{said}", output)
         if ran.code != 0:
-            raise StepFailed(f"{' '.join(CHPASSWD)} on {self.host} exited {ran.code}{said}", output)
+            raise StepFailed(f"{' '.join(remote)} on {self.host} exited {ran.code}{said}", output)
+
+
+def _refuse(password: str, what: str) -> None:
+    if not password or "\n" in password:
+        raise StepFailed(
+            f"{what} is empty or more than one line: refused for chpasswd", landed=False
+        )

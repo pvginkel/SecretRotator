@@ -1,7 +1,8 @@
-"""A stand-in for ssh running `sudo -n chpasswd`, run as `python fake_ssh.py <dir> <ssh argv…>`:
-it appends how it was called to calls.jsonl in <dir>, then plays the scenario scenarios.json in
-<dir> names for the host, `ok` by default: chpasswd, which records each user's password per host
-in passwords.json."""
+"""A stand-in for ssh running `sudo -n true` or `sudo -n chpasswd`, run as
+`python fake_ssh.py <dir> <ssh argv…>`: it appends how it was called to calls.jsonl in <dir>, then
+plays the scenario scenarios.json in <dir> names for the host, `ok` by default: true exits 0, and
+chpasswd records each user's password per host in passwords.json. `echo` and `drop` play ok for
+true."""
 
 import json
 import sys
@@ -49,12 +50,18 @@ def main():
         f.write(json.dumps(call) + "\n")
     scenarios = where / "scenarios.json"
     scenario = json.loads(scenarios.read_text()).get(host, "ok") if scenarios.exists() else "ok"
-    if scenario == "ok":
+    if remote == ["sudo", "-n", "true"] and scenario in ("echo", "drop"):
+        scenario = "ok"
+    if scenario in ("ok", "drop") and remote == ["sudo", "-n", "chpasswd"]:
         user, _, password = stdin.removesuffix("\n").partition(":")
         held = where / "passwords.json"
         passwords = json.loads(held.read_text()) if held.exists() else {}
         passwords.setdefault(host, {})[user] = password
         held.write_text(json.dumps(passwords))
+    if scenario == "drop":
+        # chpasswd ran, then the connection went before its exit status came back.
+        print(f"Connection to {host} closed by remote host.", file=sys.stderr)
+        sys.exit(255)
     elif scenario == "unreachable":
         print(f"ssh: connect to host {host} port 22: No route to host", file=sys.stderr)
         sys.exit(255)

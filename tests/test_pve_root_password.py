@@ -14,7 +14,7 @@ from fake_cluster import FakeCluster, externalsecret, pod_spec, workload
 from fixtures import edit
 from plans import Recorder, client, fake_of, lock, run_state, state_of
 from test_activation import ticking
-from test_sshsteps import FAKE, calls, passwords, scenario
+from test_sshsteps import FAKE, calls, passwords, scenario, sets
 
 from secret_rotator import annotate as ann
 from secret_rotator import registry
@@ -244,18 +244,19 @@ class TestTheRuns:
         assert step == f"operator.show:value:{KEY}"
         assert isinstance(request, ShowRequest) and request.value == new
         assert state_of(world.bao, LEAF).stamps == {KEY: "2026-10-05"}
-        assert [c["host"] for c in calls(tmp_path)] == list(NODES)
-        assert [c["stdin"] for c in calls(tmp_path)] == [f"root:{new}\n"] * 3
+        assert [(c["host"], c["stdin"]) for c in sets(tmp_path)] == [
+            (node, f"root:{new}\n") for node in NODES
+        ]
         assert not any(new in " ".join(c["argv"]) for c in calls(tmp_path))
         assert not any(OLD in text or new in text for text in world.texts())
 
     def test_an_abort_at_the_show_sets_every_node_back_with_the_leaf_and_its_copy(self, tmp_path):
         world = World(tmp_path)
         assert world.executor(Abandon.ABORT).run() is Outcome.ROLLED_BACK
-        new = calls(tmp_path)[0]["stdin"].removeprefix("root:").removesuffix("\n")
+        new = sets(tmp_path)[0]["stdin"].removeprefix("root:").removesuffix("\n")
         assert world.nodes() == dict.fromkeys(NODES, OLD)
         assert world.password() == OLD and world.bao.data(CATALOG) == world.catalog
-        assert [(c["host"], c["stdin"]) for c in calls(tmp_path)] == [
+        assert [(c["host"], c["stdin"]) for c in sets(tmp_path)] == [
             *((node, f"root:{new}\n") for node in NODES),
             *((node, f"root:{OLD}\n") for node in reversed(NODES)),
         ]
@@ -275,21 +276,36 @@ class TestTheRuns:
         assert world.password() == OLD and world.nodes()["pve2"] == OLD
         assert world.nodes()["pve"] != OLD
         assert executor.abort_blocker() is None
-        scenario(tmp_path)
-        assert executor.abort() is Outcome.ROLLED_BACK
-        assert world.nodes() == dict.fromkeys(NODES, OLD)
-        assert [c["host"] for c in calls(tmp_path)] == ["pve", "pve1", "pve1", "pve"]
+        assert executor.abort() is Outcome.ROLLED_BACK  # pve1 still unreachable
+        assert world.nodes() == dict.fromkeys(NODES, OLD) and world.password() == OLD
+        assert [(c["host"], c["remote"][-1]) for c in calls(tmp_path)] == [
+            ("pve", "true"),
+            ("pve", "chpasswd"),
+            ("pve1", "true"),
+            ("pve", "chpasswd"),
+        ]
 
-    def test_a_rollback_that_cannot_reach_a_node_fails_and_its_retry_finishes_it(self, tmp_path):
+    def test_without_the_ca_file_the_plan_fails_before_any_node_and_aborts_clean(self, tmp_path):
         world = World(tmp_path)
-        scenario(tmp_path, pve2="hostkey")
+        (tmp_path / "homelab").unlink()
         executor = world.executor()
         assert executor.run() is Outcome.FAILED
+        assert world.failure().step.id == "ssh.set_password:root@pve"
+        assert executor.abort() is Outcome.CANCELLED
+        assert calls(tmp_path) == [] and world.nodes() == dict.fromkeys(NODES, OLD)
+
+    def test_a_rollback_that_cannot_reach_a_set_node_fails_and_its_retry_finishes_it(
+        self, tmp_path
+    ):
+        world = World(tmp_path)
+        executor = world.executor(Abandon.EXIT)
+        assert executor.run() is Outcome.EXITED
+        scenario(tmp_path, pve2="hostkey")
         assert executor.abort() is Outcome.ROLLBACK_FAILED
         assert world.recorder.failures()[-1].error == (
             "ssh to pve2 as ansible failed: Host key verification failed."
         )
-        assert world.nodes()["pve"] != OLD
+        assert world.password() == OLD and world.nodes()["pve2"] != OLD
         scenario(tmp_path)
         assert executor.run() is Outcome.ROLLED_BACK
         assert world.nodes() == dict.fromkeys(NODES, OLD) and world.password() == OLD
