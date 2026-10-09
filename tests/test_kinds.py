@@ -28,6 +28,7 @@ from secret_rotator.kinds.pve_root_password import PveRootPassword
 from secret_rotator.kinds.random import Random
 from secret_rotator.kinds.samba_user import SambaUser
 from secret_rotator.kinds.step_ca_password import StepCaPassword
+from secret_rotator.kinds.youtrack_token import YouTrackToken
 from secret_rotator.model import StepFailed, expiry_name, value_name
 from secret_rotator.openbao import Version
 from secret_rotator.opsteps import (
@@ -102,6 +103,7 @@ class TestTheRegistry:
             "samba-user",
             "step-ca-password",
             "github-webhook-secret",
+            "youtrack-token",
             "external",
         }
         assert isinstance(KINDS["random"], Random) and isinstance(KINDS["manual"], Manual)
@@ -116,6 +118,7 @@ class TestTheRegistry:
         assert isinstance(KINDS["step-ca-password"], StepCaPassword)
         assert isinstance(KINDS["external"], External)
         assert isinstance(KINDS["github-webhook-secret"], GitHubWebhookSecret)
+        assert isinstance(KINDS["youtrack-token"], YouTrackToken)
 
     @pytest.mark.parametrize(
         ("found", "problem"),

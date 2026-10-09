@@ -201,7 +201,7 @@ def main(
     console: Callable[[], Console] = Console,
     kube: Callable[[str], Kube] = Kube,
     switches: Callable[[], Switches] = load_switches,
-    youtrack: Callable[[str], YouTrack] = YouTrack,
+    youtrack: Callable[[Callable[[], str]], YouTrack] = YouTrack,
     telegram: Callable[[str, int], Telegram] = Telegram,
     clock: Callable[[], float] = time.monotonic,
     source: Callable[[], str] = provenance.source,
@@ -359,7 +359,7 @@ def run_nightly(
     out: Callable[[str], None],
     kube: Callable[[str], Kube],
     switches: Switches,
-    youtrack: Callable[[str], YouTrack],
+    youtrack: Callable[[Callable[[], str]], YouTrack],
     telegram: Callable[[str, int], Telegram],
     clock: Callable[[], float],
 ) -> int:

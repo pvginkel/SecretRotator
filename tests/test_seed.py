@@ -326,6 +326,7 @@ def test_the_rotators_own_leaves_are_annotated(entries):
     assert entries["iac/rotator-k8s-token"]["token"]["kind"] == "k8s-sa-token"
     assert entries["rotator/telegram"]["token"]["kind"] == "manual"
     assert entries["rotator/youtrack"]["token"]["kind"] == "youtrack-token"
+    assert entries["rotator/youtrack-token/credentials"]["token"]["kind"] == "youtrack-token"
     assert entries["rotator/jenkins"]["token"]["kind"] == "jenkins-token"
     assert entries["rotator/jenkins"]["user"] == {"kind": "none"}
     for leaf in (
@@ -333,6 +334,7 @@ def test_the_rotators_own_leaves_are_annotated(entries):
         "iac/rotator-k8s-token",
         "rotator/telegram",
         "rotator/youtrack",
+        "rotator/youtrack-token/credentials",
         "rotator/jenkins",
     ):
         scheduled = [f for f in entries[leaf].values() if is_scheduled(f["kind"])]

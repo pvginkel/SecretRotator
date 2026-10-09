@@ -14,6 +14,7 @@ from secret_rotator.jenkins import JenkinsError
 from secret_rotator.kube import KubeError
 from secret_rotator.openbao import OpenBao, OpenBaoError
 from secret_rotator.state import State
+from secret_rotator.youtrack import YouTrackError
 
 
 class Actor(StrEnum):
@@ -51,11 +52,12 @@ class StepFailed(Exception):
 
 def failure(e: Exception) -> tuple[str, str]:
     """A failure's one sentence and its technical detail. An OpenBaoError, a KubeError, a
-    JenkinsError or a GitHubError names its request, and a transport error as such."""
+    JenkinsError, a GitHubError or a YouTrackError names its request, and a transport error as
+    such."""
     technical = "".join(traceback.format_exception(e))
     if isinstance(e, StepFailed):
         return e.error, e.technical or technical
-    if isinstance(e, OpenBaoError | KubeError | JenkinsError | GitHubError):
+    if isinstance(e, OpenBaoError | KubeError | JenkinsError | GitHubError | YouTrackError):
         return str(e), technical
     return f"{type(e).__name__}: {e}", technical
 

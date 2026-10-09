@@ -30,6 +30,7 @@ class FakeYouTrack:
         self.issues = []
         self.requests = []  # (method, path, query, body)
         self.down = False
+        self.takes = lambda token: token == TOKEN  # whether it takes the bearer token
 
     def __call__(self, req):
         url = urllib.parse.urlsplit(req.full_url)
@@ -40,7 +41,7 @@ class FakeYouTrack:
         self.requests.append((method, path, query, body))
         if self.down:
             raise urllib.error.URLError(ConnectionRefusedError("connection refused"))
-        if req.get_header("Authorization") != f"Bearer {TOKEN}":
+        if not self.takes((req.get_header("Authorization") or "").removeprefix("Bearer ")):
             return self.answer(401, {"error": "Unauthorized"})
         if (method, path) == ("GET", "/api/issues"):
             found = SEARCH.fullmatch(query["query"])

@@ -1,5 +1,6 @@
 """YouTrack's REST API, as much of it as the standing card uses (design §3.3), under Jeeves's
-permanent token from rotator/youtrack. No request or error carries the token."""
+permanent token from rotator/youtrack; and the client the youtrack-token kind reaches YouTrack and
+its Hub through. No request or error carries the token."""
 
 import functools
 import http.client
@@ -44,7 +45,10 @@ def _message(raw: bytes) -> str:
 
 
 class YouTrack:
-    def __init__(self, token: str, addr: str = ADDR, opener: Callable | None = None):
+    def __init__(
+        self, token: str | Callable[[], str], addr: str = ADDR, opener: Callable | None = None
+    ):
+        """token: the bearer token, or what reads it at each request."""
         self.addr = addr.rstrip("/")
         self.token = token
         self.open = opener or functools.partial(
@@ -56,7 +60,8 @@ class YouTrack:
     ):
         """The JSON answer; any status >= 400 is raised."""
         url = self.addr + path + ("?" + urllib.parse.urlencode(query) if query else "")
-        headers = {"Authorization": f"Bearer {self.token}", "Accept": "application/json"}
+        token = self.token() if callable(self.token) else self.token
+        headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         if body is not None:
             headers["Content-Type"] = "application/json"
         req = urllib.request.Request(

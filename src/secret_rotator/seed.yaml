@@ -855,6 +855,15 @@ rotator/youtrack:
   interval: 365d
   activate: none
 
+# The youtrack-token kind's counterpart, minted by the operator, rotated by the kind itself.
+rotator/youtrack-token/credentials:
+  kind: youtrack-token
+  interval: 365d
+  activate: none
+  notes: "A permanent token on the operator's YouTrack admin account with Hub's scope (YouTrack
+    Administration): it lists, mints and revokes the permanent tokens of the youtrack-token leaves'
+    owners."
+
 # The keycloak-client kind's counterparts, one service-account client with manage-clients per
 # realm, minted by the operator; each is rotated by the kind itself.
 rotator/keycloak-client/homelab:

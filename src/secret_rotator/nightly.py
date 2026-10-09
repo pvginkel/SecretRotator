@@ -546,14 +546,17 @@ def run(
     kinds: Mapping[str, Kind],
     switches: Switches,
     *,
-    youtrack: Callable[[str], YouTrack] = YouTrack,
+    youtrack: Callable[[Callable[[], str]], YouTrack] = YouTrack,
     telegram: Callable[[str, int], Telegram] = Telegram,
     out: Callable[[str], None],
     holder: str,
     now: Callable[[], datetime.datetime] = utcnow,
     clock: Callable[[], float] = time.monotonic,
 ) -> int:
-    """The nightly run: Jeeves's token for the card and the bot's for Telegram, from the store."""
+    """The nightly run: Jeeves's token for the card and the bot's for Telegram, from the store.
+    The card's client reads Jeeves's token from its leaf at each request, so a youtrack-token plan
+    of rotator/youtrack switches it to the new token at its kv.write, before it revokes the old
+    one, and a rollback's kv.write undo switches it back."""
     chat = switches.telegram_chat_id
     bot = None if chat is None else telegram(bao.value(*BOT_TOKEN), chat)
     return Night(
@@ -561,7 +564,7 @@ def run(
         cluster,
         kinds,
         switches,
-        youtrack=youtrack(bao.value(*CARD_TOKEN)),
+        youtrack=youtrack(lambda: bao.value(*CARD_TOKEN)),
         telegram=bot,
         out=out,
         holder=holder,

@@ -442,6 +442,9 @@
   "rotator/youtrack": [
     "token"
   ],
+  "rotator/youtrack-token/credentials": [
+    "token"
+  ],
   "shared/dev/ceph-csi": [
     "user_id",
     "user_key"

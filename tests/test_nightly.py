@@ -9,6 +9,7 @@ import json
 
 import pytest
 from fake_cluster import FakeCluster
+from fake_hub import HUB, FakeHub
 from fake_openbao import ROLE_ID, SECRET_ID, TOKEN
 from fake_telegram import CHAT, FakeTelegram
 from fake_telegram import TOKEN as BOT
@@ -32,6 +33,8 @@ from test_kinds import KINDS
 from secret_rotator import card, nightly
 from secret_rotator.cluster import Cluster
 from secret_rotator.contract import LOCK_LEAF
+from secret_rotator.kinds.youtrack_token import YouTrackToken
+from secret_rotator.kinds.youtrack_token.steps import COUNTERPART
 from secret_rotator.openbao import OpenBao
 from secret_rotator.switches import Switches
 from secret_rotator.telegram import Telegram
@@ -110,7 +113,7 @@ class Night:
         )
 
     def card_client(self, token):
-        assert token == JEEVES
+        assert token() == JEEVES
         return YouTrack(token, opener=self.youtrack)
 
     def bot(self, token, chat):
@@ -502,6 +505,42 @@ class TestTheStandingCard:
         assert night() == 1
         assert state_of(night.bao, LEAF).stamps["token"] == TODAY.isoformat()
         assert "error: the open card cannot be looked up" in night.log()
+
+
+class TestTheCardToken:
+    def test_its_rotation_switches_the_card_to_the_new_token_before_the_old_is_revoked(self):
+        bao = world(due=())
+        bao.leaves[STRAY] = {"data": {"x": "SECRET-stray"}, "meta": dict(NOT_ANNOTATED)}
+        hub = FakeHub()
+        hub.user("u-operator", "operator", admin=True)
+        hub.user("u-jeeves", "jeeves")
+        jeeves = hub.token("u-jeeves", "Secret Rotator card")
+        own = {"token": {"kind": "youtrack-token", "interval": "365d", "activate": "none"}}
+        bao.leaves["rotator/youtrack"] = {"data": {"token": jeeves}, "meta": annotated(own)}
+        admin = hub.token("u-operator", "Secret Rotator", scope=(HUB,))
+        bao.leaves[COUNTERPART[0]] = {"data": {"token": admin}, "meta": annotated(own)}
+        put_state(bao, COUNTERPART[0], stamps={"token": TODAY.isoformat()})
+        put_state(bao, "jenkins/youtrack", stamps={"admin-token": TODAY.isoformat()})
+        night = Night(bao, kinds={**KINDS, "youtrack-token": YouTrackToken(hub)})
+        bearers = []  # each request's to the card, in order
+        night.youtrack.takes = lambda token: bearers.append(token) or hub.takes(token)
+        clients = []
+
+        def card_client(token):
+            clients.append(YouTrack(token, opener=night.youtrack))
+            return clients[-1]
+
+        night.card_client = card_client
+        at_revoke = []
+        hub.before_revoke = lambda token: at_revoke.append(clients[0].token())
+        assert night(kinds_enabled=frozenset({"random", "youtrack-token"})) == 0
+        new = bao.data("rotator/youtrack")["token"]
+        assert new != jeeves and at_revoke == [new]
+        assert not hub.takes(jeeves) and hub.takes(new)
+        assert state_of(bao, "rotator/youtrack").stamps["token"] == TODAY.isoformat()
+        assert bearers[0] == jeeves and set(bearers[1:]) == {new}
+        assert f"- `{STRAY}`: rotation_x: missing" in night.card()["description"]
+        assert "Rotated 1:" in night.telegram.messages[0]
 
 
 class TestTelegram:

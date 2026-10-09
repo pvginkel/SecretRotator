@@ -24,6 +24,7 @@ pve-root-password = "secret_rotator.kinds.pve_root_password:PveRootPassword"
 samba-user = "secret_rotator.kinds.samba_user:SambaUser"
 step-ca-password = "secret_rotator.kinds.step_ca_password:StepCaPassword"
 github-webhook-secret = "secret_rotator.kinds.github_webhook_secret:GitHubWebhookSecret"
+youtrack-token = "secret_rotator.kinds.youtrack_token:YouTrackToken"
 external = "secret_rotator.kinds.external:External"
 
 [tool.poetry]
