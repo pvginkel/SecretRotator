@@ -25,6 +25,7 @@ from secret_rotator.kinds.keycloak_client import KeycloakClient
 from secret_rotator.kinds.manual import TYPES, Manual, load_type
 from secret_rotator.kinds.pve_root_password import PveRootPassword
 from secret_rotator.kinds.random import Random
+from secret_rotator.kinds.samba_user import SambaUser
 from secret_rotator.model import StepFailed, expiry_name, value_name
 from secret_rotator.openbao import Version
 from secret_rotator.opsteps import (
@@ -96,6 +97,7 @@ class TestTheRegistry:
             "jenkins-job-token",
             "grafana-admin",
             "pve-root-password",
+            "samba-user",
             "external",
         }
         assert isinstance(KINDS["random"], Random) and isinstance(KINDS["manual"], Manual)
@@ -106,6 +108,7 @@ class TestTheRegistry:
         assert isinstance(KINDS["jenkins-job-token"], JenkinsJobToken)
         assert isinstance(KINDS["grafana-admin"], GrafanaAdmin)
         assert isinstance(KINDS["pve-root-password"], PveRootPassword)
+        assert isinstance(KINDS["samba-user"], SambaUser)
         assert isinstance(KINDS["external"], External)
 
     @pytest.mark.parametrize(

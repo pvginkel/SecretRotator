@@ -487,8 +487,9 @@ eso/prd/media/prd/mydownloads-tvdb:
 
 eso/prd/media/prd/mydownloads-user:
   kind: samba-user
+  args: {"account":"app"}
   interval: 14d
-  activate: k8s-rollout:media-prd/deployment/mydownloads
+  activate: k8s-rollout:media-prd/deployment/media,media-prd/deployment/mydownloads
   keys:
     username: {kind: none}
 
@@ -804,7 +805,8 @@ shared/prd/ceph-rgw/s3:
 shared/samba/users:
   kind: samba-user
   interval: 365d
-  activate: "eso,k8s-rollout,manual:set the new password in the Windows environments that mount the shares"
+  activate: "eso,k8s-rollout,manual:set the new password in the Windows environments that mount the
+    shares and restart the KubeCoder environments that mount them"
   keys:
     mvdbovenkamp:
       kind: manual
