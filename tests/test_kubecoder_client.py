@@ -493,6 +493,30 @@ class TestTheClient:
         assert str(e.value) == f"GET {CLIENTS}: HTTP 401: Missing or invalid API token"
         assert e.value.status == 401
 
+    @pytest.mark.parametrize(
+        ("knob", "failure", "error"),
+        [
+            (
+                "refused",
+                (503, {"type": "x", "title": "unavailable", "status": 503}),
+                f"GET {CLIENTS}: HTTP 503: unavailable",
+            ),
+            (
+                "broken",
+                ConnectionResetError(104, "Connection reset by peer"),
+                f"GET {CLIENTS}: transport error: "
+                "ConnectionResetError(104, 'Connection reset by peer')",
+            ),
+        ],
+        ids=["5xx", "transport"],
+    )
+    def test_takes_raises_any_failure_but_a_refused_bearer(self, knob, failure, error):
+        world = World()
+        getattr(world.controller, knob)["GET", CLIENTS] = failure
+        with pytest.raises(KubeCoderError) as e:
+            controller(world).takes(OLD)
+        assert str(e.value) == error
+
     def test_a_static_name_is_refused_by_its_title(self):
         with pytest.raises(KubeCoderError) as e:
             controller(World()).mint(OLD, "Bot")
