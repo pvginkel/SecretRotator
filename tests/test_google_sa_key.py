@@ -511,6 +511,19 @@ class TestTheRuns:
         assert state_of(world.bao, CALENDAR).stamps == {"key_json": "2026-10-05"}
 
 
+def gone_once_listed(fake, email, key):
+    """Google lists the account's key, then it is deleted elsewhere: the DELETE that follows the
+    list answers 404."""
+    listed = fake.list
+
+    def list_then_gone(account):
+        answer = listed(account)
+        fake.accounts[email]["keys"].pop(key, None)
+        return answer
+
+    fake.list = list_then_gone
+
+
 class Ctx:
     def __init__(self, bao, staged=None):
         self.bao = client(bao)
@@ -606,6 +619,26 @@ class TestTheSteps:
         ctx = Ctx(world.bao, {OLD: gone, value_name("key_json"): world.held(CALENDAR)})
         assert Delete(world.kind.google, "key_json").run(ctx) == f"key {gone} was deleted already"
         assert world.google.done("delete") == []
+
+    def test_a_delete_of_a_key_gone_between_its_list_and_its_delete_lands(self):
+        world = World()
+        old = id_of(world.google.key(ACCOUNTS[CALENDAR]))
+        gone_once_listed(world.google, ACCOUNTS[CALENDAR], old)
+        ctx = Ctx(world.bao, {OLD: old, value_name("key_json"): world.held(CALENDAR)})
+        assert Delete(world.kind.google, "key_json").run(ctx) == f"deleted key {old}"
+        assert [r[3] for r in world.google.done("delete")] == [old]
+        assert old not in world.keys(CALENDAR)
+
+    def test_an_undo_of_a_key_gone_between_its_list_and_its_delete_lands(self):
+        world = World()
+        ctx = Ctx(world.bao)
+        mint = Mint(world.kind.google, CALENDAR, "key_json")
+        mint.run(ctx)
+        new = id_of(ctx.values[value_name("key_json")])
+        gone_once_listed(world.google, ACCOUNTS[CALENDAR], new)
+        assert mint.undo(ctx) == f"deleted key {new}"
+        assert [r[3] for r in world.google.done("delete")] == [new]
+        assert world.keys(CALENDAR) == world.initial[CALENDAR]
 
     def test_a_delete_google_answers_without_deleting_fails(self):
         world = World()
