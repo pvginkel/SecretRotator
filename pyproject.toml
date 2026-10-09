@@ -33,6 +33,7 @@ youtrack-token = "secret_rotator.kinds.youtrack_token:YouTrackToken"
 home-assistant-token = "secret_rotator.kinds.home_assistant_token:HomeAssistantToken"
 google-sa-key = "secret_rotator.kinds.google_sa_key:GoogleSaKey"
 elastic-user = "secret_rotator.kinds.elastic_user:ElasticUser"
+kubecoder-client = "secret_rotator.kinds.kubecoder_client:KubeCoderClient"
 external = "secret_rotator.kinds.external:External"
 
 [tool.poetry]

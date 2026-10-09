@@ -26,6 +26,7 @@ from secret_rotator.kinds.home_assistant_token import HomeAssistantToken
 from secret_rotator.kinds.jenkins_job_token import JenkinsJobToken
 from secret_rotator.kinds.jenkins_token import JenkinsToken
 from secret_rotator.kinds.keycloak_client import KeycloakClient
+from secret_rotator.kinds.kubecoder_client import KubeCoderClient
 from secret_rotator.kinds.manual import TYPES, Manual, load_type
 from secret_rotator.kinds.pve_root_password import PveRootPassword
 from secret_rotator.kinds.random import Random
@@ -110,6 +111,7 @@ class TestTheRegistry:
             "home-assistant-token",
             "google-sa-key",
             "elastic-user",
+            "kubecoder-client",
             "external",
         }
         assert isinstance(KINDS["random"], Random) and isinstance(KINDS["manual"], Manual)
@@ -128,6 +130,7 @@ class TestTheRegistry:
         assert isinstance(KINDS["home-assistant-token"], HomeAssistantToken)
         assert isinstance(KINDS["google-sa-key"], GoogleSaKey)
         assert isinstance(KINDS["elastic-user"], ElasticUser)
+        assert isinstance(KINDS["kubecoder-client"], KubeCoderClient)
 
     @pytest.mark.parametrize(
         ("found", "problem"),
@@ -673,7 +676,7 @@ class TestTheLeafsPlans:
         edit(
             store["eso/prd/kc/prd/catalog"].meta,
             "jenkins-user",
-            kind="kubecoder-client",
+            kind="mosquitto-user",
             interval="14d",
             activate="none",
         )
@@ -683,7 +686,7 @@ class TestTheLeafsPlans:
             "client-secret": (
                 "a copy of eso/prd/app/prd/oidc#client_secret, written by its primary's plan"
             ),
-            "jenkins-user": "kubecoder-client: a kind this install has no plugin for yet",
+            "jenkins-user": "mosquitto-user: a kind this install has no plugin for yet",
         }
         _, unplanned = of_leaf("eso/prd/bot/prd/config", store, audit(store), KINDS)
         assert unplanned["telegram-chat-id"] == "none: not a secret, never rotated"
