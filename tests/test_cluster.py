@@ -3,6 +3,7 @@ auto's rollout targets derived through the Secrets pod templates read, never a b
 workload's health as `kubectl rollout status` and Argo CD judge it. The ServiceAccount manifest."""
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from secret_rotator.cluster import (
     leaves_of,
     pending,
 )
+from secret_rotator.kinds.k8s_sa_token.tokens import SUFFIX, SUFFIX_LENGTH, successor
 
 LEAF = "eso/prd/app/prd/token"
 CATALOG = "eso/prd/kc/prd/catalog"
@@ -273,3 +275,7 @@ def test_the_manifest_binds_the_service_account_to_cluster_admin_with_a_long_liv
     assert token["metadata"]["annotations"] == {
         "kubernetes.io/service-account.name": "secret-rotator"
     }
+    # The k8s-sa-token kind's successor of the token is named as generateName names this one.
+    prefix = token["metadata"]["generateName"]
+    assert "name" not in token["metadata"]
+    assert re.fullmatch(f"{prefix}[{SUFFIX}]{{{SUFFIX_LENGTH}}}", successor("secret-rotator"))

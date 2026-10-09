@@ -25,6 +25,7 @@ from secret_rotator.kinds.grafana_admin import GrafanaAdmin
 from secret_rotator.kinds.home_assistant_token import HomeAssistantToken
 from secret_rotator.kinds.jenkins_job_token import JenkinsJobToken
 from secret_rotator.kinds.jenkins_token import JenkinsToken
+from secret_rotator.kinds.k8s_sa_token import K8sSaToken
 from secret_rotator.kinds.keycloak_client import KeycloakClient
 from secret_rotator.kinds.kubecoder_client import KubeCoderClient
 from secret_rotator.kinds.manual import TYPES, Manual, load_type
@@ -112,6 +113,7 @@ class TestTheRegistry:
             "google-sa-key",
             "elastic-user",
             "kubecoder-client",
+            "k8s-sa-token",
             "external",
         }
         assert isinstance(KINDS["random"], Random) and isinstance(KINDS["manual"], Manual)
@@ -131,6 +133,7 @@ class TestTheRegistry:
         assert isinstance(KINDS["google-sa-key"], GoogleSaKey)
         assert isinstance(KINDS["elastic-user"], ElasticUser)
         assert isinstance(KINDS["kubecoder-client"], KubeCoderClient)
+        assert isinstance(KINDS["k8s-sa-token"], K8sSaToken)
 
     @pytest.mark.parametrize(
         ("found", "problem"),

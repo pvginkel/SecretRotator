@@ -8,12 +8,18 @@ The compliant cluster references every eso/prd/ leaf of fixtures.COMPLIANT but
 eso/prd/yt/prd/webhook, whose copy in jenkins/youtrack is its consumer, and holds the KubeCoder
 pattern: an ExternalSecret that extracts its leaf whole by dataFrom alone, a controller Deployment
 and bare environment pods that read its Secret. Its Pushgateway is reached through the apiserver's
-service proxy."""
+service proxy.
+
+It takes the rotator's static token, and the token of every ServiceAccount token Secret it holds as
+that ServiceAccount, which a SelfSubjectReview answers; its token controller fills a created token
+Secret's token once its lag has passed, a token with the legacy claims that name the Secret."""
 
 import base64
 import copy
 import io
+import itertools
 import json
+import secrets
 import urllib.error
 import urllib.parse
 
@@ -22,6 +28,10 @@ from fake_pushgateway import PUSHGATEWAY, FakePushgateway
 from secret_rotator.kube import ADDR, Kube
 
 TOKEN = "SECRET-token-of-the-secret-rotator-sa"
+ROTATOR = "system:serviceaccount:kube-system:secret-rotator"
+SA_TOKEN = "kubernetes.io/service-account-token"
+SA_NAME = "kubernetes.io/service-account.name"
+REVIEWS = "/apis/authentication.k8s.io/v1/selfsubjectreviews"
 ESO = "/apis/external-secrets.io/v1"
 APPS = "/apis/apps/v1"
 ARGO = "/apis/argoproj.io/v1alpha1/namespaces/argocd-prd/applications"
@@ -74,6 +84,47 @@ def secret(ns, name, **data):
         "type": "Opaque",
         "data": {k: base64.b64encode(v.encode()).decode() for k, v in data.items()},
     }
+
+
+def b64url(doc):
+    return base64.urlsafe_b64encode(json.dumps(doc).encode()).rstrip(b"=").decode()
+
+
+def legacy_token(ns, account, name):
+    """A token as the token controller fills a token Secret's: a JWT with the legacy claims."""
+    claims = {
+        "iss": "kubernetes/serviceaccount",
+        "kubernetes.io/serviceaccount/namespace": ns,
+        "kubernetes.io/serviceaccount/secret.name": name,
+        "kubernetes.io/serviceaccount/service-account.name": account,
+        "sub": f"system:serviceaccount:{ns}:{account}",
+    }
+    signature = secrets.token_urlsafe(32).rstrip("=")
+    return f"{b64url({'alg': 'RS256', 'kid': 'k'})}.{b64url(claims)}.{signature}"
+
+
+def token_secret(ns, name, account, token=None, *, uid=None):
+    """A ServiceAccount token Secret the token controller has filled: with a legacy token naming it
+    unless token is given."""
+    token = token or legacy_token(ns, account, name)
+    return {
+        "metadata": {
+            "namespace": ns,
+            "name": name,
+            "uid": uid or f"uid-{name}",
+            "annotations": {SA_NAME: account},
+        },
+        "type": SA_TOKEN,
+        "data": {
+            "token": base64.b64encode(token.encode()).decode(),
+            "namespace": base64.b64encode(ns.encode()).decode(),
+        },
+    }
+
+
+def token_in(secret):
+    data = (secret.get("data") or {}).get("token")
+    return base64.b64decode(data).decode() if data else ""
 
 
 def pod_spec(*, env=(), env_from=(), volume=(), projected=(), init_env=()):
@@ -317,6 +368,12 @@ class FakeCluster:
         self.syncs = 0
         self.broken = {}  # (method, path) -> the OSError it raises
         self.pushgateway = FakePushgateway()
+        self.static = {TOKEN}  # bearers it takes as the rotator without a token Secret
+        self.token_lag = 2
+        self.token_controller = True  # whether it fills a created token Secret's token
+        self.uids = itertools.count(1)
+        self.refused = {}  # (method, path) -> the status it answers instead
+        self.bearers = []  # each request's bearer, in the order of requests
 
     def kube(self, token=TOKEN):
         return Kube(token, opener=self, sleep=self.sleep, clock=self.clock)
@@ -345,10 +402,15 @@ class FakeCluster:
         decode = bytes.decode if proxied else json.loads
         body = None if req.data is None else decode(req.data)
         self.requests.append((method, path, body))
+        bearer = (req.get_header("Authorization") or "").removeprefix("Bearer ")
+        self.bearers.append(bearer)
         if (method, path) in self.broken:
             raise self.broken[method, path]
-        if req.get_header("Authorization") != f"Bearer {TOKEN}":
+        user = self.whose(bearer)
+        if user is None:
             return self.answer(401, {"kind": "Status", "message": "Unauthorized"})
+        if (method, path) in self.refused:
+            return self.answer(self.refused[method, path], {"kind": "Status", "message": "no"})
         if proxied:
             assert method == "PUT", method
             assert req.get_header("Content-type") == "text/plain; version=0.0.4"
@@ -356,13 +418,19 @@ class FakeCluster:
             if status >= 400:
                 raise urllib.error.HTTPError(ADDR, status, "err", {}, io.BytesIO(raw))
             return FakeResponse(status, raw)
+        if path == REVIEWS:
+            assert method == "POST" and body["kind"] == "SelfSubjectReview", (method, body)
+            return self.answer(201, body | {"status": {"userInfo": {"username": user}}})
         parts = path.strip("/").split("/")
         if parts[0] == "api":  # the core group: /api/<version>/...
             parts.insert(1, "")
-        # /apis/<group>/<version>/<resource>, or .../namespaces/<ns>/<resource>/<name>
+        # /apis/<group>/<version>/<resource>, or .../namespaces/<ns>/<resource>[/<name>]
         if len(parts) == 4 and method == "GET":
             items = [o for (r, _, _), o in sorted(self.objects.items()) if r == parts[3]]
             return self.answer(200, {"items": items})
+        if len(parts) == 6 and method == "POST":
+            assert parts[3] == "namespaces" and body["metadata"]["namespace"] == parts[4], path
+            return self.create(parts[5], body)
         assert len(parts) == 7 and parts[3] == "namespaces", path
         key = (parts[5], parts[4], parts[6])
         obj = self.objects.get(key)
@@ -372,6 +440,13 @@ class FakeCluster:
             )
         if method == "GET":
             return self.answer(200, obj)
+        if method == "DELETE":
+            want = ((body or {}).get("preconditions") or {}).get("uid")
+            if want is not None and want != obj["metadata"].get("uid"):
+                message = f"Precondition failed: UID in precondition: {want}"
+                return self.answer(409, {"kind": "Status", "message": message})
+            del self.objects[key]
+            return self.answer(200, {"kind": "Status", "status": "Success"})
         assert (
             method == "PATCH" and req.get_header("Content-type") == "application/merge-patch+json"
         )
@@ -388,6 +463,36 @@ class FakeCluster:
 
     def later(self, lag, event):
         self.events.append((self.now + lag, event))
+
+    def whose(self, bearer):
+        """The user it takes a bearer for: the rotator for a static one, else the ServiceAccount
+        of the token Secret that holds it; None when it refuses it."""
+        if bearer in self.static:
+            return ROTATOR
+        for (resource, ns, _), obj in self.objects.items():
+            if resource == "secrets" and obj.get("type") == SA_TOKEN and token_in(obj) == bearer:
+                return f"system:serviceaccount:{ns}:{obj['metadata']['annotations'][SA_NAME]}"
+        return None
+
+    def create(self, resource, obj):
+        meta = obj["metadata"]
+        key = (resource, meta["namespace"], meta["name"])
+        if key in self.objects:
+            return self.answer(409, {"kind": "Status", "message": f"{meta['name']} already exists"})
+        obj = copy.deepcopy(obj)
+        obj["metadata"]["uid"] = f"uid-{next(self.uids)}"
+        self.objects[key] = obj
+        if resource == "secrets" and obj.get("type") == SA_TOKEN and self.token_controller:
+            self.later(self.token_lag, lambda: self.fill(key, obj))
+        return self.answer(201, obj)
+
+    def fill(self, key, secret):
+        """The token controller fills the token Secret it was created as, if it still exists."""
+        if self.objects.get(key) is not secret:
+            return
+        ns, name = key[1], key[2]
+        account = secret["metadata"]["annotations"][SA_NAME]
+        secret["data"] = token_secret(ns, name, account)["data"]
 
     def eso_sync(self, es):
         ref = f"{es['metadata']['namespace']}/{es['metadata']['name']}"

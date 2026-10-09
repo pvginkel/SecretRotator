@@ -38,7 +38,8 @@ from secret_rotator.youtrack import YouTrack
 OWN_LEAF = "iac/rotator-approle"
 ROLE_ID_ENV = "SECRET_ROTATOR_ROLE_ID"
 SECRET_ID_ENV = "SECRET_ROTATOR_SECRET_ID"
-# The secret-rotator ServiceAccount's token, kv/iac/rotator-k8s-token, put there the same way.
+# The secret-rotator ServiceAccount's token, kv/iac/rotator-k8s-token, put there the same way. A
+# run that rotates it switches to the new token before it deletes the old one (k8s-sa-token).
 K8S_TOKEN_ENV = "SECRET_ROTATOR_K8S_TOKEN"
 
 PRINT = functools.partial(print, flush=True)

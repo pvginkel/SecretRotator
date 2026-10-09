@@ -4,11 +4,12 @@ and kinds_enabled, admission and the manual warnings, the health gate, a failed 
 the run and the backoff after three nights, and the standing card."""
 
 import datetime
+import functools
 import itertools
 import json
 
 import pytest
-from fake_cluster import FakeCluster
+from fake_cluster import ROTATOR, FakeCluster, token_in, token_secret
 from fake_hub import HUB, FakeHub
 from fake_openbao import ROLE_ID, SECRET_ID, TOKEN
 from fake_telegram import CHAT, FakeTelegram
@@ -540,6 +541,31 @@ class TestTheCardToken:
         assert state_of(bao, "rotator/youtrack").stamps["token"] == TODAY.isoformat()
         assert bearers[0] == jeeves and set(bearers[1:]) == {new}
         assert f"- `{STRAY}`: rotation_x: missing" in night.card()["description"]
+        assert "Rotated 1:" in night.telegram.messages[0]
+
+
+class TestTheClusterToken:
+    def test_its_rotation_switches_the_run_to_the_new_token_before_the_old_is_deleted(self):
+        bao = world(due=())
+        night = Night(bao)
+        prd = night.cluster
+        prd.static = set()
+        prd.add("secrets", token_secret("kube-system", "secret-rotator-token", "secret-rotator"))
+        own = token_in(prd.get("secrets", "kube-system", "secret-rotator-token"))
+        prd.kube = functools.partial(FakeCluster.kube, prd, own)
+        entry = {"token": {"kind": "k8s-sa-token", "interval": "365d", "activate": "none"}}
+        bao.leaves["iac/rotator-k8s-token"] = {"data": {"token": own}, "meta": annotated(entry)}
+        assert night(kinds_enabled=frozenset({"random", "k8s-sa-token"})) == 0
+        new = bao.data("iac/rotator-k8s-token")["token"]
+        assert new != own and prd.whose(own) is None and prd.whose(new) == ROTATOR
+        requests = [(method, path) for method, path, _ in prd.requests]
+        delete = requests.index(
+            ("DELETE", "/api/v1/namespaces/kube-system/secrets/secret-rotator-token")
+        )
+        assert set(prd.bearers[:delete]) == {own, new}
+        assert set(prd.bearers[delete:]) == {new}
+        assert prd.pushes() == ["state", "audit", "nightly"]
+        assert state_of(bao, "iac/rotator-k8s-token").stamps["token"] == TODAY.isoformat()
         assert "Rotated 1:" in night.telegram.messages[0]
 
 

@@ -1,8 +1,11 @@
 # The rotator's identity on the prd cluster (AnsibleSpecs secret-rotation/design.md §8): the
 # secret-rotator ServiceAccount, bound to cluster-admin, and its long-lived token. Nothing
-# reconciles it: the operator applies it to prd by hand, once, and copies the token the token
+# reconciles it: the operator creates it on prd by hand, once, with `kubectl create -f` (apply
+# refuses a generateName, and each create mints one more token), and copies the token the token
 # controller fills into kv/iac/rotator-k8s-token, key token, which iac-impl puts in srviac's iac
-# container as SECRET_ROTATOR_K8S_TOKEN. A token Secret of this type never expires on its own.
+# container as SECRET_ROTATOR_K8S_TOKEN. A token Secret of this type never expires on its own: the
+# k8s-sa-token kind replaces it yearly with a token Secret named the way generateName names it,
+# then deletes the one it replaced.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -25,7 +28,7 @@ subjects:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: secret-rotator-token
+  generateName: secret-rotator-token-
   namespace: kube-system
   annotations:
     kubernetes.io/service-account.name: secret-rotator

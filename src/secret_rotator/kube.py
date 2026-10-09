@@ -38,12 +38,17 @@ class Kube:
         clock: Callable[[], float] = time.monotonic,
     ):
         self.addr = addr.rstrip("/")
+        # Each request's bearer: a k8s-sa-token plan of the rotator's own token switches it.
         self.token = token
         self.open = opener or functools.partial(
             urllib.request.urlopen, context=ssl.create_default_context(), timeout=TIMEOUT
         )
         self.sleep = sleep
         self.clock = clock
+
+    def bearing(self, token: str) -> "Kube":
+        """A client of the same apiserver under another token."""
+        return Kube(token, self.addr, self.open, sleep=self.sleep, clock=self.clock)
 
     def send(
         self, method: str, path: str, data: bytes | None, content_type: str, accept: str
