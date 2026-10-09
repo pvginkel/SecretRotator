@@ -157,7 +157,7 @@ eso/prd/fieldnotes/prd/client-token-skills:
 eso/prd/fieldnotes/prd/github-webhook-secret:
   kind: github-webhook-secret
   interval: 14d
-  activate: auto
+  activate: eso,k8s-rollout,github-webhook:pvginkel/Fieldnotes/682399688
 
 eso/prd/fieldnotes/prd/kubecoder-controller:
   kind: kubecoder-client
@@ -824,6 +824,17 @@ shared/wifi-iot:
     once: unverified."
 
 # --- rotator: the rotator's own leaves; the rotator and iac-impl read them at every run ---------
+
+# The github.webhook step's token, as rotator/jenkins is the Jenkins steps': any leaf's
+# github-webhook: activator builds the step.
+rotator/github:
+  kind: manual
+  args: {"type":"github-pat"}
+  interval: 365d
+  activate: none
+  notes: "The github.webhook step's token: fine-grained, on pvginkel, repository access only
+    pvginkel/Fieldnotes, permission Webhooks read and write and nothing more. It sets the secret of
+    the hooks the github-webhook: activators name, pings them and redelivers their deliveries."
 
 rotator/jenkins:
   kind: jenkins-token

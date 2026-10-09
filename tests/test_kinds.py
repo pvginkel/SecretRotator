@@ -18,6 +18,7 @@ from secret_rotator.executor import Abandon, Executor, Outcome
 from secret_rotator.kinds.approle import AppRole
 from secret_rotator.kinds.cnpg_role import CnpgRole
 from secret_rotator.kinds.external import RUNBOOK, External
+from secret_rotator.kinds.github_webhook_secret import GitHubWebhookSecret
 from secret_rotator.kinds.grafana_admin import GrafanaAdmin
 from secret_rotator.kinds.jenkins_job_token import JenkinsJobToken
 from secret_rotator.kinds.jenkins_token import JenkinsToken
@@ -100,6 +101,7 @@ class TestTheRegistry:
             "pve-root-password",
             "samba-user",
             "step-ca-password",
+            "github-webhook-secret",
             "external",
         }
         assert isinstance(KINDS["random"], Random) and isinstance(KINDS["manual"], Manual)
@@ -113,6 +115,7 @@ class TestTheRegistry:
         assert isinstance(KINDS["samba-user"], SambaUser)
         assert isinstance(KINDS["step-ca-password"], StepCaPassword)
         assert isinstance(KINDS["external"], External)
+        assert isinstance(KINDS["github-webhook-secret"], GitHubWebhookSecret)
 
     @pytest.mark.parametrize(
         ("found", "problem"),
@@ -542,8 +545,8 @@ class TestActivation:
         ("activate", "problem"),
         [
             (
-                {"eso__prd__app__prd__token": "none", "iac__copy": "github-webhook:pvginkel/X/7"},
-                f"{LEAF}: {COPY}'s rotation_token activate github-webhook:pvginkel/X/7: no step",
+                {"eso__prd__app__prd__token": "none", "iac__copy": "argocd-sync:app-prd"},
+                f"{LEAF}: {COPY}'s rotation_token activate argocd-sync:app-prd: no step",
             ),
             (
                 {"eso__prd__app__prd__token": "argocd-sync:app-prd"},

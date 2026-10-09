@@ -199,7 +199,7 @@ ACTIVATORS: dict[str, re.Pattern | None] = {
     "k8s-rollout": WORKLOAD,  # optional
     "jenkins-credential": re.compile(r"\S+"),
     "jenkins-job": re.compile(r"[^?\s]+(\?[^=&\s]+=[^&\s]*(&[^=&\s]+=[^&\s]*)*)?"),
-    "github-webhook": re.compile(r"\S+/[0-9]+"),
+    "github-webhook": re.compile(r"[A-Za-z0-9-]+/[A-Za-z0-9_.-]+/[0-9]+"),  # <owner>/<repo>/<id>
     "argocd-sync": re.compile(r"\S+"),
     "manual": re.compile(r".*\S.*"),
 }

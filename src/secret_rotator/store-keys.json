@@ -418,6 +418,9 @@
   "rotator/bootstrap/seal-key": [
     "seal-key"
   ],
+  "rotator/github": [
+    "token"
+  ],
   "rotator/jenkins": [
     "token",
     "user"

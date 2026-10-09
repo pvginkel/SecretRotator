@@ -201,6 +201,7 @@ class TestContract:
             "k8s-rollout:ns/pod/a",
             "jenkins-credential:",
             "github-webhook:repo",
+            "github-webhook:Fieldnotes/123",
             "argocd-sync:",
             "manual:",
             "manual: ",

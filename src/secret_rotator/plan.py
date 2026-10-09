@@ -11,6 +11,8 @@ from secret_rotator.ansiblesteps import Ansible, AnsibleRun, Playbook
 from secret_rotator.audit import Audit, Leaf
 from secret_rotator.cluster import Cluster, Derived, Ref, Workload
 from secret_rotator.contract import NONE, Activator, Entry, copy_target, entry_name, is_scheduled
+from secret_rotator.github import GitHub
+from secret_rotator.githubsteps import GitHubWebhook
 from secret_rotator.jenkins import Jenkins
 from secret_rotator.jenkinssteps import JenkinsCredential, JenkinsJob, parse_job
 from secret_rotator.k8ssteps import EsoSync, K8sRollout
@@ -91,8 +93,8 @@ class StepFactory:
     """The patterns a plan is built from, named by what they do (design §4.3). Without a cluster,
     as offline without a snapshot, it builds no Kubernetes step. What derived holds of a leaf is
     not read from the cluster again: a plan in flight is rebuilt from what it derived when it
-    started (design §4.5). Jenkins, Ansible and SSH are reached only when a step runs: by default
-    the real ones."""
+    started (design §4.5). Jenkins, Ansible, SSH and GitHub are reached only when a step runs: by
+    default the real ones."""
 
     def __init__(
         self,
@@ -103,6 +105,7 @@ class StepFactory:
         jenkins: Jenkins | None = None,
         ansible: Ansible | None = None,
         ssh: Ssh | None = None,
+        github: GitHub | None = None,
     ):
         self.target = target
         self.cluster = cluster
@@ -113,6 +116,7 @@ class StepFactory:
         self.jenkins = jenkins or Jenkins()
         self.ansible = ansible or Ansible()
         self.ssh = ssh or Ssh()
+        self.github = github or GitHub()
         # What the activation read from the cluster, for the leaf's consumers in the run state: the
         # ExternalSecrets it syncs and the workloads it derived; a named target is in an activate
         # already.
@@ -202,12 +206,13 @@ class StepFactory:
         """The activation of every entry the plan writes, in the Target's order: each spec of its
         activate as its steps. The Kubernetes specs of all of them are one eso_sync_and_rollout,
         at the first one's place, since a workload may read the Secrets of several of their leaves;
-        a job runs once, a manual: text once per leaf. A jenkins-credential: takes the value of the
-        key whose entry names it, and a credential two entries name refuses the plan, as does a
-        spec no step is built for."""
+        a job runs once, a manual: text once per leaf. A jenkins-credential: and a github-webhook:
+        take the value of the key whose entry names them, and a credential or a hook two entries
+        name refuses the plan, as does a spec no step is built for."""
         steps: list[Step] = []
         kubernetes = False
         credentials: dict[str, Activation] = {}
+        hooks: dict[str, Activation] = {}
         confirms: dict[tuple[str, str], None] = {}
         for activation in self.target.activations:
             leaf = activation.leaf
@@ -232,6 +237,15 @@ class StepFactory:
                     steps.append(
                         JenkinsCredential(self.jenkins, spec.arg, kv=(leaf, activation.key))
                     )
+                elif spec.name == "github-webhook":
+                    if other := hooks.get(spec.arg):
+                        raise self._refused(
+                            activation,
+                            spec,
+                            f"{self._entry(other)} names the hook too, and it takes one secret",
+                        )
+                    hooks[spec.arg] = activation
+                    steps.append(GitHubWebhook(self.github, spec.arg, leaf, activation.key))
                 elif spec.name == "manual":
                     if (leaf, spec.arg) in confirms:
                         continue
@@ -399,6 +413,7 @@ def build(
     jenkins: Jenkins | None = None,
     ansible: Ansible | None = None,
     ssh: Ssh | None = None,
+    github: GitHub | None = None,
 ) -> Plan:
     """The kind's plan of the Target; derived: a plan in flight's record of what it derived."""
     problems = [
@@ -408,7 +423,15 @@ def build(
     ]
     if problems:
         raise PlanError(f"{leaf.leaf}: {'; '.join(problems)}")
-    factory = StepFactory(leaf, cluster, derived=derived, jenkins=jenkins, ansible=ansible, ssh=ssh)
+    factory = StepFactory(
+        leaf,
+        cluster,
+        derived=derived,
+        jenkins=jenkins,
+        ansible=ansible,
+        ssh=ssh,
+        github=github,
+    )
     planned = kind.plan(leaf, PlanContext(factory))
     steps = [*planned, KvStamp(leaf.leaf, leaf.keys, tuple(factory.consumers))]
     ids = [step.id for step in steps]
@@ -429,6 +452,7 @@ def make(
     jenkins: Jenkins | None = None,
     ansible: Ansible | None = None,
     ssh: Ssh | None = None,
+    github: GitHub | None = None,
 ) -> Plan:
     """The plan of rotating these keys of the leaf, built by the kind's plugin; derived: a plan
     in flight's record of what it derived from the cluster."""
@@ -436,7 +460,14 @@ def make(
         raise PlanError(f"{leaf}: {kind} is not a kind this install has a plugin for")
     built = target(leaf, kind, keys, audit)
     return build(
-        kinds[kind], built, cluster, derived=derived, jenkins=jenkins, ansible=ansible, ssh=ssh
+        kinds[kind],
+        built,
+        cluster,
+        derived=derived,
+        jenkins=jenkins,
+        ansible=ansible,
+        ssh=ssh,
+        github=github,
     )
 
 
