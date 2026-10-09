@@ -26,6 +26,7 @@ from secret_rotator.kvsteps import (
 from secret_rotator.model import Actor, Step
 from secret_rotator.opsteps import OperatorConfirm, OperatorCredential, OperatorShow, Shape
 from secret_rotator.schedule import schedule
+from secret_rotator.sshsteps import Ssh, SshSetPassword
 from secret_rotator.staging import InFlight
 
 
@@ -90,8 +91,8 @@ class StepFactory:
     """The patterns a plan is built from, named by what they do (design §4.3). Without a cluster,
     as offline without a snapshot, it builds no Kubernetes step. What derived holds of a leaf is
     not read from the cluster again: a plan in flight is rebuilt from what it derived when it
-    started (design §4.5). Jenkins and Ansible are reached only when a step runs: by default the
-    real ones."""
+    started (design §4.5). Jenkins, Ansible and SSH are reached only when a step runs: by default
+    the real ones."""
 
     def __init__(
         self,
@@ -101,6 +102,7 @@ class StepFactory:
         derived: Derived | None = None,
         jenkins: Jenkins | None = None,
         ansible: Ansible | None = None,
+        ssh: Ssh | None = None,
     ):
         self.target = target
         self.cluster = cluster
@@ -110,6 +112,7 @@ class StepFactory:
             self.derived = Derived(dict(derived.externalsecrets), dict(derived.workloads))
         self.jenkins = jenkins or Jenkins()
         self.ansible = ansible or Ansible()
+        self.ssh = ssh or Ssh()
         # What the activation read from the cluster, for the leaf's consumers in the run state: the
         # ExternalSecrets it syncs and the workloads it derived; a named target is in an activate
         # already.
@@ -171,6 +174,11 @@ class StepFactory:
     ) -> list[Step]:
         """A playbook run, its id ansible.run:<name>; counter: the run that undoes it."""
         return [AnsibleRun(self.ansible, name, title, book, counter, no_undo=no_undo)]
+
+    def set_password(self, key: str, user: str, hosts: Iterable[str]) -> list[Step]:
+        """An ssh.set_password of the user to the new value of one of the plan's keys, one per
+        host; each undo sets back the one the leaf holds, so the plan puts them before write()."""
+        return [SshSetPassword(self.ssh, host, user, self.target.leaf, key) for host in hosts]
 
     def eso_sync_and_rollout(
         self, targets: Iterable[Workload], leaves: Iterable[str] | None = None
@@ -390,6 +398,7 @@ def build(
     derived: Derived | None = None,
     jenkins: Jenkins | None = None,
     ansible: Ansible | None = None,
+    ssh: Ssh | None = None,
 ) -> Plan:
     """The kind's plan of the Target; derived: a plan in flight's record of what it derived."""
     problems = [
@@ -399,7 +408,7 @@ def build(
     ]
     if problems:
         raise PlanError(f"{leaf.leaf}: {'; '.join(problems)}")
-    factory = StepFactory(leaf, cluster, derived=derived, jenkins=jenkins, ansible=ansible)
+    factory = StepFactory(leaf, cluster, derived=derived, jenkins=jenkins, ansible=ansible, ssh=ssh)
     planned = kind.plan(leaf, PlanContext(factory))
     steps = [*planned, KvStamp(leaf.leaf, leaf.keys, tuple(factory.consumers))]
     ids = [step.id for step in steps]
@@ -419,13 +428,16 @@ def make(
     derived: Derived | None = None,
     jenkins: Jenkins | None = None,
     ansible: Ansible | None = None,
+    ssh: Ssh | None = None,
 ) -> Plan:
     """The plan of rotating these keys of the leaf, built by the kind's plugin; derived: a plan
     in flight's record of what it derived from the cluster."""
     if kind not in kinds:
         raise PlanError(f"{leaf}: {kind} is not a kind this install has a plugin for")
     built = target(leaf, kind, keys, audit)
-    return build(kinds[kind], built, cluster, derived=derived, jenkins=jenkins, ansible=ansible)
+    return build(
+        kinds[kind], built, cluster, derived=derived, jenkins=jenkins, ansible=ansible, ssh=ssh
+    )
 
 
 def in_flight(

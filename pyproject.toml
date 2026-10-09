@@ -20,6 +20,7 @@ cnpg-role = "secret_rotator.kinds.cnpg_role:CnpgRole"
 jenkins-token = "secret_rotator.kinds.jenkins_token:JenkinsToken"
 jenkins-job-token = "secret_rotator.kinds.jenkins_job_token:JenkinsJobToken"
 grafana-admin = "secret_rotator.kinds.grafana_admin:GrafanaAdmin"
+pve-root-password = "secret_rotator.kinds.pve_root_password:PveRootPassword"
 external = "secret_rotator.kinds.external:External"
 
 [tool.poetry]
