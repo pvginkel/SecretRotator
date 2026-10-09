@@ -568,9 +568,17 @@ eso/prd/storage/prd/s3-mirror:
   kind: external
   interval: 365d
   activate: none
-  notes: "The S3 mirror's rclone crypt password and salt (Ansible docs/runbooks/s3-mirror.md,
-    Credentials; RoboForm). Every mirrored object is encrypted with them; no rotation procedure is
-    written down."
+  keys:
+    password:
+      notes: "The S3 mirror's rclone crypt password (Ansible docs/runbooks/s3-mirror.md,
+        Credentials; RoboForm). It and this leaf's salt are updated in tandem, never one alone:
+        every mirrored object is encrypted with both. Each has its own box; press Done on both. No
+        rotation procedure is written down."
+    salt:
+      notes: "The S3 mirror's rclone crypt salt (Ansible docs/runbooks/s3-mirror.md, Credentials;
+        RoboForm). It and this leaf's password are updated in tandem, never one alone: every
+        mirrored object is encrypted with both. Each has its own box; press Done on both. No
+        rotation procedure is written down."
 
 eso/prd/telegram-mcp/prd/telegram:
   kind: manual
