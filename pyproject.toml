@@ -32,6 +32,7 @@ github-webhook-secret = "secret_rotator.kinds.github_webhook_secret:GitHubWebhoo
 youtrack-token = "secret_rotator.kinds.youtrack_token:YouTrackToken"
 home-assistant-token = "secret_rotator.kinds.home_assistant_token:HomeAssistantToken"
 google-sa-key = "secret_rotator.kinds.google_sa_key:GoogleSaKey"
+elastic-user = "secret_rotator.kinds.elastic_user:ElasticUser"
 external = "secret_rotator.kinds.external:External"
 
 [tool.poetry]

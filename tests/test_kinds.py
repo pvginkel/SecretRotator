@@ -17,6 +17,7 @@ from secret_rotator.contract import MARKER_VALUE
 from secret_rotator.executor import Abandon, Executor, Outcome
 from secret_rotator.kinds.approle import AppRole
 from secret_rotator.kinds.cnpg_role import CnpgRole
+from secret_rotator.kinds.elastic_user import ElasticUser
 from secret_rotator.kinds.external import RUNBOOK, External
 from secret_rotator.kinds.github_webhook_secret import GitHubWebhookSecret
 from secret_rotator.kinds.google_sa_key import GoogleSaKey
@@ -108,6 +109,7 @@ class TestTheRegistry:
             "youtrack-token",
             "home-assistant-token",
             "google-sa-key",
+            "elastic-user",
             "external",
         }
         assert isinstance(KINDS["random"], Random) and isinstance(KINDS["manual"], Manual)
@@ -125,6 +127,7 @@ class TestTheRegistry:
         assert isinstance(KINDS["youtrack-token"], YouTrackToken)
         assert isinstance(KINDS["home-assistant-token"], HomeAssistantToken)
         assert isinstance(KINDS["google-sa-key"], GoogleSaKey)
+        assert isinstance(KINDS["elastic-user"], ElasticUser)
 
     @pytest.mark.parametrize(
         ("found", "problem"),
@@ -147,8 +150,8 @@ class TestTheRegistry:
 
     def test_a_kind_without_a_plugin_has_no_plan(self):
         store = compliant_store()
-        with pytest.raises(PlanError, match="elastic-user is not a kind this install has"):
-            make(KINDS, "eso/prd/es/prd/creds", "elastic-user", ["password"], audit(store))
+        with pytest.raises(PlanError, match="cephx is not a kind this install has"):
+            make(KINDS, "shared/ceph", "cephx", ["user_key"], audit(store))
 
 
 class TestRandom:

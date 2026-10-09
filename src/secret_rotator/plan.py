@@ -15,7 +15,7 @@ from secret_rotator.github import GitHub
 from secret_rotator.githubsteps import GitHubWebhook
 from secret_rotator.jenkins import Jenkins
 from secret_rotator.jenkinssteps import JenkinsCredential, JenkinsJob, parse_job
-from secret_rotator.k8ssteps import EsoSync, K8sRollout
+from secret_rotator.k8ssteps import ROLLOUT_BOUND, EsoSync, K8sRollout
 from secret_rotator.kvsteps import (
     DEFAULT_LENGTH,
     URLSAFE,
@@ -185,10 +185,15 @@ class StepFactory:
         return [SshSetPassword(self.ssh, host, user, self.target.leaf, key) for host in hosts]
 
     def eso_sync_and_rollout(
-        self, targets: Iterable[Workload], leaves: Iterable[str] | None = None
+        self,
+        targets: Iterable[Workload],
+        leaves: Iterable[str] | None = None,
+        *,
+        bounds: Mapping[Workload, int] | None = None,
     ) -> list[Step]:
         """An eso.sync of every ExternalSecret that references the leaves (the plan's leaf by
-        default), then a k8s.rollout of each target: every sync before every rollout."""
+        default), then a k8s.rollout of each target: every sync before every rollout. bounds: the
+        raised bound, in seconds, of a target that starts slower than k8s.rollout's own allows."""
         cluster = self._cluster()
         leaves = (self.target.leaf,) if leaves is None else tuple(leaves)
         found = [es for leaf in leaves for es in self._external_secrets(leaf)]
@@ -200,15 +205,17 @@ class StepFactory:
                 raise PlanError(
                     f"{self.target.leaf}: the snapshot holds no rollout target {', '.join(absent)}"
                 )
-        return [*syncs, *(K8sRollout(cluster, w) for w in targets)]
+        bounds = bounds or {}
+        rollouts = [K8sRollout(cluster, w, bound=bounds.get(w, ROLLOUT_BOUND)) for w in targets]
+        return [*syncs, *rollouts]
 
-    def activate(self) -> list[Step]:
+    def activate(self, *, bounds: Mapping[Workload, int] | None = None) -> list[Step]:
         """The activation of every entry the plan writes, in the Target's order: each spec of its
         activate as its steps. The Kubernetes specs of all of them are one eso_sync_and_rollout,
         at the first one's place, since a workload may read the Secrets of several of their leaves;
-        a job runs once, a manual: text once per leaf. A jenkins-credential: and a github-webhook:
-        take the value of the key whose entry names them, and a credential or a hook two entries
-        name refuses the plan, as does a spec no step is built for."""
+        bounds as there. A job runs once, a manual: text once per leaf. A jenkins-credential: and a
+        github-webhook: take the value of the key whose entry names them, and a credential or a
+        hook two entries name refuses the plan, as does a spec no step is built for."""
         steps: list[Step] = []
         kubernetes = False
         credentials: dict[str, Activation] = {}
@@ -219,7 +226,7 @@ class StepFactory:
             for spec in activation.specs:
                 if spec.name in KUBERNETES:
                     if not kubernetes:
-                        steps += self._kubernetes()
+                        steps += self._kubernetes(bounds)
                         kubernetes = True
                 elif spec.name == "jenkins-job":
                     job = JenkinsJob(self.jenkins, *parse_job(spec.arg))
@@ -274,7 +281,7 @@ class StepFactory:
             )
         return self.cluster
 
-    def _kubernetes(self) -> list[Step]:
+    def _kubernetes(self, bounds: Mapping[Workload, int] | None) -> list[Step]:
         """The eso_sync_and_rollout of every written entry's eso and k8s-rollout specs. eso and a
         k8s-rollout without targets (auto is both) need an ExternalSecret that references the
         entry's leaf; a named rollout does not."""
@@ -299,7 +306,7 @@ class StepFactory:
                     derived = self._consumers(leaf)
                     targets += derived
                     self._consumed(str(w) for w in derived)
-        return self.eso_sync_and_rollout(targets, leaves)
+        return self.eso_sync_and_rollout(targets, leaves, bounds=bounds)
 
     def _external_secrets(self, leaf: str) -> list[Ref]:
         """The ExternalSecrets that reference the leaf."""

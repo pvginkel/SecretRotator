@@ -35,7 +35,7 @@ from secret_rotator.contract import MAX_VALUE_BYTES
 from secret_rotator.executor import Abandon, Executor, Outcome
 from secret_rotator.kvsteps import KvStamp
 from secret_rotator.model import Action, Skipped
-from secret_rotator.plan import PlanError, make
+from secret_rotator.plan import PlanError, StepFactory, make, target
 
 CATALOG = "eso/prd/kc/prd/catalog"
 CONTROLLER = "k8s-rollout:kubecoder-prd/deployment/kubecoder-controller"
@@ -149,6 +149,14 @@ class TestNamedRollouts:
         assert (
             plan.steps[-1].consumers[-1] == "kubecoder-prd/externalsecret/kubecoder-secret-catalog"
         )
+
+    def test_a_raised_bound_reaches_the_rollout_of_the_target_it_names_alone(self):
+        factory = StepFactory(
+            target(LEAF, "random", ["token"], audit(store_of())), Cluster(FakeCluster().kube())
+        )
+        steps = factory.activate(bounds={Workload("app-prd", "deployment", "app"): 900})
+        bounds = {s.id: s.bound for s in steps if s.type == "k8s.rollout"}
+        assert bounds == {DERIVED[0]: 900, DERIVED[1]: 300}
 
 
 class TestComposition:

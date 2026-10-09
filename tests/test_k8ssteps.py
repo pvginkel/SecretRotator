@@ -1,7 +1,7 @@
 """eso.sync and k8s.rollout (design §4.2): activators with one target each; eso.sync verifies the
 ExternalSecret Ready with a new syncedResourceVersion within 2 min, k8s.rollout every pod Ready and
-the owning Argo Application Healthy within 5 min; a target that does not exist counts as done, with
-a line saying so (design §4.5)."""
+the owning Argo Application Healthy within 5 min, or the bound a kind raises it to for a target; a
+target that does not exist counts as done, with a line saying so (design §4.5)."""
 
 import datetime
 
@@ -104,6 +104,16 @@ class TestK8sRollout:
             K8sRollout(cluster, APP).run(Ctx())
         assert e.value.error == "app-prd/deployment/app not Ready within 5 min: 1/2 Ready"
         assert 300 <= fake.now < 310
+
+    def test_a_raised_bound_waits_that_long_before_it_fails(self):
+        fake, cluster = cluster_of()
+        fake.stuck.add("app-prd/app")
+        step = K8sRollout(cluster, APP, bound=600)
+        assert step.id == "k8s.rollout:app-prd/deployment/app"
+        with pytest.raises(StepFailed) as e:
+            step.run(Ctx())
+        assert e.value.error == "app-prd/deployment/app not Ready within 10 min: 1/2 Ready"
+        assert 600 <= fake.now < 610
 
     def test_an_application_that_is_not_healthy_fails_it(self):
         fake, cluster = cluster_of()

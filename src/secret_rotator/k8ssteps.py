@@ -63,16 +63,18 @@ class EsoSync(Step):
 
 class K8sRollout(Step):
     """A rollout restart of one workload; done when every pod is Ready on the new template and
-    the Argo Application that deployed it is Healthy."""
+    the Argo Application that deployed it is Healthy, within its bound: ROLLOUT_BOUND unless a kind
+    raises it for a workload that starts slower."""
 
     type = "k8s.rollout"
     mutates = True
     activator = True
 
-    def __init__(self, cluster: Cluster, workload: Workload):
+    def __init__(self, cluster: Cluster, workload: Workload, *, bound: int = ROLLOUT_BOUND):
         super().__init__(f"k8s.rollout:{workload}", f"roll out {workload}")
         self.cluster = cluster
         self.workload = workload
+        self.bound = bound  # seconds
 
     def run(self, ctx: Context) -> str:
         restart = {"spec": {"template": {"metadata": {"annotations": {RESTARTED_AT: _mark(ctx)}}}}}
@@ -89,7 +91,7 @@ class K8sRollout(Step):
         wait(
             self.cluster.kube,
             ctx,
-            ROLLOUT_BOUND,
+            self.bound,
             ROLLOUT_POLL,
             why_not,
             f"{self.workload} not Ready",
