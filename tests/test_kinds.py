@@ -19,6 +19,7 @@ from secret_rotator.kinds.approle import AppRole
 from secret_rotator.kinds.cnpg_role import CnpgRole
 from secret_rotator.kinds.external import RUNBOOK, External
 from secret_rotator.kinds.github_webhook_secret import GitHubWebhookSecret
+from secret_rotator.kinds.google_sa_key import GoogleSaKey
 from secret_rotator.kinds.grafana_admin import GrafanaAdmin
 from secret_rotator.kinds.home_assistant_token import HomeAssistantToken
 from secret_rotator.kinds.jenkins_job_token import JenkinsJobToken
@@ -106,6 +107,7 @@ class TestTheRegistry:
             "github-webhook-secret",
             "youtrack-token",
             "home-assistant-token",
+            "google-sa-key",
             "external",
         }
         assert isinstance(KINDS["random"], Random) and isinstance(KINDS["manual"], Manual)
@@ -122,6 +124,7 @@ class TestTheRegistry:
         assert isinstance(KINDS["github-webhook-secret"], GitHubWebhookSecret)
         assert isinstance(KINDS["youtrack-token"], YouTrackToken)
         assert isinstance(KINDS["home-assistant-token"], HomeAssistantToken)
+        assert isinstance(KINDS["google-sa-key"], GoogleSaKey)
 
     @pytest.mark.parametrize(
         ("found", "problem"),
