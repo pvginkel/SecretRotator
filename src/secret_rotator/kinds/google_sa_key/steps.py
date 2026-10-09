@@ -7,8 +7,10 @@ names a key without being one."""
 from secret_rotator.kinds.google_sa_key.google import Account, Google, GoogleError, Key, parse
 from secret_rotator.model import Context, Step, StepFailed, not_landed, value_name, wait
 
-# The staging name of the id of the key the leaf held, read from its key file.
+# The staging names of the id of the key the leaf held, read from its key file, and of the time
+# the create was sent at, staged before it is sent.
 OLD = "google-sa-key:old"
+SENT = "google-sa-key:sent"
 # Google may refuse a new key for 60 seconds or more after its create (IAM's documentation of
 # keys.create); the proof asks again for this long.
 PROVE_BOUND, PROVE_POLL = 300, 10  # seconds
@@ -52,8 +54,9 @@ class Mint(Step):
     A re-run with a key file staged creates none. A create whose answer is lost leaves a key no one
     holds, since only that answer carries its private half, and a re-run creates another. Its undo
     deletes the key it created, logged in with the key the leaf holds, which a rollback has put
-    back by then. Every failure before the create, and the create refused (a 4xx answer, as to an
-    account that may not key itself), report that the step did not land."""
+    back by then; after a create sent whose answer it lacks, it has no id to delete and says so.
+    Every failure before the create, and the create refused (a 4xx answer, as to an account that
+    may not key itself), report that the step did not land."""
 
     type = "google_sa_key.mint"
     mutates = True
@@ -76,6 +79,7 @@ class Mint(Step):
                 if ctx.staged(OLD) is None:
                     ctx.stage(OLD, old.id)
                 account = login(self.google, old, self._what)
+                ctx.stage(SENT, f"{ctx.now:%Y-%m-%dT%H:%M:%SZ}")
                 sending = True
                 text = account.create()
             except Exception as e:
@@ -89,7 +93,12 @@ class Mint(Step):
     def undo(self, ctx: Context) -> str:
         text = ctx.staged(value_name(self.key))
         if text is None:
-            return "nothing was created"
+            if (sent := ctx.staged(SENT)) is None:
+                return "nothing was created"
+            return (
+                f"nothing to delete: the create sent at {sent} failed, and a key it made, if any, "
+                f"is one no one holds, which Google keeps"
+            )
         new = parse(text).id
         account = login(self.google, held(ctx, self.leaf, self.key), self._what)
         if new not in account.key_ids():

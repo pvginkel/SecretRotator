@@ -18,7 +18,7 @@ from cryptography.hazmat.primitives.asymmetric import ec, padding
 from fake_cluster import FakeCluster, externalsecret, pod_spec, snapshot, workload
 from fake_google import NOT_TAKEN, PERMISSION, FakeGoogle, b64url_json
 from fixtures import edit
-from plans import Recorder, client, fake_of, lock, run_state, state_of
+from plans import NOW, Recorder, client, fake_of, lock, run_state, state_of
 from test_activation import ticking
 
 from secret_rotator import annotate as ann
@@ -27,7 +27,7 @@ from secret_rotator.cluster import Cluster
 from secret_rotator.executor import AbortRefused, Executor, Outcome
 from secret_rotator.kinds.google_sa_key import GoogleSaKey, google
 from secret_rotator.kinds.google_sa_key.google import Account, GoogleError, assertion, parse
-from secret_rotator.kinds.google_sa_key.steps import OLD, PROVE_BOUND, Delete, Mint, Prove
+from secret_rotator.kinds.google_sa_key.steps import OLD, PROVE_BOUND, SENT, Delete, Mint, Prove
 from secret_rotator.model import Action, Finished, Progress, StepFailed, value_name
 from secret_rotator.plan import PlanError, make
 
@@ -50,6 +50,7 @@ ROLLED = {
 }
 MINT, PROVE, DELETE = "google_sa_key.mint", "google_sa_key.prove", "google_sa_key.delete"
 LOST = ConnectionResetError(104, "Connection reset by peer")
+SENT_AT = "2026-10-05T04:30:00Z"  # the executor's clock at the mint's run: NOW
 TOKEN_PATH = "/token"
 
 
@@ -446,7 +447,23 @@ class TestTheRuns:
         executor = world.executor(CALENDAR)
         assert executor.run() is Outcome.FAILED
         assert executor.abort() is Outcome.ROLLED_BACK
-        assert world.finished(MINT, Action.UNDO) == "nothing was created"
+        assert world.finished(MINT, Action.UNDO) == (
+            f"nothing to delete: the create sent at {SENT_AT} failed, and a key it made, if any, "
+            f"is one no one holds, which Google keeps"
+        )
+        assert world.holding(CALENDAR) == world.made[CALENDAR]
+        assert world.keys(CALENDAR) == world.initial[CALENDAR]
+
+    def test_a_create_whose_answer_is_lost_rolls_back_saying_its_key_is_left(self):
+        world = World()
+        world.google.lost["create"] = LOST
+        executor = world.executor(CALENDAR)
+        assert executor.run() is Outcome.FAILED
+        assert executor.abort() is Outcome.ROLLED_BACK
+        assert world.finished(MINT, Action.UNDO).startswith(
+            f"nothing to delete: the create sent at {SENT_AT} failed"
+        )
+        assert len(world.keys(CALENDAR) - world.initial[CALENDAR]) == 1
         assert world.holding(CALENDAR) == world.made[CALENDAR]
 
     def test_a_new_key_google_never_takes_rolls_back_to_the_old_and_deletes_the_new(self):
@@ -497,6 +514,7 @@ class TestTheRuns:
 class Ctx:
     def __init__(self, bao, staged=None):
         self.bao = client(bao)
+        self.now = NOW
         self.values = dict(staged or {})
         self.details = []
 
@@ -511,13 +529,14 @@ class Ctx:
 
 
 class TestTheSteps:
-    def test_a_mint_stages_the_old_id_and_the_new_key_file(self):
+    def test_a_mint_stages_the_old_id_the_time_it_sent_the_create_and_the_new_key_file(self):
         world = World()
         ctx = Ctx(world.bao)
         detail = Mint(world.kind.google, CALENDAR, "key_json").run(ctx)
         (new,) = world.keys(CALENDAR) - world.initial[CALENDAR]
         assert ctx.values == {
             OLD: world.made[CALENDAR],
+            SENT: SENT_AT,
             value_name("key_json"): world.google.texts[-1],
         }
         assert id_of(ctx.values[value_name("key_json")]) == new
