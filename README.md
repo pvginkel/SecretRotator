@@ -38,6 +38,10 @@ srviac's address, so they run on srviac, in the `iac` container:
 ssh -t ansible@srviac "sudo iac -c 'secret-rotator run <leaf>'"
 ```
 
+The UI starts with `ssh -t ansible@srviac secret-rotator-ui` (Ansible `support/iac-agent/bin/`),
+which runs it in srviac's tmux session `secret-rotator`: a lost SSH session leaves the UI running
+there, and the same command reattaches to it.
+
 ## How it ships and runs
 
 - **Build.** `IaC/SecretRotator` runs this repo's `Jenkinsfile` on a push to `main`: lint and tests.
@@ -83,19 +87,20 @@ series `metrics.HELP` names.
   their step factory (`plan`), the executor with its lock, the staging leaf that records a plan in
   flight (`staging`) and the run state (`state`), the run handling `run <path>` and the UI share
   (`session`), the list the UI shows (`listing`), the generic steps
-  (`kvsteps`, `k8ssteps`, `jenkinssteps`, `ansiblesteps`, `opsteps`), the nightly run (`nightly`),
-  the standing card, the metrics (`metrics`), and the clients for OpenBao, Kubernetes, Jenkins, YouTrack and Telegram.
+  (`kvsteps`, `k8ssteps`, `jenkinssteps`, `ansiblesteps`, `sshsteps`, `opsteps`), the nightly run
+  (`nightly`), the standing card, the metrics (`metrics`), and the clients for OpenBao, Kubernetes, Jenkins, YouTrack and Telegram.
 - `src/secret_rotator/ui/` is `secret-rotator ui`, a Textual app over the executor: the app
   (`app.py`) and its stylesheet (`app.tcss`), the widgets, the wizard's screens collated from a
   plan's steps (`collate`), and `run.py`, which runs a plan's executor on a thread of its own.
 - `src/secret_rotator/kinds/<name>/` holds one package per kind: `random`, `manual`, `approle`,
-  `keycloak_client`, `cnpg_role`, `jenkins_token`, `jenkins_job_token`, `grafana_admin` and
-  `external`. Each is
+  `keycloak_client`, `cnpg_role`, `jenkins_token`, `jenkins_job_token`, `grafana_admin`,
+  `external`, `pve_root_password`, `samba_user` and `step_ca_password`. Each is
   registered as a `secret_rotator.kinds` entry point in `pyproject.toml`, under its kind's name
   (`keycloak-client` for `keycloak_client`). The leaves of a kind the contract knows but no package
   implements are skipped. A kind that reaches a system of its own keeps that system's address in
   its package: Keycloak's two realms (`keycloak_client`, the one place a realm's URL is set),
-  Postgres (`cnpg_role`) and Grafana (`grafana_admin`). `kinds/manual/types/<type>.md` holds one
+  Postgres (`cnpg_role`), Grafana (`grafana_admin`), the PVE nodes (`pve_root_password`) and
+  step-ca (`step_ca_password`). `kinds/manual/types/<type>.md` holds one
   document per credential type: the standard instructions a `manual` key's `type` arg picks, under
   a front matter of the credential's name, the shape a pasted value has (and whether it is entered
   as lines) and whether it expires.
@@ -110,6 +115,7 @@ series `metrics.HELP` names.
 Python 3.13 and poetry live in the KubeCoder `iac` sidecar. `kc project setup`, `lint` and `test`
 run them there: `ruff check`, `ruff format --check` and `pytest`. The tests drive fakes of OpenBao,
 the cluster with the Pushgateway behind it, CloudNativePG with its Postgres login, Keycloak,
-Jenkins, Grafana, YouTrack, Telegram and `ansible-playbook`, never a live system. The UI's pilot
-tests (`test_ui`, `test_wizard`, `test_wizard_failure`, `test_filter`) drive the Textual app over
-the executor and the fake OpenBao, with `tests/sim.py`'s steps standing in for a vendor's side.
+Jenkins, Grafana, YouTrack, Telegram, step-ca, `ansible-playbook`, `ssh` and step-cli, never a
+live system. The UI's pilot tests (`test_ui`, `test_wizard`, `test_wizard_failure`, `test_filter`)
+drive the Textual app over the executor and the fake OpenBao, with `tests/sim.py`'s steps standing
+in for a vendor's side.
