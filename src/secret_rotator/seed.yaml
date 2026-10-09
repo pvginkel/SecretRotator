@@ -416,9 +416,9 @@ eso/prd/kubecoder/prd/catalog:
     jenkins-mcp-token: {kind: "copy:eso/prd/jenkins-mcp/prd/config#bearer-token"}
     jenkins-token: {kind: jenkins-token, interval: 14d}
     jenkins-user: {kind: none}
-    kubeconfig: {kind: k8s-sa-token}
-    kubeconfig-dev-write: {kind: k8s-sa-token}
-    kubeconfig-prd-write: {kind: k8s-sa-token}
+    kubeconfig: {kind: k8s-sa-token, args: {"clusters":["dev","prd"]}}
+    kubeconfig-dev-write: {kind: k8s-sa-token, args: {"clusters":["dev"]}}
+    kubeconfig-prd-write: {kind: k8s-sa-token, args: {"clusters":["prd"]}}
     openai-api-key:
       args: {"type":"openai-api-key"}
       notes: "The environments whose manifest asks for it (NewsFilter, ElectronicsInventory,
@@ -692,6 +692,7 @@ iac/rotator-approle:
 
 iac/rotator-k8s-token:
   kind: k8s-sa-token
+  args: {"clusters":["prd"]}
   interval: 365d
   activate: none
 

@@ -25,6 +25,11 @@ class KubeError(Exception):
         self.status = status
 
 
+class Unanswered(KubeError):
+    """No connection to the apiserver: it is off, or nothing listens. A TLS failure is no such
+    error: the apiserver answered."""
+
+
 class Kube:
     """The API client. Its sleep and clock pace the steps that wait on the cluster."""
 
@@ -70,7 +75,8 @@ class Kube:
         except urllib.error.HTTPError as e:
             return e.code, e.read()
         except urllib.error.URLError as e:
-            raise KubeError(f"{method} {path}: transport error: {e.reason}") from None
+            error = KubeError if isinstance(e.reason, ssl.SSLError) else Unanswered
+            raise error(f"{method} {path}: transport error: {e.reason}") from None
         except (OSError, http.client.HTTPException) as e:
             raise KubeError(f"{method} {path}: transport error: {e!r}") from None
 

@@ -1,10 +1,11 @@
 """The nightly run, `secret-rotator run` without a path: design §8's run loop. The lock first: held,
 the run says so in Telegram and ends there. Then compliance, the due set oldest first, admission —
-a plan with an operator step is marked manual-due and never started (design §4.4) — the health of
-each plan's rollout targets, and the plans under the executor, a failed one rolled back by the run
-itself (ruling D2). Last the standing card, the digest and the metrics (design §3.4): the run health
-every night, the lock held included, the state and the findings once it audited the store. One
-plan's failure never ends the run: it exits non-zero only when the run itself broke."""
+a plan with an operator step is marked manual-due and never started (design §4.4) — whether what
+each plan acts on answers, the health of its rollout targets, and the plans under the executor, a
+failed one rolled back by the run itself (ruling D2). Last the standing card, the digest and the
+metrics (design §3.4): the run health every night, the lock held included, the state and the
+findings once it audited the store. One plan's failure never ends the run: it exits non-zero only
+when the run itself broke."""
 
 import datetime
 import time
@@ -314,7 +315,7 @@ class Night:
             self.deferred += 1
             self.out(f"    not started: past the cap of {self.switches.max_rotations_per_run}")
             return
-        if why := self.unhealthy(plan):
+        if why := self.unanswered(plan) or self.unhealthy(plan):
             self.out(f"    skipped: {why}")
             self.skipped.append(f"`{due.leaf}`: its {due.kind} plan of {keys(due)}: {why}")
             return
@@ -351,6 +352,11 @@ class Night:
         if not self.dry_run:
             self.store[leaf].state = self.state.update(leaf, release)
         return False
+
+    def unanswered(self, plan: Plan) -> str | None:
+        """Why a system a step of the plan acts on does not answer (Step.unanswered); None when
+        every one answers."""
+        return next((why for step in plan.steps if (why := step.unanswered(self.bao))), None)
 
     def unhealthy(self, plan: Plan) -> str | None:
         """Why a rollout target of the plan is not Ready with its Argo Application Healthy; None

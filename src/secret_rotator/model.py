@@ -148,6 +148,12 @@ class Step(abc.ABC):
     def __repr__(self) -> str:
         return f"<{self.type} {self.id}>"
 
+    def unanswered(self, bao: OpenBao) -> str | None:
+        """Why what the step acts on does not answer: a system that may be off, as the dev cluster
+        is by default; None when it answers or is no such system. The nightly run asks it before it
+        starts the plan. A system that answers and refuses is no reason: the step fails on it."""
+        return None
+
     @abc.abstractmethod
     def run(self, ctx: Context) -> str | None:
         """Does the step and returns the detail of its finished line. Raises to fail; a Retry

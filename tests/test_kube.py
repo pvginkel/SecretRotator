@@ -1,12 +1,15 @@
 """The Kubernetes API client: the ServiceAccount's bearer token on every request, a 404 as no
-object, every other refusal and a transport failure as KubeError; and a text PUT to a service
-behind the API's proxy, whose answer is not JSON."""
+object, every other refusal and a transport failure as KubeError, no connection as Unanswered; and a
+text PUT to a service behind the API's proxy, whose answer is not JSON."""
+
+import ssl
+import urllib.error
 
 import pytest
 from fake_cluster import TOKEN, FakeCluster
 from fake_pushgateway import GROUPS, SERVICE
 
-from secret_rotator.kube import Kube, KubeError
+from secret_rotator.kube import Kube, KubeError, Unanswered
 
 DEPLOYMENT = "/apis/apps/v1/namespaces/app-prd/deployments/app"
 
@@ -43,6 +46,24 @@ def test_a_transport_failure_is_a_kube_error_without_status():
     with pytest.raises(KubeError, match=f"GET {DEPLOYMENT}: transport error") as e:
         cluster.kube().get(DEPLOYMENT)
     assert e.value.status is None
+
+
+def test_no_connection_is_unanswered_and_a_tls_failure_an_answer_refused():
+    cluster = FakeCluster()
+    cluster.broken["GET", DEPLOYMENT] = urllib.error.URLError(ConnectionRefusedError(111, "no"))
+    with pytest.raises(Unanswered, match=f"GET {DEPLOYMENT}: transport error") as e:
+        cluster.kube().get(DEPLOYMENT)
+    assert e.value.status is None
+    cluster.broken["GET", DEPLOYMENT] = urllib.error.URLError(
+        ssl.SSLCertVerificationError(1, "certificate verify failed")
+    )
+    with pytest.raises(KubeError, match="certificate verify failed") as e:
+        cluster.kube().get(DEPLOYMENT)
+    assert not isinstance(e.value, Unanswered) and e.value.status is None
+    cluster.broken["GET", DEPLOYMENT] = TimeoutError("timed out")
+    with pytest.raises(KubeError) as e:
+        cluster.kube().get(DEPLOYMENT)
+    assert not isinstance(e.value, Unanswered)
 
 
 def test_a_merge_patch_returns_the_patched_object_and_refuses_no_object():

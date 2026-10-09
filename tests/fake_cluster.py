@@ -12,7 +12,9 @@ service proxy.
 
 It takes the rotator's static token, and the token of every ServiceAccount token Secret it holds as
 that ServiceAccount, which a SelfSubjectReview answers; its token controller fills a created token
-Secret's token once its lag has passed, a token with the legacy claims that name the Secret."""
+Secret's token once its lag has passed, a token with the legacy claims that name the Secret.
+Another apiserver, as the dev cluster's, is one at another address; an apiserver that is off makes
+no connection, as urlopen says of a host that is down."""
 
 import base64
 import copy
@@ -32,6 +34,7 @@ ROTATOR = "system:serviceaccount:kube-system:secret-rotator"
 SA_TOKEN = "kubernetes.io/service-account-token"
 SA_NAME = "kubernetes.io/service-account.name"
 REVIEWS = "/apis/authentication.k8s.io/v1/selfsubjectreviews"
+VERSION = "/version"
 ESO = "/apis/external-secrets.io/v1"
 APPS = "/apis/apps/v1"
 ARGO = "/apis/argoproj.io/v1alpha1/namespaces/argocd-prd/applications"
@@ -352,7 +355,8 @@ def snapshot(objects=None):
 
 
 class FakeCluster:
-    def __init__(self, objects=None, *, eso_lag=3, rollout_lag=12):
+    def __init__(self, objects=None, *, eso_lag=3, rollout_lag=12, addr=ADDR):
+        self.addr = addr
         # (resource, namespace, name) -> object
         self.objects = {
             (resource, o["metadata"]["namespace"], o["metadata"]["name"]): copy.deepcopy(o)
@@ -374,9 +378,10 @@ class FakeCluster:
         self.uids = itertools.count(1)
         self.refused = {}  # (method, path) -> the status it answers instead
         self.bearers = []  # each request's bearer, in the order of requests
+        self.off = False  # no request connects, and none is recorded
 
     def kube(self, token=TOKEN):
-        return Kube(token, opener=self, sleep=self.sleep, clock=self.clock)
+        return Kube(token, self.addr, opener=self, sleep=self.sleep, clock=self.clock)
 
     def clock(self):
         return self.now
@@ -396,7 +401,9 @@ class FakeCluster:
 
     def __call__(self, req):
         url = urllib.parse.urlsplit(req.full_url)
-        assert f"{url.scheme}://{url.netloc}" == ADDR, url
+        assert f"{url.scheme}://{url.netloc}" == self.addr, url
+        if self.off:
+            raise urllib.error.URLError(OSError(113, "No route to host"))
         method, path = req.get_method(), url.path
         proxied = path.startswith(PUSHGATEWAY)
         decode = bytes.decode if proxied else json.loads
@@ -418,6 +425,9 @@ class FakeCluster:
             if status >= 400:
                 raise urllib.error.HTTPError(ADDR, status, "err", {}, io.BytesIO(raw))
             return FakeResponse(status, raw)
+        if path == VERSION:
+            assert method == "GET", method
+            return self.answer(200, {"major": "1", "minor": "35", "gitVersion": "v1.35.6"})
         if path == REVIEWS:
             assert method == "POST" and body["kind"] == "SelfSubjectReview", (method, body)
             return self.answer(201, body | {"status": {"userInfo": {"username": user}}})

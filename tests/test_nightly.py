@@ -553,7 +553,14 @@ class TestTheClusterToken:
         prd.add("secrets", token_secret("kube-system", "secret-rotator-token", "secret-rotator"))
         own = token_in(prd.get("secrets", "kube-system", "secret-rotator-token"))
         prd.kube = functools.partial(FakeCluster.kube, prd, own)
-        entry = {"token": {"kind": "k8s-sa-token", "interval": "365d", "activate": "none"}}
+        entry = {
+            "token": {
+                "kind": "k8s-sa-token",
+                "args": {"clusters": ["prd"]},
+                "interval": "365d",
+                "activate": "none",
+            }
+        }
         bao.leaves["iac/rotator-k8s-token"] = {"data": {"token": own}, "meta": annotated(entry)}
         assert night(kinds_enabled=frozenset({"random", "k8s-sa-token"})) == 0
         new = bao.data("iac/rotator-k8s-token")["token"]
