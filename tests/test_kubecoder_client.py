@@ -353,6 +353,17 @@ class TestTheRuns:
         )
         assert world.held() == OLD and world.controller.minted == 1
 
+    def test_a_mint_lost_to_a_transport_failure_cannot_be_aborted(self):
+        world = World()
+        world.controller.broken["POST", CLIENTS] = TimeoutError("timed out")
+        executor = world.executor()
+        assert executor.run() is Outcome.FAILED
+        assert world.failure().error == (
+            f"POST {CLIENTS}: transport error: TimeoutError('timed out')"
+        )
+        with pytest.raises(AbortRefused, match=NO_UNDO):
+            executor.abort()
+
     def test_a_leaf_holding_another_client_s_credential_stops_after_the_mint(self):
         world = World(data={LEAF: {KEY: "SECRET-macbook"}})
         executor = world.executor()
