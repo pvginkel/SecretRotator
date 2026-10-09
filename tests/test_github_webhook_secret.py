@@ -224,6 +224,24 @@ class TestTheRuns:
         ]
         assert done.detail.endswith(f"; redelivered 1: {push['guid']}")
 
+    def test_a_push_refused_on_a_run_without_its_token_is_redelivered_by_the_rollback(self):
+        world = World()
+        token = world.bao.leaves.pop(TOKEN_LEAF)
+        pushes = []
+        world.during_rollout.append(lambda: pushes.append(world.github.deliver("push")))
+        executor = world.executor()
+        assert executor.run() is Outcome.FAILED
+        world.during_rollout.clear()
+        # The rollback's KV undo writes a version later than the push.
+        world.bao.now += datetime.timedelta(seconds=30)
+        world.github.now += 30
+        assert executor.abort() is Outcome.ROLLBACK_FAILED
+        world.bao.leaves[TOKEN_LEAF] = token
+        assert executor.run() is Outcome.ROLLED_BACK
+        (push,) = pushes
+        assert world.github.attempts(push["guid"]) == [401, 200]
+        assert world.github.secret() == OLD == world.bao.data(LEAF)["secret"]
+
     def test_a_ping_fieldnotes_refuses_rolls_back_to_the_old_secret_on_the_hook(self):
         world = World()
         world.github.held = lambda: OLD  # Fieldnotes never took the new secret

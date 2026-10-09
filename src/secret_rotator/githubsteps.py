@@ -64,10 +64,10 @@ class GitHubWebhook(Step):
         version = ctx.bao.read(self.leaf)
         if version is None or version.data.get(self.key) is None:
             raise StepFailed(f"{self.leaf}#{self.key} cannot be read")
-        connect(self.github, ctx)
         memo = f"{self.id}:since"
         if ctx.staged(memo) is None:
             ctx.stage(memo, version.created.isoformat())
+        connect(self.github, ctx)
         since = datetime.datetime.fromisoformat(ctx.staged(memo))
         self._set(version.data[self.key])
         ping = self._ping(ctx)
