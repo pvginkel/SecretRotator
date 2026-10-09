@@ -464,7 +464,7 @@ eso/prd/kubecoder/prd/mcp-auth-token:
 eso/prd/kubecoder/prd/step-ca-provisioner-password:
   kind: step-ca-password
   interval: 365d
-  activate: "eso,k8s-rollout,manual:deploy StepCaDeploy and roll step-ca"
+  activate: auto
 
 eso/prd/media/prd/gluetun-wg:
   kind: manual

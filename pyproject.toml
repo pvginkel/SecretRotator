@@ -22,6 +22,7 @@ jenkins-job-token = "secret_rotator.kinds.jenkins_job_token:JenkinsJobToken"
 grafana-admin = "secret_rotator.kinds.grafana_admin:GrafanaAdmin"
 pve-root-password = "secret_rotator.kinds.pve_root_password:PveRootPassword"
 samba-user = "secret_rotator.kinds.samba_user:SambaUser"
+step-ca-password = "secret_rotator.kinds.step_ca_password:StepCaPassword"
 external = "secret_rotator.kinds.external:External"
 
 [tool.poetry]
