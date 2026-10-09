@@ -121,7 +121,8 @@ def filled(kube: Kube, ctx: Context, record: Record) -> str:
 
 
 def delete(kube: Kube, namespace: str, name: str, uid: str) -> None:
-    """Deletes the Secret if it is still the one of that uid; done once prd holds it no more."""
+    """Deletes the Secret if it is still the one of that uid; done once the client's cluster holds
+    it no more."""
     kube.call("DELETE", secrets_path(namespace, name), {"preconditions": {"uid": uid}})
     if kube.get(secrets_path(namespace, name)) is not None:
         raise StepFailed(f"Secret {namespace}/{name} still exists after its delete")

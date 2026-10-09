@@ -1,5 +1,6 @@
-"""The prd cluster's Kubernetes API, as much of it as the rotator uses, under the token of the
-secret-rotator ServiceAccount (k8s/cluster-identity.yaml): srviac holds no kubeconfig."""
+"""A cluster's Kubernetes API, as much of it as the rotator uses. By default prd's, under the token
+of the secret-rotator ServiceAccount (k8s/cluster-identity.yaml): srviac holds no kubeconfig. The
+k8s-sa-token kind also reaches dev through it (kinds/k8s_sa_token/reach.py)."""
 
 import functools
 import http.client

@@ -19,7 +19,9 @@ LONG_LIVED = "long_lived_access_token"  # a refresh token's type
 # The code of a login Home Assistant refuses: its auth_invalid answer, which closes the connection.
 LOGIN_REFUSED = "auth_invalid"
 INVALID_ID = "invalid_token_id"  # the error of a delete by an id the user has no token by
-# The error Home Assistant answers a command whose handler raised, whatever it did before.
+# The error Home Assistant answers a command whose handler raised anything but the exceptions it
+# maps to codes of their own (websocket_api/connection.py's async_handle_exception), whatever it did
+# before. The three commands the kind sends raise only ValueError, which gets this code.
 UNKNOWN = "unknown_error"
 
 
@@ -35,7 +37,8 @@ class HomeAssistantError(StepFailed):
     @property
     def refused(self) -> bool:
         """Whether Home Assistant refused the command and it changed nothing: an error its
-        handler answered, not the one for a handler that raised."""
+        handler answered, not UNKNOWN. That holds for the three commands the kind sends; a command
+        whose handler may raise a mapped exception after acting needs its own rule."""
         return self.code is not None and self.code != UNKNOWN
 
 
