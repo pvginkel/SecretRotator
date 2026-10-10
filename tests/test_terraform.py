@@ -361,12 +361,21 @@ class TestARotation:
         assert world.commits() == []
         assert executor.abort() is Outcome.CANCELLED
 
-    def test_a_commit_whose_answer_is_lost_counts_as_landed_and_is_not_rolled_back(self):
+    @pytest.mark.parametrize(
+        ("knob", "answer", "error"),
+        [
+            ("broken", ConnectionResetError(), "transport error"),
+            ("refused", 502, "HTTP 502"),  # a 5xx can come after GitHub wrote the commit
+        ],
+    )
+    def test_a_commit_whose_answer_is_lost_counts_as_landed_and_is_not_rolled_back(
+        self, knob, answer, error
+    ):
         world = World()
-        world.github.broken["PUT", f"/repos/{REPO}/contents/{FILE}"] = ConnectionResetError()
+        getattr(world.github, knob)["PUT", f"/repos/{REPO}/contents/{FILE}"] = answer
         executor = world.executor()
         assert executor.run() is Outcome.FAILED
-        assert "transport error" in world.failure().error
+        assert error in world.failure().error
         with pytest.raises(AbortRefused, match=NO_UNDO):
             executor.abort()
 
