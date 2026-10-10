@@ -19,7 +19,7 @@ The rotator's run state — each key's rotation stamp, each leaf's status — is
 |---|---|
 | `secret-rotator audit [--keys FILE]` | Checks every leaf against the annotation contract. Offline with `--keys`: the seed over FILE's key names. |
 | `secret-rotator annotate [--apply]` | Makes each seed leaf's custom metadata exactly its `rotation_<key>` entries by metadata patch: it adds or changes the entries, removes every other key, sets an automatic leaf's `max_versions` to 20, and creates the marker leaves the seed declares. A dry run without `--apply` lists every write. |
-| `secret-rotator plan <path> [--keys FILE [--snapshot FILE]]` | Prints the leaf's plans and executes nothing. Offline with `--keys`; with `--snapshot`, the plan takes the ExternalSecrets it syncs and the workloads it rolls out from FILE, a read-only snapshot of the prd cluster's ExternalSecrets, Deployments, StatefulSets and DaemonSets (`plan --help` prints the `kubectl get` that takes it). Without it, an offline plan of a leaf activated through the cluster cannot be built. |
+| `secret-rotator plan <path> [--keys FILE [--snapshot FILE]]` | Prints the leaf's plans and executes nothing. Offline with `--keys`; with `--snapshot`, the plan takes the ExternalSecrets it syncs and the workloads it rolls out from FILE, a read-only snapshot of the prd cluster's ExternalSecrets, Deployments, StatefulSets and DaemonSets (`plan --help` prints the `kubectl get` that takes it). Without it, an offline plan that reads the cluster cannot be built: one of a leaf activated through the cluster, or of a `terraform` marker. |
 | `secret-rotator run <path>` | Runs one plan of the leaf in the terminal, its operator steps as prompts. A plan a failure stopped offers Retry, Abort (roll back) and Details. Then pushes the run state's metrics. |
 | `secret-rotator ui` | The operator's terminal UI. It lists every plan with an operator step as a box, due or not: the plans in flight and failed first, then by when they fall due, the earliest first, then those of keys without a due date. It runs one plan at a time as a wizard: each operator step is a screen, and the tool steps between them show their progress. An `external` key's box shows the key's notes and Done, which stamps it. `f` narrows the list to the selected box's type, a `manual` key's credential type or else its kind. |
 | `secret-rotator run` | The nightly run. It ends by pushing its metrics. |
@@ -92,8 +92,8 @@ series `metrics.HELP` names.
 - `src/secret_rotator/` is the core: the annotation contract, the audit and the schedule, plans and
   their step factory (`plan`), the executor with its lock, the staging leaf that records a plan in
   flight (`staging`) and the run state (`state`), the run handling `run <path>` and the UI share
-  (`session`), the list the UI shows (`listing`), the generic steps
-  (`kvsteps`, `k8ssteps`, `jenkinssteps`, `githubsteps`, `ansiblesteps`, `sshsteps`, `opsteps`), the
+  (`session`), the list the UI shows (`listing`), the generic steps (`kvsteps`, `k8ssteps`,
+  `argocdsteps`, `jenkinssteps`, `githubsteps`, `ansiblesteps`, `sshsteps`, `opsteps`), the
   nightly run (`nightly`), the standing card, the metrics (`metrics`), and the clients for OpenBao,
   Kubernetes, Jenkins, GitHub, YouTrack and Telegram.
 - `src/secret_rotator/ui/` is `secret-rotator ui`, a Textual app over the executor: the app
@@ -102,18 +102,20 @@ series `metrics.HELP` names.
 - `src/secret_rotator/kinds/<name>/` holds one package per kind: `random`, `manual`, `approle`,
   `keycloak_client`, `cnpg_role`, `jenkins_token`, `jenkins_job_token`, `grafana_admin`,
   `external`, `pve_root_password`, `samba_user`, `step_ca_password`, `github_webhook_secret`,
-  `youtrack_token`, `home_assistant_token`, `google_sa_key`, `elastic_user`, `kubecoder_client` and
-  `k8s_sa_token`. Each is registered as a `secret_rotator.kinds` entry point in `pyproject.toml`,
-  under its kind's name (`keycloak-client` for `keycloak_client`). The leaves of a kind the contract
-  knows but no package implements are skipped. A kind that reaches a system of its own keeps that
-  system's address in its package: Keycloak's two realms (`keycloak_client`, the one place a realm's
-  URL is set), Postgres (`cnpg_role`), Grafana (`grafana_admin`), the PVE nodes
+  `youtrack_token`, `home_assistant_token`, `google_sa_key`, `elastic_user`, `kubecoder_client`,
+  `k8s_sa_token` and `terraform`. Each is registered as a `secret_rotator.kinds` entry point in
+  `pyproject.toml`, under its kind's name (`keycloak-client` for `keycloak_client`). The leaves of
+  a kind the contract knows but no package implements are skipped. A kind that reaches a system of
+  its own keeps that system's address in its package: Keycloak's two realms (`keycloak_client`, the
+  one place a realm's URL is set), Postgres (`cnpg_role`), Grafana (`grafana_admin`), the PVE nodes
   (`pve_root_password`), step-ca (`step_ca_password`), Home Assistant (`home_assistant_token`),
   Google's token endpoint and IAM API (`google_sa_key`), Elasticsearch (`elastic_user`) and
   KubeCoder's controller (`kubecoder_client`). `youtrack_token` reaches YouTrack and its Hub through
   the core's YouTrack client, `github_webhook_secret` GitHub through the core's `github.webhook`
   step, and `k8s_sa_token` the dev cluster at the apiserver and CA the KubeCoder catalog's
-  `kubeconfig-dev-write` names. `kinds/manual/types/<type>.md` holds one
+  `kubeconfig-dev-write` names. `terraform` reaches GitHub through the core's GitHub client, under
+  its own token `rotator/terraform/credentials`, and Argo CD through the core's `argocd.sync` step.
+  `kinds/manual/types/<type>.md` holds one
   document per credential type: the standard instructions a `manual` key's `type` arg picks, under
   a front matter of the credential's name, the shape a pasted value has (and whether it is entered
   as lines) and whether it expires.
@@ -127,9 +129,9 @@ series `metrics.HELP` names.
 
 Python 3.13 and poetry live in the KubeCoder `iac` sidecar. `kc project setup`, `lint` and `test`
 run them there: `ruff check`, `ruff format --check` and `pytest`. The tests drive fakes of OpenBao,
-the cluster with the Pushgateway behind it, CloudNativePG with its Postgres login, Keycloak,
-Jenkins, Grafana, YouTrack and its Hub, Telegram, step-ca, GitHub, Home Assistant, Google,
-Elasticsearch, KubeCoder's controller, `ansible-playbook`, `ssh` and step-cli, never a live system.
-The UI's pilot tests (`test_ui`, `test_wizard`, `test_wizard_failure`, `test_filter`) drive the
-Textual app over the executor and the fake OpenBao, with `tests/sim.py`'s steps standing in for a
-vendor's side.
+the cluster with Argo CD's Applications and the Pushgateway behind it, CloudNativePG with its
+Postgres login, Keycloak, Jenkins, Grafana, YouTrack and its Hub, Telegram, step-ca, GitHub, Home
+Assistant, Google, Elasticsearch, KubeCoder's controller, `ansible-playbook`, `ssh` and step-cli,
+never a live system. The UI's pilot tests (`test_ui`, `test_wizard`, `test_wizard_failure`,
+`test_filter`) drive the Textual app over the executor and the fake OpenBao, with `tests/sim.py`'s
+steps standing in for a vendor's side.
