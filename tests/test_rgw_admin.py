@@ -25,6 +25,7 @@ from secret_rotator.cluster import Cluster
 from secret_rotator.executor import AbortRefused, Executor, Outcome
 from secret_rotator.kinds.rgw_admin import SITES, RgwAdmin
 from secret_rotator.kinds.rgw_admin.rgw import (
+    CACHE_POLL,
     DEV,
     PRD,
     Gateway,
@@ -32,7 +33,7 @@ from secret_rotator.kinds.rgw_admin.rgw import (
     authorization,
     canonical_query,
 )
-from secret_rotator.kinds.rgw_admin.steps import BEFORE, OLD, Mint
+from secret_rotator.kinds.rgw_admin.steps import BEFORE, OLD, Delete, Mint, Prove
 from secret_rotator.model import Action, Finished, StepFailed, value_name
 from secret_rotator.plan import PlanError, make
 from secret_rotator.vmsteps import DEV_VM, Pve
@@ -654,3 +655,60 @@ class TestTheSteps:
         with pytest.raises(StepFailed, match="transport error: ConnectionResetError"):
             self.mint(world).run(Ctx(world.bao))
         assert {r[0] for r in world.rgw.requests} == {PRD.endpoints[0]}
+
+    def moved(self, world, *, on=None):
+        """A key added to k8s, as on the instance on when given (every other one answers from its
+        cache for its next world.rgw.lag requests), the leaf moved onto it, and a Ctx staged as the
+        mint and kv.write leave it."""
+        before = copy.deepcopy(world.rgw.users)
+        new = world.rgw.key(UID)
+        if on:
+            world.rgw.changed(on, before)
+        world.bao.new_version(PRD_LEAF, {KEYS[0]: new.access, KEYS[1]: new.secret})
+        staged = {OLD: world.made.access, value_name(KEYS[0]): new.access}
+        return new, Ctx(world.bao, staged | {value_name(KEYS[1]): new.secret})
+
+    def gateway(self, world):
+        return Gateway(PRD, world.rgw, sleep=world.rgw.sleep, clock=world.rgw.clock)
+
+    def test_a_delete_asks_again_an_instance_that_does_not_take_the_new_key_yet(self):
+        world = World()
+        world.rgw.lag = 2
+        new, ctx = self.moved(world, on=PRD.endpoints[1])
+        detail = Delete(self.gateway(world), PRD_LEAF).run(ctx)
+        assert detail == f"removed key {world.made.access} of k8s"
+        assert world.rgw.keys(UID) == {world.spare.access, new.access}
+        assert world.rgw.done(*REMOVE) == [new.access] and world.rgw.time == 2 * CACHE_POLL
+
+    def test_a_delete_lists_the_keys_again_until_the_removed_one_is_gone(self):
+        world = World()
+        new, ctx = self.moved(world)
+        endpoint = PRD.endpoints[0]
+
+        def listed_a_moment_longer(params):
+            world.rgw.views[endpoint] = [copy.deepcopy(world.rgw.users), 1]
+
+        world.rgw.before[REMOVE] = listed_a_moment_longer
+        detail = Delete(self.gateway(world), PRD_LEAF).run(ctx)
+        assert detail == f"removed key {world.made.access} of k8s"
+        assert [r[1:3] for r in world.rgw.requests] == [INFO, REMOVE, INFO, INFO]
+        assert world.rgw.time == CACHE_POLL
+        assert world.rgw.keys(UID) == {world.spare.access, new.access}
+
+    def test_a_proof_while_the_leaf_holds_another_key_than_the_one_added_asks_rgw_nothing(self):
+        world = World()
+        _, ctx = self.moved(world)
+        world.bao.new_version(PRD_LEAF, {KEYS[0]: world.made.access, KEYS[1]: world.made.secret})
+        with pytest.raises(StepFailed, match=f"^{PRD_LEAF} does not hold the key the plan added$"):
+            Prove(self.gateway(world), PRD_LEAF).run(ctx)
+        assert world.rgw.requests == []
+
+    def test_a_delete_while_the_leaf_holds_another_key_than_the_one_added_removes_nothing(self):
+        world = World()
+        _, ctx = self.moved(world)
+        world.bao.new_version(PRD_LEAF, {KEYS[0]: world.made.access, KEYS[1]: world.made.secret})
+        not_held = f"^{PRD_LEAF} does not hold the key the plan added$"
+        with pytest.raises(StepFailed, match=not_held) as e:
+            Delete(self.gateway(world), PRD_LEAF).run(ctx)
+        assert e.value.landed is False
+        assert world.made.access in world.rgw.keys(UID) and world.rgw.requests == []
