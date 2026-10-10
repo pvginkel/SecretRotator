@@ -84,6 +84,10 @@ class Staging:
     def put(self, name: str, value: str) -> None:
         self._write(self.data | {name: value})
 
+    def drop(self, name: str) -> None:
+        if name in self.data:
+            self._write({key: value for key, value in self.data.items() if key != name})
+
     def _write(self, data: dict[str, str]) -> None:
         self.bao.write(self.path, data)
         self.data = data

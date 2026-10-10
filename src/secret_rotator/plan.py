@@ -31,6 +31,7 @@ from secret_rotator.opsteps import OperatorConfirm, OperatorCredential, Operator
 from secret_rotator.schedule import schedule
 from secret_rotator.sshsteps import Ssh, SshSetPassword
 from secret_rotator.staging import InFlight
+from secret_rotator.vmsteps import Pve, starts
 
 
 class PlanError(Exception):
@@ -94,8 +95,8 @@ class StepFactory:
     """The patterns a plan is built from, named by what they do (design §4.3). Without a cluster,
     as offline without a snapshot, it builds no Kubernetes step. What derived holds of a leaf is
     not read from the cluster again: a plan in flight is rebuilt from what it derived when it
-    started (design §4.5). Jenkins, Ansible, SSH and GitHub are reached only when a step runs: by
-    default the real ones."""
+    started (design §4.5). Jenkins, Ansible, SSH, GitHub and PVE are reached only when a step runs:
+    by default the real ones."""
 
     def __init__(
         self,
@@ -107,6 +108,7 @@ class StepFactory:
         ansible: Ansible | None = None,
         ssh: Ssh | None = None,
         github: GitHub | None = None,
+        pve: Pve | None = None,
     ):
         self.target = target
         self.cluster = cluster
@@ -118,6 +120,7 @@ class StepFactory:
         self.ansible = ansible or Ansible()
         self.ssh = ssh or Ssh()
         self.github = github or GitHub()
+        self.pve = pve or Pve()
         # What the activation read from the cluster, for the leaf's consumers in the run state: the
         # ExternalSecrets it syncs and the workloads it derived; a named target is in an activate
         # already.
@@ -442,8 +445,10 @@ def build(
     ansible: Ansible | None = None,
     ssh: Ssh | None = None,
     github: GitHub | None = None,
+    pve: Pve | None = None,
 ) -> Plan:
-    """The kind's plan of the Target; derived: a plan in flight's record of what it derived."""
+    """The kind's plan of the Target; derived: a plan in flight's record of what it derived. A
+    vm.start of each VM a step of the kind's names (Step.vm) comes first, kv.stamp last."""
     problems = [
         f"{entry_name(key)} args: {problem}"
         for key in leaf.keys
@@ -459,9 +464,14 @@ def build(
         ansible=ansible,
         ssh=ssh,
         github=github,
+        pve=pve,
     )
     planned = kind.plan(leaf, PlanContext(factory))
-    steps = [*planned, KvStamp(leaf.leaf, leaf.keys, tuple(factory.consumers))]
+    steps = [
+        *starts(factory.pve, planned),
+        *planned,
+        KvStamp(leaf.leaf, leaf.keys, tuple(factory.consumers)),
+    ]
     ids = [step.id for step in steps]
     if dupes := sorted({i for i in ids if ids.count(i) > 1}):
         raise PlanError(f"{leaf.leaf}: the {kind.name} plan repeats step id(s) {', '.join(dupes)}")
@@ -481,6 +491,7 @@ def make(
     ansible: Ansible | None = None,
     ssh: Ssh | None = None,
     github: GitHub | None = None,
+    pve: Pve | None = None,
 ) -> Plan:
     """The plan of rotating these keys of the leaf, built by the kind's plugin; derived: a plan
     in flight's record of what it derived from the cluster."""
@@ -496,6 +507,7 @@ def make(
         ansible=ansible,
         ssh=ssh,
         github=github,
+        pve=pve,
     )
 
 

@@ -1,7 +1,8 @@
 """The clusters a k8s-sa-token key's tokens are on, and how a step reaches each (ruling D1): prd
 through the rotator's running client, under its own identity; dev with the dev write token the
 KubeCoder catalog holds, at the apiserver and CA its kubeconfig names, the rotator having no
-identity of its own there. dev is off by default."""
+identity of its own there. dev is off by default: a step on it is on its VM (Step.vm), which the
+plan starts when it is off (vmsteps)."""
 
 import functools
 import ssl
@@ -13,6 +14,7 @@ from secret_rotator.kinds.k8s_sa_token.tokens import access
 from secret_rotator.kube import TIMEOUT, Kube, KubeError, Unanswered
 from secret_rotator.model import StepFailed
 from secret_rotator.openbao import OpenBao
+from secret_rotator.vmsteps import DEV_VM
 
 PRD, DEV = "prd", "dev"
 CLUSTERS = (DEV, PRD)  # in the order a plan mints, proves and deletes on them
@@ -44,6 +46,7 @@ class Prd:
     run."""
 
     name = PRD
+    vm = None
 
     def __init__(self, cluster: Cluster):
         self.cluster = cluster
@@ -61,6 +64,7 @@ class Dev:
     after it, the old one again once a rollback has undone the write."""
 
     name = DEV
+    vm = DEV_VM
 
     def __init__(self, connect: Callable[[str, str, str], Kube]):
         self.connect = connect  # a client from its token, apiserver and CA

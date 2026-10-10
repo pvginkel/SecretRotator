@@ -77,7 +77,8 @@ class Session:
 
     def attempt(self, action: Callable[[], Outcome]) -> Outcome | None:
         """The executor's run or abort, run again once the operator has a dead holder's lock
-        broken; None when it got to no outcome, which is said."""
+        broken; None when it got to no outcome, which is said. What its end did with the VMs the
+        plan started is said too."""
         e = self.executor
         while True:
             try:
@@ -96,6 +97,9 @@ class Session:
             except (AbortRefused, PlanMismatch, OpenBaoError, LockError) as err:
                 self.say(f"error: {err}")
                 return None
+            finally:
+                for line in e.settled:
+                    self.say(line)
             if self.notify is not None and outcome in (Outcome.FAILED, Outcome.ROLLBACK_FAILED):
                 self.tell(outcome)
             return outcome

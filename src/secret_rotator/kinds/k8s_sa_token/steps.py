@@ -24,9 +24,11 @@ TOKEN_BOUND, TOKEN_POLL = 60, 1  # seconds: the token controller fills a new Sec
 
 
 class Reach(Protocol):
-    """A cluster, by its name, and the client a step calls it with (reach.py)."""
+    """A cluster, by its name, the VM that may be off it runs in (Step.vm), and the client a step
+    calls it with (reach.py)."""
 
     name: str
+    vm: str | None
 
     def kube(self, bao: OpenBao) -> Kube: ...
 
@@ -153,6 +155,7 @@ class OnCluster(Step):
     ):
         super().__init__(f"{id}:{reach.name}", f"{title} on {reach.name}")
         self.reach = reach
+        self.vm = reach.vm
         self.leaf = leaf
         self.key = key  # the data key the new value is staged for
         self.clusters = clusters

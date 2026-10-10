@@ -7,8 +7,9 @@ dev bag's copy, proves the new tokens and deletes the old ones last; its runs, w
 reader holding tokens the clusters take and the old ones ended, prd reached with the rotator's
 running client and dev with the dev write token the catalog holds (ruling D1), the rotator's own
 run calling prd with the new token from its delete on; the failures that stop it before a mint;
-its rollbacks; the nightly run, which skips a plan on dev while dev does not answer and fails one
-dev refuses; how each cluster is reached; and the tokens a key holds."""
+its rollbacks; the nightly run, which starts srvk8sdev for a plan on dev while it is off and shuts
+it down after, skips the plan when dev does not come up and fails one dev refuses; how each cluster
+is reached; and the tokens a key holds."""
 
 import base64
 import dataclasses
@@ -41,6 +42,7 @@ from fake_cluster import (
     token_secret,
     workload,
 )
+from fake_pve import FakePve, FakeVm
 from fake_telegram import CHAT, FakeTelegram
 from fake_telegram import TOKEN as BOT
 from fake_youtrack import TAG, FakeYouTrack
@@ -55,7 +57,14 @@ from secret_rotator.cluster import Cluster, Workload
 from secret_rotator.executor import AbortRefused, Executor, Outcome
 from secret_rotator.kinds.k8s_sa_token import K8sSaToken
 from secret_rotator.kinds.k8s_sa_token.reach import DEV_WRITE, Dev, Prd, connect
-from secret_rotator.kinds.k8s_sa_token.steps import Delete, Mint, Prove, Record, record_name
+from secret_rotator.kinds.k8s_sa_token.steps import (
+    REVIEWS,
+    Delete,
+    Mint,
+    Prove,
+    Record,
+    record_name,
+)
 from secret_rotator.kinds.k8s_sa_token.tokens import (
     SUFFIX,
     access,
@@ -69,6 +78,7 @@ from secret_rotator.model import StepFailed, value_name
 from secret_rotator.plan import PlanError, make, of_leaf
 from secret_rotator.switches import Switches
 from secret_rotator.telegram import Telegram
+from secret_rotator.vmsteps import DEV_VM, Pve
 from secret_rotator.youtrack import YouTrack
 
 SEED = ann.load_seed(ann.DEFAULT_SEED)
@@ -101,11 +111,15 @@ NO_UNDO = "the old token ended with its Secret"
 WHAT = f"{CATALOG}#{WRITE}"
 DEV_WHAT = f"{CATALOG}#{DEV_WRITE_KEY}"
 NOT_CLUSTERS = "clusters: not a list of distinct clusters of dev and prd"
+DEV_START = f"vm.start:{DEV_VM}"
+BOOT = 180  # seconds srvk8sdev takes to answer once started
+NO_DEV = f"{DEV_VM} did not answer within 15 min: dev does not answer at {DEV_ADDR}: GET /version"
 
 
 def catalog_plan(key, *clusters):
     """The step ids of the plan of a catalog kubeconfig whose tokens are on the clusters."""
     return [
+        *([DEV_START] if "dev" in clusters else []),
         *(f"k8s.sa_token:{c}" for c in clusters),
         "kv.write",
         f"kv.copy:{DEV_CATALOG}#{key}",
@@ -199,7 +213,8 @@ class World:
     clusters' tokens (held: what the prd bag holds instead), iac/rotator-k8s-token the rotator's
     token; prd and dev, each of which takes only its token Secrets' tokens; the rotator's running
     client, which calls prd with the rotator's token; and dev reached at the apiserver its write
-    kubeconfig names, trusting the CA it names."""
+    kubeconfig names, trusting the CA it names, on srvk8sdev, which runs on pve: a start has dev
+    answer BOOT seconds later, unless boots is False, and a shutdown has it answer no more."""
 
     def __init__(self, held=None):
         self.store = seed_store()
@@ -224,6 +239,22 @@ class World:
         self.running = Cluster(self.cluster.kube(self.own))
         self.cas = set()  # the CAs dev's clients were made to trust
         self.kind = K8sSaToken(self.connect)
+        self.boots = True
+        self.vm = FakeVm(DEV_VM, 919, "pve", "running", started=self.boot, stopped=self.halt)
+        self.pve_cluster = FakePve([self.vm])
+        self.pve = Pve(self.pve_cluster, sleep=self.dev.sleep, clock=self.dev.clock)
+
+    def boot(self):
+        if self.boots:
+            self.dev.later(BOOT, lambda: setattr(self.dev, "off", False))
+
+    def halt(self):
+        self.dev.off = True
+
+    def power_off(self):
+        """srvk8sdev stopped, as it is by default."""
+        self.vm.status = "stopped"
+        self.dev.off = True
 
     def connect(self, token, server, ca):
         """dev's client, as reach.connect makes one."""
@@ -249,7 +280,7 @@ class World:
 
     def plan(self, leaf=CATALOG, key=WRITE, *, cluster=True):
         running = self.running if cluster else None
-        return make({KIND: self.kind}, leaf, KIND, [key], audit(self.store), running)
+        return make({KIND: self.kind}, leaf, KIND, [key], audit(self.store), running, pve=self.pve)
 
     def executor(self, leaf=CATALOG, key=WRITE, *, day=0):
         self.recorder = Recorder()
@@ -565,31 +596,33 @@ class TestTheRuns:
         assert executor.abort() is Outcome.CANCELLED
 
     @pytest.mark.parametrize(
-        ("held", "refused", "error"),
+        ("held", "refused", "step", "error"),
         [
             (
                 kubeconfig({"dev": legacy_token(NS, RW, RW_SECRET)}),
                 None,
+                DEV_MINT,
                 f"GET {SECRETS}/{RW_SECRET}: HTTP 401: Unauthorized",
             ),
-            (None, 403, f"POST {SECRETS}: HTTP 403: no"),
+            (None, 403, DEV_MINT, f"POST {SECRETS}: HTTP 403: no"),
             (
                 kubeconfig({"prd": legacy_token(NS, RW, RW_SECRET)}),
                 None,
+                DEV_START,
                 f"{DEV_WHAT} holds a kubeconfig without cluster dev",
             ),
         ],
         ids=["token-refused", "create-refused", "no-dev-cluster"],
     )
-    def test_dev_refusing_or_out_of_reach_fails_the_mint_before_it_creates_anything(
-        self, held, refused, error
+    def test_dev_refusing_or_out_of_reach_fails_the_plan_before_the_mint_creates_anything(
+        self, held, refused, step, error
     ):
         world = World({DEV_WRITE_KEY: held} if held else None)
         if refused:
             world.dev.refused["POST", SECRETS] = refused
         executor = world.executor(key=DEV_WRITE_KEY)
         assert executor.run() is Outcome.FAILED
-        assert (world.failure().step.id, world.failure().error) == (DEV_MINT, error)
+        assert (world.failure().step.id, world.failure().error) == (step, error)
         assert executor.abort() is Outcome.CANCELLED
         assert world.tokens_of(RW, world.dev) == [RW_SECRET]
         assert world.bao.data(CATALOG)[DEV_WRITE_KEY] == (held or world.values[DEV_WRITE_KEY])
@@ -719,6 +752,7 @@ class Nights:
             out=self.lines.append,
             holder="run on srviac, pid 7",
             now=lambda: now + datetime.timedelta(microseconds=next(self.ticks)),
+            pve=self.world.pve,
         )
 
     def card(self):
@@ -727,24 +761,44 @@ class Nights:
 
 
 class TestTheNight:
-    def test_while_dev_does_not_answer_its_plans_are_skipped_onto_the_card_and_prd_s_rotates(self):
+    def test_while_srvk8sdev_is_off_the_night_starts_it_for_each_dev_plan_and_shuts_it_down(self):
         world = World()
-        world.dev.off = True
+        world.power_off()
+        nights = Nights(world)
+        assert nights() == 0
+        assert state_of(world.bao, CATALOG).stamps == {
+            BASE: "2026-10-05",
+            DEV_WRITE_KEY: "2026-10-05",
+            WRITE: "2026-10-05",
+        }
+        assert RO_SECRET not in world.tokens_of(RO, world.dev)
+        assert RW_SECRET not in world.tokens_of(RW, world.dev)
+        assert world.pve_cluster.commands() == [("pve", "start"), ("pve", "shutdown")] * 2
+        assert world.vm.status == "stopped" and world.dev.off
+        assert nights.lines.count(f"    {DEV_VM} shut down on pve") == 2
+        assert "Rotated 3:" in nights.telegram.messages[-1]
+
+    def test_a_srvk8sdev_that_does_not_come_up_skips_its_plans_onto_the_card_and_prd_s_rotates(
+        self,
+    ):
+        world = World()
+        world.power_off()
+        world.boots = False
         nights = Nights(world)
         assert nights() == 0
         assert state_of(world.bao, CATALOG).stamps == {WRITE: "2026-10-05"}
+        assert state_of(world.bao, CATALOG).failed_nights == 0
         for key in (BASE, DEV_WRITE_KEY):
             assert world.bao.data(CATALOG)[key] == world.values[key]
         assert world.tokens_of(RO) == [RO_SECRET] and flight_of(world.bao, CATALOG) is None
-        why = f"dev does not answer at {DEV_ADDR}: GET /version: transport error: [Errno 113] "
+        why = f"{NO_DEV}: transport error: [Errno 113] No route to host"
         for key in (BASE, DEV_WRITE_KEY):
-            assert f"- `{CATALOG}`: its {KIND} plan of {key}: {why}No route to host" in (
-                nights.card()
-            )
-            assert f"    skipped: {why}No route to host" in nights.lines
+            assert f"- `{CATALOG}`: its {KIND} plan of {key}: {why}" in nights.card()
+            assert f"    skipped: {why}" in nights.lines
         (message,) = nights.telegram.messages
         assert "Rotated 1:" in message and "Failed" not in message
-        world.dev.off = False
+        assert world.vm.status == "stopped"
+        world.boots = True
         assert nights(days=1) == 0
         assert state_of(world.bao, CATALOG).stamps == {
             WRITE: "2026-10-05",
@@ -754,6 +808,28 @@ class TestTheNight:
         assert RO_SECRET not in world.tokens_of(RO, world.dev)
         assert RW_SECRET not in world.tokens_of(RW, world.dev)
         assert "Rotated 2:" in nights.telegram.messages[-1]
+        assert world.vm.status == "stopped"
+
+    def test_a_running_srvk8sdev_is_left_running_by_the_night(self):
+        world = World()
+        nights = Nights(world)
+        assert nights() == 0
+        assert "Rotated 3:" in nights.telegram.messages[-1]
+        assert world.pve_cluster.commands() == [] and world.vm.status == "running"
+
+    def test_a_dev_plan_the_night_rolls_back_has_srvk8sdev_up_for_its_undo_then_shut_down(self):
+        world = World()
+        world.power_off()
+        world.dev.refused["POST", REVIEWS] = 403
+        nights = Nights(world)
+        assert nights() == 0
+        failed = [m for m in nights.telegram.messages if "The run rolls it back" in m]
+        assert len(failed) == 2 and all("prove the new token on dev" in m for m in failed)
+        assert world.tokens_of(RO, world.dev) == [RO_SECRET] and world.tokens_of(RO) == [RO_SECRET]
+        assert world.tokens_of(RW, world.dev) == [RW_SECRET]
+        assert world.pve_cluster.commands() == [("pve", "start"), ("pve", "shutdown")] * 2
+        assert world.vm.status == "stopped"
+        assert "Failed 2:" in nights.telegram.messages[-1]
 
     def test_a_dev_that_answers_and_refuses_fails_its_plans_which_the_night_rolls_back(self):
         world = World()
@@ -944,13 +1020,16 @@ class TestTheReach:
         )
         assert Prd(world.running).unanswered(bao) is None
 
-    def test_every_step_on_dev_asks_whether_dev_answers_and_no_other_step_does(self):
+    def test_every_step_on_dev_is_on_srvk8sdev_and_asks_whether_dev_answers_and_no_other(self):
         world = World()
         world.dev.off = True
         bao = client(world.bao)
         plan = world.plan(key=BASE)
         built = len(world.cluster.requests)
-        assert [s.id for s in plan.steps if s.unanswered(bao)] == [DEV_MINT, DEV_PROVE, DEV_DELETE]
+        on_dev = [DEV_MINT, DEV_PROVE, DEV_DELETE]
+        assert [s.id for s in plan.steps if s.unanswered(bao)] == on_dev
+        assert [s.id for s in plan.steps if s.vm == DEV_VM] == on_dev
+        assert [s.id for s in plan.steps[0].steps] == on_dev
         assert len(world.cluster.requests) == built
 
     def test_dev_s_client_trusts_the_ca_its_kubeconfig_names_and_no_other(self):

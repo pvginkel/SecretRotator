@@ -62,6 +62,14 @@ def failure(e: Exception) -> tuple[str, str]:
     return f"{type(e).__name__}: {e}", technical
 
 
+class NoAnswer(StepFailed):
+    """What the steps on a VM that may be off act on did not answer within the bound of the plan's
+    vm.start (vmsteps). Nothing it waited for ran: it did not land."""
+
+    def __init__(self, error: str):
+        super().__init__(error, landed=False)
+
+
 def not_landed(e: Exception) -> StepFailed:
     """The failure e, its sentence and detail kept, as one of a step that did not land."""
     error, technical = failure(e)
@@ -96,13 +104,15 @@ def wait(
     poll: int,
     why_not: Callable[[], str | None],
     what: str,
+    *,
+    failed: Callable[[str], StepFailed] = StepFailed,
 ) -> None:
-    """Polls why_not() until it answers None, each answer a progress detail; StepFailed once the
-    bound (seconds) has passed: `<what> within <n> min: <its last answer>`."""
+    """Polls why_not() until it answers None, each answer a progress detail; failed, a StepFailed
+    by default, once the bound (seconds) has passed: `<what> within <n> min: <its last answer>`."""
     deadline = pace.clock() + bound
     while (why := why_not()) is not None:
         if pace.clock() >= deadline:
-            raise StepFailed(f"{what} within {bound // 60} min: {why}")
+            raise failed(f"{what} within {bound // 60} min: {why}")
         ctx.progress(why)
         pace.sleep(poll)
 
@@ -139,6 +149,10 @@ class Step(abc.ABC):
     # as not having run: nothing of it is undone or re-run, and only the steps before it gate
     # Abort (design §4.5).
     no_undo = ""
+    # The VM that may be off, by its PVE name, in which what the step acts on runs (vmsteps): the
+    # plan starts with a vm.start of it, and the executor has it up whenever the step or its undo
+    # runs.
+    vm: str | None = None
 
     def __init__(self, id: str, title: str, *, estimate: int = 0):
         self.id = id  # stable across rebuilds of the same plan
@@ -149,9 +163,10 @@ class Step(abc.ABC):
         return f"<{self.type} {self.id}>"
 
     def unanswered(self, bao: OpenBao) -> str | None:
-        """Why what the step acts on does not answer: a system that may be off, as the dev cluster
-        is by default; None when it answers or is no such system. The nightly run asks it before it
-        starts the plan. A system that answers and refuses is no reason: the step fails on it."""
+        """Why what the step acts on does not answer; None when it answers or is no system that may
+        not. The nightly run asks it before it starts the plan, and skips the plan for the night on
+        an answer; of a step on a VM that may be off (vm), the plan's vm.start asks it instead, once
+        it has the VM up. A system that answers and refuses is no reason: the step fails on it."""
         return None
 
     @abc.abstractmethod

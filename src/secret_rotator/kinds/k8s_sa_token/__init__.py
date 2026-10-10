@@ -5,10 +5,10 @@ the dev write token the KubeCoder catalog holds (ruling D1); so the kind has no 
 plan per key: each of the KubeCoder catalog's kubeconfigs is a credential of its own. Its plan
 mints the tokens, writes the key with only the tokens changed to the leaf and its copies, syncs
 every ExternalSecret that reads them whatever the leaf's activate, activates, proves that each
-cluster takes its new token, and last deletes the Secrets of the tokens it replaced. While dev does
-not answer, the nightly run skips a plan on dev (Step.unanswered). The rotator's own token,
-iac/rotator-k8s-token, is a key of the kind: its plan switches the running rotator to the new token
-before that delete."""
+cluster takes its new token, and last deletes the Secrets of the tokens it replaced. A plan on dev
+starts srvk8sdev first when it is off, and shuts it down again after (vmsteps). The rotator's own
+token, iac/rotator-k8s-token, is a key of the kind: its plan switches the running rotator to the
+new token before that delete."""
 
 from collections.abc import Callable, Mapping
 

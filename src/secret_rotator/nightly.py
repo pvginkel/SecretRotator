@@ -2,10 +2,11 @@
 the run says so in Telegram and ends there. Then compliance, the due set oldest first, admission —
 a plan with an operator step is marked manual-due and never started (design §4.4) — whether what
 each plan acts on answers, the health of its rollout targets and of the Argo Applications it syncs,
-and the plans under the executor, a failed one rolled back by the run itself (ruling D2). Last the
-standing card, the digest and the metrics (design §3.4): the run health every night, the lock held
-included, the state and the findings once it audited the store. One plan's failure never ends the
-run: it exits non-zero only when the run itself broke."""
+and the plans under the executor, a failed one rolled back by the run itself (ruling D2). A VM that
+may be off a plan needs is started for it and shut down after (vmsteps); one that does not answer
+then skips the plan for the night. Last the standing card, the digest and the metrics (design §3.4):
+the run health every night, the lock held included, the state and the findings once it audited the
+store. One plan's failure never ends the run: it exits non-zero only when the run itself broke."""
 
 import datetime
 import time
@@ -30,6 +31,7 @@ from secret_rotator.switches import Switches
 from secret_rotator.telegram import TOKEN as BOT_TOKEN
 from secret_rotator.telegram import Telegram, TelegramError, failed
 from secret_rotator.terminal import due_text, plan_lines, took
+from secret_rotator.vmsteps import Pve
 from secret_rotator.youtrack import TOKEN as CARD_TOKEN
 from secret_rotator.youtrack import Card, YouTrack, YouTrackError
 
@@ -152,9 +154,11 @@ class Night:
         holder: str,
         now: Callable[[], datetime.datetime] = utcnow,
         clock: Callable[[], float] = time.monotonic,
+        pve: Pve | None = None,
     ):
         self.bao = bao
         self.cluster = cluster
+        self.pve = pve
         self.kinds = kinds
         self.switches = switches
         self.dry_run = switches.dry_run
@@ -296,6 +300,7 @@ class Night:
                 list(due.keys),
                 self.result,
                 self.cluster,
+                pve=self.pve,
             )
         except PlanError as e:
             why = str(e).removeprefix(f"{due.leaf}: ")
@@ -356,8 +361,12 @@ class Night:
 
     def unanswered(self, plan: Plan) -> str | None:
         """Why a system a step of the plan acts on does not answer (Step.unanswered); None when
-        every one answers."""
-        return next((why for step in plan.steps if (why := step.unanswered(self.bao))), None)
+        every one answers. A step on a VM that may be off is not asked here: the plan's vm.start
+        starts the VM and asks it."""
+        return next(
+            (why for step in plan.steps if step.vm is None and (why := step.unanswered(self.bao))),
+            None,
+        )
 
     def unhealthy(self, plan: Plan) -> str | None:
         """Why a rollout target of the plan is not Ready with its Argo Application Healthy, or an
@@ -376,7 +385,14 @@ class Night:
         executor = Executor(
             self.bao, plan, renderer, self.lock, state=self.state, dry_run=False, clock=self.now
         )
-        if executor.run() is Outcome.DONE:
+        outcome = executor.run(unattended=True)
+        self.settled(executor)
+        if outcome is Outcome.SKIPPED:
+            why = executor.skip.reason
+            self.out(f"    skipped: {why}")
+            self.skipped.append(f"`{due.leaf}`: its {due.kind} plan of {keys(due)}: {why}")
+            return
+        if outcome is Outcome.DONE:
             self.out("    rotated")
             self.rotated.append(str(due))
             self.refresh(leaf)
@@ -391,7 +407,9 @@ class Night:
             self.failures.append(f"{due}: stopped for `secret-rotator run {leaf}`")
         else:
             self.send(f"{sentence(message)} The run rolls it back; the leaf is due again.")
-            if executor.abort() is Outcome.ROLLBACK_FAILED:
+            rolled = executor.abort()
+            self.settled(executor)
+            if rolled is Outcome.ROLLBACK_FAILED:
                 undo = executor.failure
                 text = failed(
                     plan.name,
@@ -409,6 +427,11 @@ class Night:
                 self.failures.append(f"{due}: rolled back")
         self.count_failure(leaf)
         self.refresh(leaf)
+
+    def settled(self, executor: Executor) -> None:
+        """What the end of the executor's run or abort did with the VMs the plan started."""
+        for line in executor.settled:
+            self.out(f"    {line}")
 
     def count_failure(self, leaf: str) -> None:
         if leaf in self.failed_tonight:
@@ -560,6 +583,7 @@ def run(
     holder: str,
     now: Callable[[], datetime.datetime] = utcnow,
     clock: Callable[[], float] = time.monotonic,
+    pve: Pve | None = None,
 ) -> int:
     """The nightly run: Jeeves's token for the card and the bot's for Telegram, from the store.
     The card's client reads Jeeves's token from its leaf at each request, so a youtrack-token plan
@@ -578,4 +602,5 @@ def run(
         holder=holder,
         now=now,
         clock=clock,
+        pve=pve,
     ).go()

@@ -9,7 +9,13 @@ finished, and whether every run of that step failed reporting it did not land; i
 while the plan is in flight; the leaf's status in the run state says whether it failed. A leaf has
 one plan in flight. Step ids repeat across plans, and a leaf's plans differ by kind or by keys:
 only the plan of the kind and keys recorded resumes it. The staging leaf also holds the values the
-plan's steps produced, what their undos need, and, while a rollback runs, how far it got."""
+plan's steps produced, what their undos need, and, while a rollback runs, how far it got.
+
+A VM that may be off is up whenever a step on it (Step.vm) or its undo runs: the plan's vm.start
+brings it up, the first time a run or an abort needs it (vmsteps). Each run and each abort ends by
+shutting down every VM the plan's staging leaf records the plan started, whatever its outcome, so a
+plan resumed or rolled back leaves a VM as it found it; the record lives as long as the staging
+leaf, so a later process shuts down a VM an earlier one started."""
 
 import datetime
 from collections.abc import Callable
@@ -22,17 +28,20 @@ from secret_rotator.model import (
     Actor,
     Event,
     Finished,
+    NoAnswer,
     Progress,
     Skipped,
     Started,
     Step,
     StepFailed,
     failure,
+    not_landed,
 )
 from secret_rotator.openbao import OpenBao, OpenBaoError
 from secret_rotator.plan import Plan
 from secret_rotator.staging import NOT_LANDED, ROLLBACK, STEP, InFlight, Staging, flights
 from secret_rotator.state import LeafState, State
+from secret_rotator.vmsteps import VmStart, started_name
 
 
 class Stand(StrEnum):
@@ -51,6 +60,7 @@ class Outcome(StrEnum):
     CANCELLED = "cancelled"  # aborted while nothing had mutated
     ROLLED_BACK = "rolled-back"
     ROLLBACK_FAILED = "rollback-failed"
+    SKIPPED = "skipped"  # an unattended run's: its VM did not answer, so nothing of it is left
     DRY_RUN = "dry-run"
 
 
@@ -138,7 +148,8 @@ class _RunContext:
 class Executor:
     """Runs one plan. run() starts it, resumes it and retries its failed step; abort() rolls it
     back. Each takes the lock for as long as it runs. In a dry run nothing runs and nothing is
-    read or written. A front end that runs it off its own thread stops it with stop()."""
+    read or written, and no VM is started. A front end that runs it off its own thread stops it
+    with stop()."""
 
     def __init__(
         self,
@@ -164,6 +175,12 @@ class Executor:
         self.at = 0  # the index of the step the plan is at
         self.kind = plan.target.kind
         self.failure: Finished | None = None  # the last failed line: Details, the Telegram message
+        self.skip: Skipped | None = None  # why an unattended run skipped the plan
+        # What the end of the last run or abort did with the VMs the plan started: one line each.
+        self.settled: list[str] = []
+        self.starts = {s.guest: s for s in plan.steps if isinstance(s, VmStart)}
+        self._up: set[str] = set()  # the VMs this run or abort has up
+        self._unattended = False
         self._stop: Abandon | None = None
 
     def stop(self, choice: Abandon) -> None:
@@ -185,28 +202,71 @@ class Executor:
         self.at, self.stand = stand_of(self.plan, flight, self.state.of(self.leaf).status)
         return self.stand
 
-    def run(self) -> Outcome:
+    def run(self, *, unattended: bool = False) -> Outcome:
+        """unattended: the nightly run's, which no one retries and which rolls a failed plan back
+        itself. A VM the plan's vm.start finds not answering (NoAnswer) before anything mutated
+        then skips the plan: SKIPPED, its staging leaf gone, its run state untouched. A plan
+        failed that abort() may roll back keeps the VMs it started up for that abort()."""
         if self.dry_run:
             for step in self.plan.steps:
                 self.renderer.event(Skipped(step, "dry run"))
             return Outcome.DRY_RUN
-        self._stop = None
+        self._begin(unattended)
         with self.lock.held(self.plan.name):
-            if self.load() is Stand.ROLLING_BACK:
-                return self._roll_back()
-            return self._advance()
+            outcome = None
+            try:
+                if self.load() is Stand.ROLLING_BACK:
+                    outcome = self._roll_back()
+                else:
+                    outcome = self._advance()
+            finally:
+                rolled_back_next = unattended and outcome is Outcome.FAILED
+                if not (rolled_back_next and self.abort_blocker() is None):
+                    self._settle()
+            return outcome
 
     def abort(self) -> Outcome:
         if self.dry_run:
             return Outcome.DRY_RUN
-        self._stop = None
+        self._begin(unattended=False)
         with self.lock.held(self.plan.name):
-            stand = self.load()
-            if stand is Stand.ROLLING_BACK:
-                raise AbortRefused("the rollback is under way: Retry continues it")
-            if stand is Stand.FRESH:
-                return Outcome.CANCELLED
-            return self._abort()
+            try:
+                stand = self.load()
+                if stand is Stand.ROLLING_BACK:
+                    raise AbortRefused("the rollback is under way: Retry continues it")
+                if stand is Stand.FRESH:
+                    return Outcome.CANCELLED
+                return self._abort()
+            finally:
+                self._settle()
+
+    def _begin(self, unattended: bool) -> None:
+        self._stop = None
+        self._unattended = unattended
+        self._up = set()
+        self.settled = []
+        self.skip = None
+
+    def _ready(self, step: Step, ctx: "_RunContext") -> None:
+        """The VM the step acts on (Step.vm) up, through the plan's vm.start, once per run or
+        abort."""
+        if step.vm is None or step.vm in self._up:
+            return
+        self.starts[step.vm].up(ctx)
+        self._up.add(step.vm)
+
+    def _settle(self) -> None:
+        """Every VM the plan recorded it started shut down, and its record dropped."""
+        for guest, start in self.starts.items():
+            if self.staging.get(started_name(guest)) is not None:
+                self.settled.append(start.down())
+                self.staging.drop(started_name(guest))
+
+    def _end(self) -> None:
+        """The plan is no longer in flight: the VMs it started are shut down, then its staging
+        leaf destroyed."""
+        self._settle()
+        self.staging.destroy()
 
     def _touched(self) -> list[Step]:
         """The steps that ran: every step before the one the plan is at, and that one too when
@@ -273,14 +333,31 @@ class Executor:
             unlanded = self.staging.get(STEP) != step.id or self.staging.get(NOT_LANDED) == step.id
             try:
                 self.staging.record(self.plan.target.keys, step.id, self.plan.derived)
-                detail = step.run(_RunContext(self, step, Action.RUN))
+                ctx = _RunContext(self, step, Action.RUN)
+                try:
+                    self._ready(step, ctx)
+                except Exception as e:
+                    raise not_landed(e) from e
+                detail = step.run(ctx)
             except _Abandoned as a:
                 return self._abandon(a.choice)
+            except NoAnswer as e:
+                if self._unattended and not any(s.mutates for s in self.plan.steps[:at]):
+                    return self._skipped(step, e)
+                return self._fail(step, Action.RUN, e, unlanded=unlanded)
             except Exception as e:
                 return self._fail(step, Action.RUN, e, unlanded=unlanded)
+            if isinstance(step, VmStart):
+                self._up.add(step.guest)
             self.renderer.event(Finished(step, Action.RUN, True, detail or ""))
-        self.staging.destroy()
+        self._end()
         return Outcome.DONE
+
+    def _skipped(self, step: Step, e: NoAnswer) -> Outcome:
+        self.skip = Skipped(step, e.error)
+        self.renderer.event(self.skip)
+        self._end()
+        return Outcome.SKIPPED
 
     def _abandon(self, choice: Abandon) -> Outcome:
         return Outcome.EXITED if choice is Abandon.EXIT else self._abort()
@@ -289,7 +366,7 @@ class Executor:
         if reason := self.abort_blocker():
             raise AbortRefused(reason)
         if not any(step.mutates for step in self._touched()):
-            self.staging.destroy()
+            self._end()
             return Outcome.CANCELLED
         self.staging.put(ROLLBACK, "0")
         return self._roll_back()
@@ -302,13 +379,15 @@ class Executor:
                 return Outcome.EXITED
             self.renderer.event(Started(step, action))
             try:
+                ctx = _RunContext(self, step, action)
+                self._ready(step, ctx)
                 run = step.undo if action is Action.UNDO else step.run
-                detail = run(_RunContext(self, step, action))
+                detail = run(ctx)
                 self.staging.put(ROLLBACK, str(done + 1))
             except _Abandoned:
                 return Outcome.EXITED
             except Exception as e:
                 return self._fail(step, action, e)
             self.renderer.event(Finished(step, action, True, detail or ""))
-        self.staging.destroy()
+        self._end()
         return Outcome.ROLLED_BACK
