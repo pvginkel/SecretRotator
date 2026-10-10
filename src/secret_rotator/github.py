@@ -1,7 +1,8 @@
 """GitHub's REST API, as much of it as the rotator uses: a repository hook's config, its pings and
 its deliveries for the github.webhook step, under the token rotator/github holds; a file's contents,
-a commit of a new text over it, and how two commits compare for the terraform kind, under its own
-token. No request or error carries the token or a hook's secret."""
+a commit of a new text over it, and how two commits compare for the steps that commit a file
+(githubsteps.Commit), under the token their plan names. No request or error carries the token or a
+hook's secret."""
 
 import base64
 import datetime

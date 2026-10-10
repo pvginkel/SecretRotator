@@ -7,8 +7,8 @@ that is the secret it holds, else 401.
 
 Its repositories each have one branch, main, a line of commits: a file's contents at the head, a
 commit of a new text over the blob it held, answered 409 once the file is another, and how two
-commits compare. Hooks take TOKEN, rotator/github's, and repositories CONTENTS_TOKEN, the terraform
-kind's, as fine-grained tokens each scoped to its own."""
+commits compare. Hooks take TOKEN, rotator/github's, and repositories CONTENTS_TOKEN, the one a
+commit's plan names, as fine-grained tokens each scoped to its own."""
 
 import base64
 import datetime
@@ -25,7 +25,7 @@ from secret_rotator.github import ADDR, GitHub
 
 TOKEN = "SECRET-github-token"
 CREDENTIALS = {"token": TOKEN}  # rotator/github
-CONTENTS_TOKEN = "SECRET-github-contents-token"  # rotator/terraform/credentials
+CONTENTS_TOKEN = "SECRET-github-contents-token"  # the token a commit's plan names
 REPO = "pvginkel/Fieldnotes"
 HOOK = 682399688
 SPEC = f"{REPO}/{HOOK}"

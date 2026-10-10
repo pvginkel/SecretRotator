@@ -3,7 +3,7 @@ kind's steps built with the step factory, and kv.stamp appended by the core. A l
 per kind with a plugin, one per key for a per-key kind (manual, external)."""
 
 import datetime
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -14,7 +14,7 @@ from secret_rotator.audit import Audit, Leaf
 from secret_rotator.cluster import Cluster, Derived, Ref, SecretRef, Workload
 from secret_rotator.contract import NONE, Activator, Entry, copy_target, entry_name, is_scheduled
 from secret_rotator.github import GitHub
-from secret_rotator.githubsteps import GitHubWebhook
+from secret_rotator.githubsteps import GitHubCommit, GitHubWebhook
 from secret_rotator.jenkins import Jenkins
 from secret_rotator.jenkinssteps import JenkinsCredential, JenkinsJob, parse_job
 from secret_rotator.k8ssteps import ROLLOUT_BOUND, EsoSync, K8sRollout
@@ -27,7 +27,7 @@ from secret_rotator.kvsteps import (
     Marker,
     RandomGenerate,
 )
-from secret_rotator.model import Actor, Step
+from secret_rotator.model import Actor, Context, Step
 from secret_rotator.opsteps import OperatorConfirm, OperatorCredential, OperatorShow, Shape
 from secret_rotator.schedule import schedule
 from secret_rotator.sshsteps import Ssh, SshKeyCopy, SshKeygen, SshSetPassword
@@ -196,6 +196,24 @@ class StepFactory:
     ) -> list[Step]:
         """A playbook run, its id ansible.run:<name>; counter: the run that undoes it."""
         return [AnsibleRun(self.ansible, name, title, book, counter, no_undo=no_undo)]
+
+    def commit_file(
+        self,
+        repo: str,
+        path: str,
+        text: Callable[[Context, str], str],
+        *,
+        credentials: str,
+        message: str,
+        no_undo: str = "",
+    ) -> list[Step]:
+        """A github.commit to the repository's main of what text makes of the text the file holds
+        there, with the token the credentials leaf holds; its undo commits back the text it
+        replaced, unless no_undo says why it has none (GitHubCommit)."""
+        step = GitHubCommit(
+            self.github, repo, path, text, credentials=credentials, message=message, no_undo=no_undo
+        )
+        return [step]
 
     def set_password(self, key: str, user: str, hosts: Iterable[str]) -> list[Step]:
         """An ssh.set_password of the user to the new value of one of the plan's keys, one per

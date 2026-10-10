@@ -1,7 +1,8 @@
 """The terraform kind's own steps (design §4.2: custom steps are the plugin's):
-terraform.commit_keeper and terraform.prove_remint. GitHub is reached under the token
-rotator/terraform/credentials holds, read when a step runs: the kind's own, not rotator/github's.
-No detail or error they report carries a credential or a Secret's fingerprint."""
+terraform.commit_keeper, built on the core's commit (githubsteps.Commit), and
+terraform.prove_remint. GitHub is reached under the token rotator/terraform/credentials holds, read
+when a step runs: the kind's own, not rotator/github's. No detail or error they report carries a
+credential or a Secret's fingerprint."""
 
 import hashlib
 import json
@@ -11,15 +12,12 @@ from dataclasses import dataclass
 
 from secret_rotator.argocdsteps import ArgocdSync
 from secret_rotator.cluster import APPLICATIONS, Cluster, SecretRef
-from secret_rotator.github import GitHub, GitHubError
-from secret_rotator.githubsteps import connect
+from secret_rotator.github import GitHub
+from secret_rotator.githubsteps import BRANCH, Commit, connect
 from secret_rotator.kinds.terraform import keepers
 from secret_rotator.model import Context, Step, StepFailed, not_landed
 
 CREDENTIALS = "rotator/terraform/credentials"  # key token
-BRANCH = "main"
-COMMIT = "terraform:commit"  # the staging name of the commit's SHA
-CONFLICT_TRIES = 5
 # hook.repo as the releases chart renders it (ArgoCDDeploy releases/templates/_helpers.tpl).
 HOOK_REPO = re.compile(r"https://github\.com/(?P<repo>[^/]+/[^/]+?)(?:\.git)?")
 NO_UNDO = (
@@ -103,37 +101,37 @@ def keeper_file(application: dict, keeper: Keeper) -> str:
     return f"{path}/config/{stage}/rotation.tfvars" if path else f"config/{stage}/rotation.tfvars"
 
 
-class CommitKeeper(Step):
+class CommitKeeper(Commit):
     """Commits a new value of the marker's keeper to the keeper file the Application's hook reads,
-    on main, as `rotate <keeper> (secret-rotator)`, and stages the commit's SHA. Before it commits
-    it fingerprints the Secret the marker names, into the process's memory alone, with the commit:
-    what the proof compares the Secret with.
+    on main, as `rotate <keeper> (secret-rotator)`, and stages the commit's SHA (Commit). Before it
+    commits it fingerprints the Secret the marker names, into the process's memory alone, with the
+    commit: what the proof compares the Secret with.
 
     The value is the UTC time the step started, to the second; the step refuses one that does not
-    sort after the value the file holds, so the file never held it. A conflict, the file changed
-    since the step read it, is read again and retried. A re-run in the process that made the staged
-    commit commits nothing; any other commits afresh.
+    sort after the value the file holds, so the file never held it. A conflict is read again and
+    retried as Commit.commit retries it. A re-run in the process that made the staged commit
+    commits nothing; any other commits afresh.
 
-    Every failure before the commit, and the commit refused (a 4xx answer but a conflict), report
-    that the step did not land."""
+    Every failure before the commit, and those Commit.commit names, report that the step did not
+    land."""
 
     type = "terraform.commit_keeper"
-    mutates = True
     no_undo = NO_UNDO
-    staged = COMMIT
 
     def __init__(self, github: GitHub, cluster: Cluster, made: dict[str, Made], keeper: Keeper):
         super().__init__(
             f"{self.type}:{keeper.app}/{keeper.name}",
             f"commit a new {keeper.name} keeper to {keeper.repo}",
+            github,
+            keeper.repo,
+            CREDENTIALS,
         )
-        self.github = github
         self.cluster = cluster
         self.made = made  # the process's commits by SHA: the kind's memory
         self.keeper = keeper
 
     def run(self, ctx: Context) -> str:
-        staged = ctx.staged(COMMIT)
+        staged = ctx.staged(self.staged)
         if staged in self.made:
             return f"{staged[:7]} committed"
         try:
@@ -146,60 +144,25 @@ class CommitKeeper(Step):
         except Exception as e:
             raise not_landed(e) from e
         value = ctx.now.strftime("%Y-%m-%dT%H:%M:%SZ")
-        sha = self._commit(ctx, file, value)
+        name = self.keeper.name
+        sha = self.commit(ctx, file, lambda held: self._text(file, held, value), f"rotate {name}")
         self.made[sha] = Made(before, value, file)
-        ctx.stage(COMMIT, sha)
-        return f"{sha[:7]}: {self.keeper.name} = {value} in {file}"
+        return f"{sha[:7]}: {name} = {value} in {file}"
 
-    def _commit(self, ctx: Context, file: str, value: str) -> str:
+    def _text(self, file: str, held: str, value: str) -> str:
+        """The keeper file with the keeper at the new value."""
         repo, name = self.keeper.repo, self.keeper.name
-        for _ in range(CONFLICT_TRIES):
-            try:
-                found = self.github.contents(repo, file, BRANCH)
-                if found is None:
-                    # GitHub answers a token that cannot see a private repository the same.
-                    raise StepFailed(
-                        f"{repo} has no {file} on {BRANCH}, or the token in {CREDENTIALS} lacks "
-                        "the repository"
-                    )
-                text, blob = found
-                try:
-                    head, epochs = keepers.parse(text)
-                except ValueError as e:
-                    raise StepFailed(f"{repo} {file}: {e}") from None
-                held = epochs.get(name)
-                if held is not None and held >= value:
-                    raise StepFailed(
-                        f"{repo} {file} holds {name} = {held}, which does not sort before the new "
-                        f"{value}: a value it held re-mints nothing"
-                    )
-                new = keepers.render(head, epochs | {name: value})
-            except Exception as e:
-                raise not_landed(e) from e
-            try:
-                return self.github.commit_file(
-                    repo,
-                    file,
-                    new,
-                    blob=blob,
-                    branch=BRANCH,
-                    message=f"rotate {name} (secret-rotator)",
-                )
-            except GitHubError as e:
-                if e.status == 409:
-                    ctx.progress(f"{file} changed as it was committed: reading it again")
-                    continue
-                if e.status is not None and e.status < 500:
-                    raise not_landed(e) from e
-                raise
-        raise StepFailed(
-            f"{repo} {file} changed under each of {CONFLICT_TRIES} commits", landed=False
-        )
-
-    def contains(self, ctx: Context, revision: str, commit: str) -> bool:
-        """Whether the revision is the commit or a later head that has it, by GitHub's compare."""
-        connect(self.github, ctx, CREDENTIALS)
-        return self.github.compare(self.keeper.repo, commit, revision) in ("identical", "ahead")
+        try:
+            head, epochs = keepers.parse(held)
+        except ValueError as e:
+            raise StepFailed(f"{repo} {file}: {e}") from None
+        current = epochs.get(name)
+        if current is not None and current >= value:
+            raise StepFailed(
+                f"{repo} {file} holds {name} = {current}, which does not sort before the new "
+                f"{value}: a value it held re-mints nothing"
+            )
+        return keepers.render(head, epochs | {name: value})
 
 
 class ProveRemint(Step):
@@ -223,13 +186,13 @@ class ProveRemint(Step):
         self.sync = sync
 
     def run(self, ctx: Context) -> str:
-        staged = ctx.staged(COMMIT)
+        staged = ctx.staged(self.commit.staged)
         again = ""
         if staged not in self.commit.made:
             ctx.progress(f"{staged[:7]} was committed by another process: committing afresh")
             again = f"; committed afresh, {self.commit.run(ctx)}"
         self.sync.run(ctx)
-        commit = ctx.staged(COMMIT)
+        commit = ctx.staged(self.commit.staged)
         made = self.commit.made[commit]
         keeper = self.commit.keeper
         if fingerprint(self.commit.cluster, keeper.secret) == made.before:

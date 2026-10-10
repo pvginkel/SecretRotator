@@ -24,8 +24,9 @@ from secret_rotator.audit import Leaf, audit
 from secret_rotator.cluster import Cluster, Workload
 from secret_rotator.contract import MARKER_VALUE
 from secret_rotator.executor import AbortRefused, Executor, Outcome
+from secret_rotator.githubsteps import CONFLICT_TRIES
 from secret_rotator.kinds.terraform import Terraform, keepers
-from secret_rotator.kinds.terraform.steps import CONFLICT_TRIES, CREDENTIALS, NO_UNDO
+from secret_rotator.kinds.terraform.steps import CREDENTIALS, NO_UNDO
 from secret_rotator.model import Finished, Progress
 from secret_rotator.plan import PlanError, make
 
