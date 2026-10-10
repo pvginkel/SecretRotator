@@ -2,9 +2,11 @@
 `python fake_ssh.py <dir> <ssh argv…>`: it appends how it was called to calls.jsonl in <dir>, then
 plays the scenario scenarios.json in <dir> names for the host, `ok` by default: true exits 0, and
 chpasswd records each user's password per host in passwords.json. `echo` and `drop` play ok for
-true."""
+true. The remote command is what the login shell on the host makes of it: ssh joins its words
+with spaces into one string, which that shell splits again."""
 
 import json
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -13,7 +15,8 @@ VALUED = ("-F", "-o", "-l")  # the options the rotator passes that take a value
 
 
 def parse(argv):
-    """(options, login, host, remote) of an ssh command line as the rotator builds it."""
+    """(options, login, host, remote) of an ssh command line as the rotator builds it; remote: the
+    words the host's shell splits the joined command into."""
     options, login, at = {}, None, 0
     while argv[at].startswith("-"):
         flag = argv[at]
@@ -30,7 +33,7 @@ def parse(argv):
         else:
             options[flag] = True
             at += 1
-    return options, login, argv[at], argv[at + 1 :]
+    return options, login, argv[at], shlex.split(" ".join(argv[at + 1 :]))
 
 
 def main():

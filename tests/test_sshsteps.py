@@ -132,6 +132,13 @@ class TestTheRun:
         }
         assert {name: config[name] for name in want} == want
 
+    def test_each_remote_word_reaches_the_host_whole_whatever_shell_syntax_it_holds(self, tmp_path):
+        script = 'read -r key && CEPH_ARGS="--key $key" exec "$@"'
+        remote = ("sudo", "-n", "sh", "-c", script, "sh", "ceph", "a b", "")
+        assert ssh(tmp_path).run("pve1", remote, "").code == 0
+        (call,) = calls(tmp_path)
+        assert call["remote"] == list(remote)
+
     def test_a_re_run_sets_it_again(self, tmp_path):
         set_password = step(tmp_path)
         set_password.run(Ctx())

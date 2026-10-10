@@ -3,6 +3,7 @@
 ansible, with the Ansible key, the host key checked against the homelab SSH host CA. The password
 goes to chpasswd on its stdin, never on a command line, and no detail or error carries it."""
 
+import shlex
 import subprocess
 from collections.abc import Sequence
 from pathlib import Path
@@ -52,7 +53,10 @@ class Ssh:
             "HostKeyAlgorithms": "ssh-ed25519-cert-v01@openssh.com,ssh-ed25519",
         }
         flags = [arg for name, value in options.items() for arg in ("-o", f"{name}={value}")]
-        return [*self.command, "-F", "none", "-T", *flags, "-l", LOGIN, host, *remote]
+        # ssh joins the remote words with spaces into one string the host's login shell splits
+        # again: each is quoted for that shell.
+        quoted = [shlex.quote(word) for word in remote]
+        return [*self.command, "-F", "none", "-T", *flags, "-l", LOGIN, host, *quoted]
 
     def run(self, host: str, remote: Sequence[str], stdin: str) -> Ran:
         """The remote command's exit code and output, stdout and stderr in one stream; code None:
