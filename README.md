@@ -33,13 +33,20 @@ The live commands log in to OpenBao at `https://secrets.home:8200` with the `rot
 the prd cluster with the ServiceAccount token in `SECRET_ROTATOR_K8S_TOKEN`; a plan that rotates
 that token switches the running command to the new one before it deletes the old. `run` and `stamp`
 push their metrics with that token; `stamp` without it stamps all the same. The rotator has no
-identity on the dev cluster: the `k8s-sa-token` kind alone reaches it, with the dev write token the
-KubeCoder catalog holds. The AppRole is bound to srviac's address, so they run on srviac, in the
-`iac` container:
+identity on the dev cluster: the `k8s-sa-token` and `cephx` kinds reach its apiserver with the dev
+write token the KubeCoder catalog holds. The AppRole is bound to srviac's address, so they run on
+srviac, in the `iac` container:
 
 ```sh
 ssh -t ansible@srviac "sudo iac -c 'secret-rotator run <leaf>'"
 ```
+
+srvk8sdev, the dev cluster's VM, is off by default. A plan with a step on it (`Step.vm`) starts
+with `vm.start`, which starts the VM through a PVE node if it is stopped (SSH as `ansible`, `sudo -n
+qm` on the VM's node) and waits up to 15 min until what the plan acts on in it answers. Once the
+plan is done, rolled back or stopped failed, the executor shuts the VM down again if the plan
+started it, and leaves running one it found running. A VM that does not answer in time skips the
+nightly run's plan and fails a `run <path>` one.
 
 The UI starts with `ssh -t ansible@srviac secret-rotator-ui` (Ansible `support/iac-agent/bin/`),
 which runs it in srviac's tmux session `secret-rotator`: a lost SSH session leaves the UI running
@@ -92,33 +99,36 @@ series `metrics.HELP` names.
 - `src/secret_rotator/` is the core: the annotation contract, the audit and the schedule, plans and
   their step factory (`plan`), the executor with its lock, the staging leaf that records a plan in
   flight (`staging`) and the run state (`state`), the run handling `run <path>` and the UI share
-  (`session`), the list the UI shows (`listing`), the generic steps (`kvsteps`, `k8ssteps`,
-  `argocdsteps`, `jenkinssteps`, `githubsteps`, `ansiblesteps`, `sshsteps`, `opsteps`), the
-  nightly run (`nightly`), the standing card, the metrics (`metrics`), and the clients for OpenBao,
-  Kubernetes, Jenkins, GitHub, YouTrack and Telegram.
+  (`session`), the list the UI shows (`listing`), the generic steps
+  (`kvsteps`, `k8ssteps`, `argocdsteps`, `jenkinssteps`, `githubsteps`, `ansiblesteps`, `sshsteps`,
+  `opsteps`), the start and shutdown of a VM that may be off and the PVE client they go through
+  (`vmsteps`), the nightly run (`nightly`), the standing card, the metrics (`metrics`), and the
+  clients for OpenBao, Kubernetes, Jenkins, GitHub, YouTrack and Telegram.
 - `src/secret_rotator/ui/` is `secret-rotator ui`, a Textual app over the executor: the app
   (`app.py`) and its stylesheet (`app.tcss`), the widgets, the wizard's screens collated from a
   plan's steps (`collate`), and `run.py`, which runs a plan's executor on a thread of its own.
 - `src/secret_rotator/kinds/<name>/` holds one package per kind: `random`, `manual`, `approle`,
-  `keycloak_client`, `cnpg_role`, `jenkins_token`, `jenkins_job_token`, `grafana_admin`,
-  `external`, `pve_root_password`, `samba_user`, `step_ca_password`, `github_webhook_secret`,
-  `youtrack_token`, `home_assistant_token`, `google_sa_key`, `elastic_user`, `kubecoder_client`,
-  `k8s_sa_token` and `terraform`. Each is registered as a `secret_rotator.kinds` entry point in
-  `pyproject.toml`, under its kind's name (`keycloak-client` for `keycloak_client`). The leaves of
-  a kind the contract knows but no package implements are skipped. A kind that reaches a system of
-  its own keeps that system's address in its package: Keycloak's two realms (`keycloak_client`, the
-  one place a realm's URL is set), Postgres (`cnpg_role`), Grafana (`grafana_admin`), the PVE nodes
-  (`pve_root_password`), step-ca (`step_ca_password`), Home Assistant (`home_assistant_token`),
-  Google's token endpoint and IAM API (`google_sa_key`), Elasticsearch (`elastic_user`) and
-  KubeCoder's controller (`kubecoder_client`). `youtrack_token` reaches YouTrack and its Hub through
-  the core's YouTrack client, `github_webhook_secret` GitHub through the core's `github.webhook`
-  step, and `k8s_sa_token` the dev cluster at the apiserver and CA the KubeCoder catalog's
-  `kubeconfig-dev-write` names. `terraform` reaches GitHub through the core's GitHub client, under
-  its own token `rotator/terraform/credentials`, and Argo CD through the core's `argocd.sync` step.
-  `kinds/manual/types/<type>.md` holds one
-  document per credential type: the standard instructions a `manual` key's `type` arg picks, under
-  a front matter of the credential's name, the shape a pasted value has (and whether it is entered
-  as lines) and whether it expires.
+  `keycloak_client`, `cnpg_role`, `jenkins_token`, `jenkins_job_token`, `grafana_admin`, `external`,
+  `pve_root_password`, `samba_user`, `step_ca_password`, `github_webhook_secret`, `youtrack_token`,
+  `home_assistant_token`, `google_sa_key`, `elastic_user`, `kubecoder_client`, `k8s_sa_token`,
+  `terraform`, `rgw_admin` and `cephx`. Each is registered as a `secret_rotator.kinds` entry point
+  in `pyproject.toml`, under its kind's name (`keycloak-client` for `keycloak_client`). The leaves
+  of a kind the contract knows but no package implements are skipped. A kind that reaches a system
+  of its own keeps that system's address in its package: Keycloak's two realms (`keycloak_client`,
+  the one place a realm's URL is set), Postgres (`cnpg_role`), Grafana (`grafana_admin`), the PVE
+  nodes (`pve_root_password`), step-ca (`step_ca_password`), Home Assistant
+  (`home_assistant_token`), Google's token endpoint and IAM API (`google_sa_key`), Elasticsearch
+  (`elastic_user`), KubeCoder's controller (`kubecoder_client`), each cluster's RGW admin API on the
+  storage backplane (`rgw_admin`) and each cluster's Ceph VMs, which `cephx` reaches through the
+  guest agent from their PVE node (`sudo -n qm guest exec`). `youtrack_token` reaches YouTrack and
+  its Hub through the core's YouTrack client, `github_webhook_secret` GitHub through the core's
+  `github.webhook` step, and `k8s_sa_token` the dev cluster at the apiserver and CA the KubeCoder
+  catalog's `kubeconfig-dev-write` names; `cephx` reaches it the same way, through `k8s_sa_token`'s
+  reach. `terraform` reaches GitHub through the core's GitHub client, under its own token
+  `rotator/terraform/credentials`, and Argo CD through the core's `argocd.sync` step.
+  `kinds/manual/types/<type>.md` holds one document per credential type: the standard
+  instructions a `manual` key's `type` arg picks, under a front matter of the credential's name, the
+  shape a pasted value has (and whether it is entered as lines) and whether it expires.
 - `src/secret_rotator/seed.yaml` holds the annotations `annotate` writes, transcribed from the
   catalog, in a compact form: per leaf, a default and per-key fields under `keys:`, which `annotate`
   expands into one entry per data key. `store-keys.json` lists the store's leaves and key names,
@@ -130,8 +140,10 @@ series `metrics.HELP` names.
 Python 3.13 and poetry live in the KubeCoder `iac` sidecar. `kc project setup`, `lint` and `test`
 run them there: `ruff check`, `ruff format --check` and `pytest`. The tests drive fakes of OpenBao,
 the cluster with Argo CD's Applications and the Pushgateway behind it, CloudNativePG with its
-Postgres login, Keycloak, Jenkins, Grafana, YouTrack and its Hub, Telegram, step-ca, GitHub, Home
-Assistant, Google, Elasticsearch, KubeCoder's controller, `ansible-playbook`, `ssh` and step-cli,
-never a live system. The UI's pilot tests (`test_ui`, `test_wizard`, `test_wizard_failure`,
-`test_filter`) drive the Textual app over the executor and the fake OpenBao, with `tests/sim.py`'s
-steps standing in for a vendor's side.
+Postgres login, Keycloak, Jenkins, Grafana, YouTrack and its Hub, Telegram, step-ca, GitHub,
+Home Assistant, Google, Elasticsearch, KubeCoder's controller, `ansible-playbook`, `ssh` and
+step-cli, the PVE nodes' `pvesh` and `qm`, the Ceph CLI in a Ceph VM and RGW's admin API, never a
+live system: `tests/conftest.py` fails a test that runs the real `ssh`.
+The UI's pilot tests (`test_ui`, `test_wizard`, `test_wizard_failure`, `test_filter`) drive the
+Textual app over the executor and the fake OpenBao, with `tests/sim.py`'s steps standing in for a
+vendor's side.
