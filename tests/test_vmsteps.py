@@ -34,7 +34,7 @@ from secret_rotator.executor import Abandon, Executor, Outcome
 from secret_rotator.model import Action, Finished, Progress, Skipped
 from secret_rotator.plan import StepFactory, build, target
 from secret_rotator.sshsteps import Ssh
-from secret_rotator.staging import staging_leaf
+from secret_rotator.staging import NOT_LANDED, staging_leaf
 from secret_rotator.state import LeafState
 from secret_rotator.vmsteps import (
     DEV_VM,
@@ -322,6 +322,22 @@ class TestWhateverTheOutcome:
         assert world.commands() == [("pve", "start"), ("pve", "shutdown")]
         assert world.recorder.lines()[:2] == [("started", "a", Action.RUN), ("ok", "a", Action.RUN)]
 
+    def test_a_resume_whose_vm_pve_will_not_start_keeps_the_step_not_landed(self):
+        world = World()
+        world.fake.refused = {"start"}
+        plan = world.plan(world.on("a"))
+        put_flight(world.bao, "random", LEAF, ["token"], "a", **{NOT_LANDED: "a"})
+        executor = world.executor(plan)
+        assert executor.run() is Outcome.FAILED
+        (failed,) = world.recorder.failures()
+        assert (failed.step.id, failed.error) == (
+            "a",
+            "qm start 919 on pve exited 255: start failed: refused",
+        )
+        assert world.journal == []
+        assert world.bao.data(STAGING).get(NOT_LANDED) == "a"
+        assert ("a", Action.UNDO) not in [(s.id, action) for s, action in executor.rollback()]
+
     def test_a_shutdown_that_fails_fails_no_rotation(self):
         world = World()
         world.fake.refused = {"shutdown"}
@@ -348,6 +364,17 @@ class TestAVmThatDoesNotComeUp:
         assert flight_of(world.bao, LEAF) is None
         assert state_of(world.bao, LEAF) == LeafState()
         assert lock(world.bao).holder() is None
+
+    def test_unattended_a_running_vm_whose_steps_do_not_answer_skips_the_plan_and_stays_up(self):
+        world = World(running=True)
+        world.answering = False
+        executor = world.executor(world.plan(world.on("a")))
+        assert executor.run(unattended=True) is Outcome.SKIPPED
+        assert executor.skip == Skipped(executor.plan.steps[0], NO_ANSWER)
+        assert world.recorder.failures() == [] and world.journal == []
+        assert world.commands() == [] and world.vm.status == "running"
+        assert world.clock.now >= 900
+        assert flight_of(world.bao, LEAF) is None
 
     def test_attended_it_fails_the_plan_and_the_vm_is_shut_down(self):
         world = World(boots=False)
