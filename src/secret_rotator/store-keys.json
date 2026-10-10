@@ -439,6 +439,9 @@
   "rotator/oidc-auth-client": [
     "client_secret"
   ],
+  "rotator/ssh-key/credentials": [
+    "token"
+  ],
   "rotator/telegram": [
     "token"
   ],

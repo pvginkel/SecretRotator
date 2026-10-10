@@ -193,9 +193,12 @@ class StepFactory:
         counter: Playbook | None = None,
         *,
         no_undo: str = "",
+        vms: Iterable[str] = (),
     ) -> list[Step]:
-        """A playbook run, its id ansible.run:<name>; counter: the run that undoes it."""
-        return [AnsibleRun(self.ansible, name, title, book, counter, no_undo=no_undo)]
+        """A playbook run, its id ansible.run:<name>; counter: the run that undoes it; vms: the VMs
+        that may be off it reaches (Step.vms)."""
+        step = AnsibleRun(self.ansible, name, title, book, counter, no_undo=no_undo, vms=tuple(vms))
+        return [step]
 
     def commit_file(
         self,

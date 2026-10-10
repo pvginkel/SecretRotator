@@ -34,6 +34,7 @@ from secret_rotator.kinds.pve_root_password import PveRootPassword
 from secret_rotator.kinds.random import Random
 from secret_rotator.kinds.rgw_admin import RgwAdmin
 from secret_rotator.kinds.samba_user import SambaUser
+from secret_rotator.kinds.ssh_key import SshKey
 from secret_rotator.kinds.step_ca_password import StepCaPassword
 from secret_rotator.kinds.terraform import Terraform
 from secret_rotator.kinds.youtrack_token import YouTrackToken
@@ -120,6 +121,7 @@ class TestTheRegistry:
             "terraform",
             "rgw-admin",
             "cephx",
+            "ssh-key",
             "external",
         }
         assert isinstance(KINDS["random"], Random) and isinstance(KINDS["manual"], Manual)
@@ -143,6 +145,7 @@ class TestTheRegistry:
         assert isinstance(KINDS["k8s-sa-token"], K8sSaToken)
         assert isinstance(KINDS["rgw-admin"], RgwAdmin)
         assert isinstance(KINDS["cephx"], Cephx)
+        assert isinstance(KINDS["ssh-key"], SshKey)
 
     @pytest.mark.parametrize(
         ("found", "problem"),

@@ -169,11 +169,13 @@ class AnsibleRun(Step):
         counter: Playbook | None = None,
         *,
         no_undo: str = "",
+        vms: tuple[str, ...] = (),
     ):
         super().__init__(f"ansible.run:{name}", title)
         self.ansible = ansible
         self.book = book
         self.counter = counter
+        self.vms = vms
         if counter is None:
             self.undo = None
             self.no_undo = no_undo or f"{title}: the playbook has no counter-run"

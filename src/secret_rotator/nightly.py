@@ -16,16 +16,19 @@ from dataclasses import dataclass
 from secret_rotator import card as cards
 from secret_rotator import metrics
 from secret_rotator.ansiblekey import AnsibleKey
+from secret_rotator.ansiblesteps import Ansible
 from secret_rotator.argocdsteps import ArgocdSync
 from secret_rotator.audit import Audit, Leaf, audit, due_keys, live_store, report
 from secret_rotator.cluster import Cluster
 from secret_rotator.executor import Executor, Outcome
+from secret_rotator.github import GitHub
 from secret_rotator.k8ssteps import K8sRollout
 from secret_rotator.lock import Holder, Lock, LockHeld, utcnow
 from secret_rotator.model import Event, Finished, Started, Step, label
 from secret_rotator.openbao import OpenBao
 from secret_rotator.plan import Kind, Plan, PlanError, make, split
 from secret_rotator.schedule import KeySchedule
+from secret_rotator.sshsteps import Ssh
 from secret_rotator.staging import flights
 from secret_rotator.state import LeafState, State
 from secret_rotator.switches import Switches
@@ -156,11 +159,17 @@ class Night:
         now: Callable[[], datetime.datetime] = utcnow,
         clock: Callable[[], float] = time.monotonic,
         pve: Pve | None = None,
+        ansible: Ansible | None = None,
+        ssh: Ssh | None = None,
+        github: GitHub | None = None,
         ansible_key: AnsibleKey | None = None,
     ):
         self.bao = bao
         self.cluster = cluster
         self.pve = pve
+        self.ansible = ansible
+        self.ssh = ssh
+        self.github = github
         self.ansible_key = ansible_key
         self.kinds = kinds
         self.switches = switches
@@ -304,6 +313,10 @@ class Night:
                 self.result,
                 self.cluster,
                 pve=self.pve,
+                ansible=self.ansible,
+                ssh=self.ssh,
+                github=self.github,
+                ansible_key=self.ansible_key,
             )
         except PlanError as e:
             why = str(e).removeprefix(f"{due.leaf}: ")
@@ -594,13 +607,17 @@ def run(
     now: Callable[[], datetime.datetime] = utcnow,
     clock: Callable[[], float] = time.monotonic,
     pve: Pve | None = None,
+    ansible: Ansible | None = None,
+    ssh: Ssh | None = None,
+    github: GitHub | None = None,
     ansible_key: AnsibleKey | None = None,
 ) -> int:
     """The nightly run: Jeeves's token for the card and the bot's for Telegram, from the store.
     The card's client reads Jeeves's token from its leaf at each request, so a youtrack-token plan
     of rotator/youtrack switches it to the new token at its kv.write, before it revokes the old
     one, and a rollback's kv.write undo switches it back. ansible_key: the rotator's Ansible key
-    file, which follows its leaf the same way (Executor)."""
+    files, the login file following its leaf the same way (Executor). pve, ansible, ssh and
+    github: what the plans' steps reach, the real ones by default (StepFactory)."""
     chat = switches.telegram_chat_id
     bot = None if chat is None else telegram(bao.value(*BOT_TOKEN), chat)
     return Night(
@@ -615,5 +632,8 @@ def run(
         now=now,
         clock=clock,
         pve=pve,
+        ansible=ansible,
+        ssh=ssh,
+        github=github,
         ansible_key=ansible_key,
     ).go()

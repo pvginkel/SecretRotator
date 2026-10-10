@@ -63,8 +63,9 @@ def failure(e: Exception) -> tuple[str, str]:
 
 
 class NoAnswer(StepFailed):
-    """What the steps on a VM that may be off act on did not answer within the bound of the plan's
-    vm.start (vmsteps). Nothing it waited for ran: it did not land."""
+    """What a step acts on did not answer (Step.unanswered): what the steps on a VM that may be off
+    act on, within the bound of the plan's vm.start (vmsteps), or a system a step asks before it
+    acts. Nothing it waited for ran: it did not land."""
 
     def __init__(self, error: str):
         super().__init__(error, landed=False)

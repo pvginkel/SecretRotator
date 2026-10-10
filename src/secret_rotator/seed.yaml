@@ -648,7 +648,7 @@ eso/prd/zigbee2mqtt/prd/oidc:
 
 iac/ansible-ssh-key:
   kind: ssh-key
-  interval: 365d
+  interval: 14d
   activate: none
 
 iac/backup-server:
@@ -903,6 +903,16 @@ rotator/terraform/credentials:
     and nothing more, repository access only these seven: ElectronicsInventoryDeploy, IotDeploy,
     KeycloakDeploy, GuacamoleDeploy, StorageDeploy, YoutrackDeploy, PostgresPasDeploy. It commits
     their keepers to config/<stage>/rotation.tfvars on main."
+
+# The ssh-key kind's GitHub token, minted by the operator.
+rotator/ssh-key/credentials:
+  kind: manual
+  args: {"type":"github-pat"}
+  interval: 365d
+  activate: none
+  notes: "The ssh-key kind's token: fine-grained, on pvginkel, permission Contents read and write
+    and nothing more, repository access only pvginkel/Ansible. It commits the ansible user's new
+    public key to ansible/roles/bootstrap/files/ansible.pub on main."
 
 # OpenBao's own OIDC login client: the openbao role reads its secret from here, and its rotation
 # writes it into auth/oidc/config.

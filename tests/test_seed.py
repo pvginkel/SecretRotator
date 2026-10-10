@@ -313,6 +313,7 @@ def test_every_scheduled_manual_key_names_the_type_the_catalog_gives_it(entries)
         ("iac/tf-backend", "github_token"): "github-pat",
         ("jenkins/sops-publish", "token"): "github-pat",
         ("rotator/github", "token"): "github-pat",
+        ("rotator/ssh-key/credentials", "token"): "github-pat",
         ("rotator/terraform/credentials", "token"): "github-pat",
         ("eso/prd/jenkins-telegram-bot/prd/config", "telegram-bot-token"): "telegram-bot-token",
         ("eso/prd/kubecoder/dev/bot-token", "token"): "telegram-bot-token",
@@ -377,6 +378,7 @@ def test_the_rotators_own_leaves_are_annotated(entries):
     assert entries["rotator/jenkins"]["token"]["kind"] == "jenkins-token"
     assert entries["rotator/jenkins"]["user"] == {"kind": "none"}
     assert entries["rotator/terraform/credentials"]["token"]["kind"] == "manual"
+    assert entries["rotator/ssh-key/credentials"]["token"]["kind"] == "manual"
     for leaf in (
         "iac/rotator-approle",
         "iac/rotator-k8s-token",
@@ -385,6 +387,7 @@ def test_the_rotators_own_leaves_are_annotated(entries):
         "rotator/youtrack-token/credentials",
         "rotator/jenkins",
         "rotator/terraform/credentials",
+        "rotator/ssh-key/credentials",
     ):
         scheduled = [f for f in entries[leaf].values() if is_scheduled(f["kind"])]
         assert [f["activate"] for f in scheduled] == ["none"], leaf
