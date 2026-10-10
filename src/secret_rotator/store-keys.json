@@ -378,6 +378,9 @@
   "jenkins/scantopdf-android-keystore": [
     "password"
   ],
+  "jenkins/sops-publish": [
+    "token"
+  ],
   "jenkins/youtrack": [
     "admin-token",
     "webhook-token"

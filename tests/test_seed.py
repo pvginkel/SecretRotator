@@ -266,6 +266,7 @@ def test_every_scheduled_manual_key_names_the_type_the_catalog_gives_it(entries)
         ("eso/prd/kubecoder/dev/github-token", "token"): "github-pat",
         ("eso/prd/kubecoder/prd/github-token", "token"): "github-pat",
         ("iac/tf-backend", "github_token"): "github-pat",
+        ("jenkins/sops-publish", "token"): "github-pat",
         ("rotator/github", "token"): "github-pat",
         ("eso/prd/jenkins-telegram-bot/prd/config", "telegram-bot-token"): "telegram-bot-token",
         ("eso/prd/kubecoder/dev/bot-token", "token"): "telegram-bot-token",

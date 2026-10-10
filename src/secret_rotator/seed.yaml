@@ -759,6 +759,15 @@ jenkins/scantopdf-android-keystore:
   notes: "keystore password, today the same personal password as the other Android keystore;
     re-keying is an operator project, not a copy relation"
 
+jenkins/sops-publish:
+  kind: manual
+  args: {"type":"github-pat"}
+  interval: 365d
+  activate: none
+  notes: "IaC/Build-Main's token: fine-grained, on pvginkel, repository access only pvginkel/SOPs,
+    permission Actions read and write and nothing more. It starts SOPs' Publish workflow after a
+    push to Ansible main that touches docs/runbooks/."
+
 jenkins/youtrack:
   kind: youtrack-token
   interval: 14d
