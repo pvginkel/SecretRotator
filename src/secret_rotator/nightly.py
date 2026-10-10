@@ -15,6 +15,7 @@ from dataclasses import dataclass
 
 from secret_rotator import card as cards
 from secret_rotator import metrics
+from secret_rotator.ansiblekey import AnsibleKey
 from secret_rotator.argocdsteps import ArgocdSync
 from secret_rotator.audit import Audit, Leaf, audit, due_keys, live_store, report
 from secret_rotator.cluster import Cluster
@@ -155,10 +156,12 @@ class Night:
         now: Callable[[], datetime.datetime] = utcnow,
         clock: Callable[[], float] = time.monotonic,
         pve: Pve | None = None,
+        ansible_key: AnsibleKey | None = None,
     ):
         self.bao = bao
         self.cluster = cluster
         self.pve = pve
+        self.ansible_key = ansible_key
         self.kinds = kinds
         self.switches = switches
         self.dry_run = switches.dry_run
@@ -383,7 +386,14 @@ class Night:
         leaf = plan.target.leaf
         renderer = LogRenderer(self.out, self.clock)
         executor = Executor(
-            self.bao, plan, renderer, self.lock, state=self.state, dry_run=False, clock=self.now
+            self.bao,
+            plan,
+            renderer,
+            self.lock,
+            state=self.state,
+            dry_run=False,
+            clock=self.now,
+            ansible_key=self.ansible_key,
         )
         outcome = executor.run(unattended=True)
         self.settled(executor)
@@ -584,11 +594,13 @@ def run(
     now: Callable[[], datetime.datetime] = utcnow,
     clock: Callable[[], float] = time.monotonic,
     pve: Pve | None = None,
+    ansible_key: AnsibleKey | None = None,
 ) -> int:
     """The nightly run: Jeeves's token for the card and the bot's for Telegram, from the store.
     The card's client reads Jeeves's token from its leaf at each request, so a youtrack-token plan
     of rotator/youtrack switches it to the new token at its kv.write, before it revokes the old
-    one, and a rollback's kv.write undo switches it back."""
+    one, and a rollback's kv.write undo switches it back. ansible_key: the rotator's Ansible key
+    file, which follows its leaf the same way (Executor)."""
     chat = switches.telegram_chat_id
     bot = None if chat is None else telegram(bao.value(*BOT_TOKEN), chat)
     return Night(
@@ -603,4 +615,5 @@ def run(
         now=now,
         clock=clock,
         pve=pve,
+        ansible_key=ansible_key,
     ).go()

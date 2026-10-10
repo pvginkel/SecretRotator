@@ -26,10 +26,11 @@ from test_kinds import ACTIVATE_NONE, WIFI, store_of
 from test_nightly import TRELLO, WEBHOOK
 from test_nightly import world as nightly_world
 
-from secret_rotator import cli
+from secret_rotator import ansiblekey, cli
 from secret_rotator.audit import audit, due_keys, live_store
 from secret_rotator.console import Console
 from secret_rotator.contract import LOCK_LEAF, STATE_LEAF
+from secret_rotator.executor import Executor
 from secret_rotator.openbao import OpenBao
 from secret_rotator.switches import Switches, SwitchesError
 from secret_rotator.telegram import Telegram, TelegramError
@@ -670,3 +671,76 @@ class TestOffline:
         self.names = {"iac/x": "token"}
         assert self.check() == 1
         assert "not a JSON object of leaf path -> key names" in "\n".join(self.lines)
+
+
+class TestTheRotatorsAnsibleKey:
+    """run, run <path> and ui hand each executor the rotator's real Ansible key files, which follow
+    the leaf in a plan that logs in as ansible (ansiblekey); the random plans here do not."""
+
+    @pytest.fixture
+    def handed(self, monkeypatch):
+        got = []
+        init = Executor.__init__
+
+        def recording(self, *args, **kwargs):
+            got.append(kwargs.get("ansible_key"))
+            init(self, *args, **kwargs)
+
+        monkeypatch.setattr(Executor, "__init__", recording)
+        return got
+
+    @staticmethod
+    def real(handed):
+        assert handed
+        for key in handed:
+            assert isinstance(key, ansiblekey.AnsibleKey)
+            assert key.login == Path.home() / ".ssh" / "id_ed25519_ansible"
+            assert key.copy == ansiblekey.COPY
+        return True
+
+    def test_the_nightly_run(self, handed):
+        bao = nightly_world(due=(LEAF,))
+        for leaf, key in ((TRELLO, "bearer-token"), (WEBHOOK, "token")):
+            put_state(bao, leaf, stamps={key: "2999-01-01"})
+        code = cli.main(
+            ["run"],
+            opener=bao,
+            out=lambda line: None,
+            environ=ENV,
+            kube=FakeCluster().kube,
+            switches=switches(),
+            youtrack=lambda token: YouTrack(token, opener=FakeYouTrack()),
+            telegram=lambda token, chat: Telegram(token, chat, opener=FakeTelegram()),
+            source=lambda: SOURCE,
+        )
+        assert code == 0 and self.real(handed)
+
+    def test_a_run_of_a_leaf(self, handed):
+        con = Console(io.StringIO("y\nSECRET-psk\nc\n"), io.StringIO())
+        code = cli.main(
+            ["run", WIFI],
+            opener=fake_of(store_of(**ACTIVATE_NONE)),
+            out=lambda line: None,
+            environ=ENV,
+            console=lambda: con,
+            kube=FakeCluster().kube,
+            source=lambda: SOURCE,
+        )
+        assert code == 0 and self.real(handed)
+
+    def test_the_ui(self, handed, monkeypatch):
+        shown = []
+        monkeypatch.setattr(RotatorApp, "run", lambda app: shown.append(app))
+        code = cli.main(
+            ["ui"],
+            opener=fake_of(store_of(**ACTIVATE_NONE)),
+            out=pytest.fail,
+            environ=ENV,
+            kube=FakeCluster().kube,
+            switches=switches(),
+        )
+        assert code == 0
+        (app,) = shown
+        item = next(iter(app.items.values()))
+        app.executor_of(item.rotation.plan, None)
+        assert self.real(handed)

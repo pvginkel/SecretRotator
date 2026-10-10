@@ -7,6 +7,7 @@ import functools
 import time
 from collections.abc import Callable, Mapping
 
+from secret_rotator.ansiblekey import AnsibleKey
 from secret_rotator.audit import Audit, Leaf, audit, exempt, live_store
 from secret_rotator.cluster import Cluster
 from secret_rotator.console import Console
@@ -402,10 +403,12 @@ def run_leaf(
     cluster: Cluster | None = None,
     clock: Callable[[], float] = time.monotonic,
     notify: Callable[[str], None] | None = None,
+    ansible_key: AnsibleKey | None = None,
 ) -> int:
     """`run <path>`: the leaf's plan in flight, else the plan the operator picks, run to an end. 1
     when it did not end with the plan done, rolled back, cancelled or left by the operator.
-    notify: where each failure is told in Telegram too."""
+    notify: where each failure is told in Telegram too. ansible_key: the rotator's Ansible key
+    file, which follows its leaf (Executor)."""
     store = live_store(bao, runs=True)
     if leaf not in store:
         console.line(f"error: no leaf {leaf}")
@@ -430,7 +433,15 @@ def run_leaf(
                 console.line("Its other plans wait until this one is done or rolled back.")
         renderer = TerminalRenderer(console, today, clock)
         state = State(bao, store)
-        executor = Executor(bao, plan, renderer, Lock(bao, holder), state=state, dry_run=False)
+        executor = Executor(
+            bao,
+            plan,
+            renderer,
+            Lock(bao, holder),
+            state=state,
+            dry_run=False,
+            ansible_key=ansible_key,
+        )
         renderer.executor = executor
         session = Session(
             executor,

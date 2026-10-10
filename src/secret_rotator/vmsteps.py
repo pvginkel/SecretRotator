@@ -127,6 +127,7 @@ class VmStart(Step):
     a rollback undoes: the shutdown is the executor's, whatever the plan's outcome."""
 
     type = "vm.start"
+    logs_in = True
 
     def __init__(self, pve: Pve, guest: str, steps: Sequence[Step]):
         super().__init__(f"vm.start:{guest}", f"start {guest} if it is off")

@@ -71,6 +71,9 @@ class Ansible:
         env["ANSIBLE_NOCOLOR"] = "1"
         # A file a killed rotator leaves goes with the iac container, removed when its command ends.
         with tempfile.TemporaryDirectory(prefix="secret-rotator-") as private:
+            # The SSH connections Ansible keeps open between its logins (ansible.cfg ssh_args:
+            # ControlPersist) serve this run only: a run after the key file changed opens its own.
+            env["ANSIBLE_SSH_CONTROL_PATH_DIR"] = str(Path(private) / "cp")
             extra = Path(private) / "extra-vars.json"
             fd = os.open(extra, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w") as f:
@@ -155,6 +158,7 @@ class AnsibleRun(Step):
 
     type = "ansible.run"
     mutates = True
+    logs_in = True
 
     def __init__(
         self,

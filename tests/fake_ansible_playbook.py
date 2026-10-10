@@ -49,7 +49,10 @@ def main():
         "extra_vars": values,
         "mode": stat.S_IMODE(os.stat(extra).st_mode),
         "dir_mode": stat.S_IMODE(os.stat(Path(extra).parent).st_mode),
-        "env": {k: os.environ.get(k) for k in ("ANSIBLE_NOCOLOR", "ANSIBLE_FORCE_COLOR")},
+        "env": {
+            k: os.environ.get(k)
+            for k in ("ANSIBLE_NOCOLOR", "ANSIBLE_FORCE_COLOR", "ANSIBLE_SSH_CONTROL_PATH_DIR")
+        },
     }
     Path("report.json").write_text(json.dumps(report))
     if scenario == "hang":

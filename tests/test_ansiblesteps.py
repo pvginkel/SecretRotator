@@ -103,7 +103,21 @@ class TestTheRun:
         step(tmp_path).run(Ctx())
         seen = report(tmp_path)
         assert seen["cwd"] == str(tmp_path)
-        assert seen["env"] == {"ANSIBLE_NOCOLOR": "1", "ANSIBLE_FORCE_COLOR": None}
+        assert seen["env"]["ANSIBLE_NOCOLOR"] == "1" and seen["env"]["ANSIBLE_FORCE_COLOR"] is None
+
+    def test_each_run_keeps_its_ssh_connections_to_itself(self, tmp_path, monkeypatch):
+        """A login after the key file changed never rides a connection Ansible kept open
+        (ControlPersist) from a run that logged in with the old key."""
+        monkeypatch.setenv("ANSIBLE_SSH_CONTROL_PATH_DIR", "/root/.ansible/cp")
+        dirs = []
+        for _ in range(2):
+            step(tmp_path).run(Ctx())
+            seen = report(tmp_path)
+            private = Path(seen["extra_path"]).parent
+            assert seen["env"]["ANSIBLE_SSH_CONTROL_PATH_DIR"] == str(private / "cp")
+            assert not private.exists()
+            dirs.append(seen["env"]["ANSIBLE_SSH_CONTROL_PATH_DIR"])
+        assert dirs[0] != dirs[1]
 
     def test_each_task_is_a_progress_detail(self, tmp_path):
         ctx = Ctx()

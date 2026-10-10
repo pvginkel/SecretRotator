@@ -5,6 +5,7 @@ import datetime
 import os
 from collections.abc import Callable, Mapping, MutableMapping
 
+from secret_rotator.ansiblekey import AnsibleKey
 from secret_rotator.audit import live_store
 from secret_rotator.cluster import Cluster
 from secret_rotator.executor import Executor, Renderer
@@ -30,15 +31,20 @@ def main(
     cluster: Cluster,
     today: datetime.date,
     notify: Callable[[str], None] | None,
+    ansible_key: AnsibleKey | None = None,
 ) -> int:
-    """notify: where each failure is told in Telegram, None while no chat is committed."""
+    """notify: where each failure is told in Telegram, None while no chat is committed.
+    ansible_key: the rotator's Ansible key file, which follows its leaf (Executor): the UI outlives
+    the rotations of other runs."""
     store = live_store(bao, runs=True)
     rotations = listed(store, kinds, cluster)
     state = State(bao, store)
     lock = Lock(bao, holder_name("ui"))
 
     def executor(plan: Plan, renderer: Renderer) -> Executor:
-        return Executor(bao, plan, renderer, lock, state=state, dry_run=False)
+        return Executor(
+            bao, plan, renderer, lock, state=state, dry_run=False, ansible_key=ansible_key
+        )
 
     full_colour(os.environ)
     now = datetime.datetime.now().astimezone()

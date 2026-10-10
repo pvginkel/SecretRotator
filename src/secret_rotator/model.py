@@ -153,6 +153,9 @@ class Step(abc.ABC):
     # plan starts with a vm.start of it, and the executor has it up whenever the step or its undo
     # runs.
     vm: str | None = None
+    # It logs in to a host over SSH as ansible, by the key file every such login names: in its
+    # plan, the executor has that file hold the key its leaf holds (ansiblekey).
+    logs_in = False
 
     def __init__(self, id: str, title: str, *, estimate: int = 0):
         self.id = id  # stable across rebuilds of the same plan

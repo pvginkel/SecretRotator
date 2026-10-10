@@ -7,6 +7,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from secret_rotator.ansiblekey import AnsibleKey
 from secret_rotator.ansiblesteps import Ansible, AnsibleRun, Playbook
 from secret_rotator.argocdsteps import ArgocdSync, Pushed
 from secret_rotator.audit import Audit, Leaf
@@ -29,7 +30,7 @@ from secret_rotator.kvsteps import (
 from secret_rotator.model import Actor, Step
 from secret_rotator.opsteps import OperatorConfirm, OperatorCredential, OperatorShow, Shape
 from secret_rotator.schedule import schedule
-from secret_rotator.sshsteps import Ssh, SshSetPassword
+from secret_rotator.sshsteps import Ssh, SshKeyCopy, SshKeygen, SshSetPassword
 from secret_rotator.staging import InFlight
 from secret_rotator.vmsteps import Pve, starts
 
@@ -95,8 +96,8 @@ class StepFactory:
     """The patterns a plan is built from, named by what they do (design §4.3). Without a cluster,
     as offline without a snapshot, it builds no Kubernetes step. What derived holds of a leaf is
     not read from the cluster again: a plan in flight is rebuilt from what it derived when it
-    started (design §4.5). Jenkins, Ansible, SSH, GitHub and PVE are reached only when a step runs:
-    by default the real ones."""
+    started (design §4.5). Jenkins, Ansible, SSH, GitHub and PVE are reached, and the rotator's
+    Ansible key files written, only when a step runs: by default the real ones."""
 
     def __init__(
         self,
@@ -109,6 +110,7 @@ class StepFactory:
         ssh: Ssh | None = None,
         github: GitHub | None = None,
         pve: Pve | None = None,
+        ansible_key: AnsibleKey | None = None,
     ):
         self.target = target
         self.cluster = cluster
@@ -121,6 +123,7 @@ class StepFactory:
         self.ssh = ssh or Ssh()
         self.github = github or GitHub()
         self.pve = pve or Pve()
+        self.ansible_key = ansible_key or AnsibleKey()
         # What the activation read from the cluster, for the leaf's consumers in the run state: the
         # ExternalSecrets it syncs and the workloads it derived; a named target is in an activate
         # already.
@@ -131,6 +134,17 @@ class StepFactory:
     ) -> list[Step]:
         """A new random value for one of the plan's keys."""
         return [RandomGenerate(key, length=length, charset=charset)]
+
+    def keygen(self, key: str, comment: str) -> list[Step]:
+        """A new ed25519 keypair for one of the plan's keys, its public half's line ending in the
+        comment, and the pair the leaf's key holds now, staged for the steps after it (SshKeygen);
+        the plan puts it before write()."""
+        return [SshKeygen(self.target.leaf, key, comment)]
+
+    def key_copy(self, key: str) -> list[Step]:
+        """srviac's copy of the Ansible key switched to the new private half of one of the plan's
+        keys, its undo back to the old one (SshKeyCopy); after keygen()."""
+        return [SshKeyCopy(self.ansible_key, key)]
 
     def write(self) -> list[Step]:
         """kv.write of the plan's keys to the leaf, then a kv.copy per copy key."""
@@ -391,6 +405,11 @@ class Plan:
     def needs_operator(self) -> bool:
         return any(step.actor is Actor.OPERATOR for step in self.steps)
 
+    @property
+    def logs_in(self) -> bool:
+        """Whether a step of it logs in to a host as ansible (Step.logs_in)."""
+        return any(step.logs_in for step in self.steps)
+
     def index(self, step_id: str) -> int | None:
         return next((i for i, step in enumerate(self.steps) if step.id == step_id), None)
 
@@ -446,6 +465,7 @@ def build(
     ssh: Ssh | None = None,
     github: GitHub | None = None,
     pve: Pve | None = None,
+    ansible_key: AnsibleKey | None = None,
 ) -> Plan:
     """The kind's plan of the Target; derived: a plan in flight's record of what it derived. A
     vm.start of each VM a step of the kind's names (Step.vm) comes first, kv.stamp last."""
@@ -465,6 +485,7 @@ def build(
         ssh=ssh,
         github=github,
         pve=pve,
+        ansible_key=ansible_key,
     )
     planned = kind.plan(leaf, PlanContext(factory))
     steps = [
@@ -492,6 +513,7 @@ def make(
     ssh: Ssh | None = None,
     github: GitHub | None = None,
     pve: Pve | None = None,
+    ansible_key: AnsibleKey | None = None,
 ) -> Plan:
     """The plan of rotating these keys of the leaf, built by the kind's plugin; derived: a plan
     in flight's record of what it derived from the cluster."""
@@ -508,6 +530,7 @@ def make(
         ssh=ssh,
         github=github,
         pve=pve,
+        ansible_key=ansible_key,
     )
 
 

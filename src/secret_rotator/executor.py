@@ -15,13 +15,19 @@ A VM that may be off is up whenever a step on it (Step.vm) or its undo runs: the
 brings it up, the first time a run or an abort needs it (vmsteps). Each run and each abort ends by
 shutting down every VM the plan's staging leaf records the plan started, whatever its outcome, so a
 plan resumed or rolled back leaves a VM as it found it; the record lives as long as the staging
-leaf, so a later process shuts down a VM an earlier one started."""
+leaf, so a later process shuts down a VM an earlier one started.
+
+In a plan with a step that logs in to a host as ansible (Plan.logs_in), the file every such login
+names holds the key its leaf holds (ansiblekey) before each step, undo and re-run: from the plan's
+kv.write of a new key on, the rotator logs in with it, and with the old one again once a rollback
+has undone the write. A key that cannot be read fails the step before it runs."""
 
 import datetime
 from collections.abc import Callable
 from enum import StrEnum
 from typing import Protocol
 
+from secret_rotator.ansiblekey import AnsibleKey
 from secret_rotator.lock import Lock, utcnow
 from secret_rotator.model import (
     Action,
@@ -149,7 +155,8 @@ class Executor:
     """Runs one plan. run() starts it, resumes it and retries its failed step; abort() rolls it
     back. Each takes the lock for as long as it runs. In a dry run nothing runs and nothing is
     read or written, and no VM is started. A front end that runs it off its own thread stops it
-    with stop()."""
+    with stop(). ansible_key: the rotator's Ansible key file, which follows its leaf in a plan that
+    logs in as ansible; None leaves the file as it is."""
 
     def __init__(
         self,
@@ -161,8 +168,10 @@ class Executor:
         state: State,
         dry_run: bool,
         clock: Callable[[], datetime.datetime] = utcnow,
+        ansible_key: AnsibleKey | None = None,
     ):
         self.bao = bao
+        self.ansible_key = ansible_key
         self.state = state
         self.plan = plan
         self.leaf = plan.target.leaf
@@ -248,8 +257,12 @@ class Executor:
         self.skip = None
 
     def _ready(self, step: Step, ctx: "_RunContext") -> None:
-        """The VM the step acts on (Step.vm) up, through the plan's vm.start, once per run or
-        abort."""
+        """What a step needs before it, its undo or its re-run: in a plan that logs in as ansible,
+        the rotator's Ansible key file holding the key its leaf holds, the one a step before wrote
+        there or took back or a rotation of another process; and the VM the step acts on
+        (Step.vm) up, through the plan's vm.start, once per run or abort."""
+        if self.ansible_key is not None and self.plan.logs_in:
+            self.ansible_key.follow(self.bao)
         if step.vm is None or step.vm in self._up:
             return
         self.starts[step.vm].up(ctx)

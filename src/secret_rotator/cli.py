@@ -11,6 +11,7 @@ from pathlib import Path
 from secret_rotator import annotate as ann
 from secret_rotator import audit as aud
 from secret_rotator import metrics, nightly, provenance, registry, terminal, ui
+from secret_rotator.ansiblekey import AnsibleKey
 from secret_rotator.cluster import SNAPSHOT, Cluster, SnapshotError
 from secret_rotator.console import Console
 from secret_rotator.contract import (
@@ -272,7 +273,7 @@ def main(
         if args.command in ("ui", "run"):
             notify = notifier(bao, switches().telegram_chat_id, telegram)
             if args.command == "ui":
-                code = ui.main(bao, kinds, cluster, today, notify)
+                code = ui.main(bao, kinds, cluster, today, notify, ansible_key=AnsibleKey())
                 metrics.push_state(bao, kinds, cluster.kube, out)
                 return code
             code = terminal.run_leaf(
@@ -284,6 +285,7 @@ def main(
                 today=today,
                 cluster=cluster,
                 notify=notify,
+                ansible_key=AnsibleKey(),
             )
             metrics.push_state(bao, kinds, cluster.kube, out)
             return code
@@ -392,4 +394,5 @@ def run_nightly(
         out=out,
         holder=holder_name("run"),
         clock=clock,
+        ansible_key=AnsibleKey(),
     )
