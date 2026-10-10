@@ -782,7 +782,8 @@ shared/dev/ceph-csi:
   interval: 365d
   activate: none
   keys:
-    user_id: {kind: none}
+    user_id: {kind: cephx}
+    user_key: {kind: cephx}
 
 shared/dev/ceph-rgw/s3:
   kind: rgw-admin
@@ -805,7 +806,8 @@ shared/prd/ceph-csi:
   interval: 365d
   activate: none
   keys:
-    user_id: {kind: none}
+    user_id: {kind: cephx}
+    user_key: {kind: cephx}
 
 shared/prd/ceph-rgw/s3:
   kind: rgw-admin

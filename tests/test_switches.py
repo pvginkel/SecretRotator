@@ -57,7 +57,10 @@ def test_a_valid_file_parses():
             {"kinds_enabled": ["keycloak-client"]},
             "kinds_enabled: 'keycloak-client' is not an implemented kind",
         ),
-        ({"kinds_enabled": ["cephx"]}, "kinds_enabled: 'cephx' is not an implemented kind"),
+        (
+            {"kinds_enabled": ["mosquitto-user"]},
+            "kinds_enabled: 'mosquitto-user' is not an implemented kind",
+        ),
         ({"kinds_enabled": ["none"]}, "kinds_enabled: 'none' is not an implemented kind"),
         ({"max_rotations_per_run": 0}, "max_rotations_per_run: not a whole number from 1"),
         ({"max_rotations_per_run": True}, "max_rotations_per_run: not a whole number from 1"),

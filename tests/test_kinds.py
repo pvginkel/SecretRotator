@@ -16,6 +16,7 @@ from secret_rotator.audit import Leaf, audit
 from secret_rotator.contract import MARKER_VALUE
 from secret_rotator.executor import Abandon, Executor, Outcome
 from secret_rotator.kinds.approle import AppRole
+from secret_rotator.kinds.cephx import Cephx
 from secret_rotator.kinds.cnpg_role import CnpgRole
 from secret_rotator.kinds.elastic_user import ElasticUser
 from secret_rotator.kinds.external import RUNBOOK, External
@@ -118,6 +119,7 @@ class TestTheRegistry:
             "k8s-sa-token",
             "terraform",
             "rgw-admin",
+            "cephx",
             "external",
         }
         assert isinstance(KINDS["random"], Random) and isinstance(KINDS["manual"], Manual)
@@ -140,6 +142,7 @@ class TestTheRegistry:
         assert isinstance(KINDS["terraform"], Terraform)
         assert isinstance(KINDS["k8s-sa-token"], K8sSaToken)
         assert isinstance(KINDS["rgw-admin"], RgwAdmin)
+        assert isinstance(KINDS["cephx"], Cephx)
 
     @pytest.mark.parametrize(
         ("found", "problem"),
@@ -162,8 +165,9 @@ class TestTheRegistry:
 
     def test_a_kind_without_a_plugin_has_no_plan(self):
         store = compliant_store()
+        without = {name: kind for name, kind in KINDS.items() if name != "cephx"}
         with pytest.raises(PlanError, match="cephx is not a kind this install has"):
-            make(KINDS, "shared/ceph", "cephx", ["user_key"], audit(store))
+            make(without, "shared/ceph", "cephx", ["user_key"], audit(store))
 
 
 class TestRandom:
