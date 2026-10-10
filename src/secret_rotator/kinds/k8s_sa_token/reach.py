@@ -1,7 +1,7 @@
 """The clusters a k8s-sa-token key's tokens are on, and how a step reaches each (ruling D1): prd
 through the rotator's running client, under its own identity; dev with the dev write token the
 KubeCoder catalog holds, at the apiserver and CA its kubeconfig names, the rotator having no
-identity of its own there. dev is off by default: a step on it is on its VM (Step.vm), which the
+identity of its own there. dev is off by default: a step on it is on its VM (Step.vms), which the
 plan starts when it is off (vmsteps)."""
 
 import functools

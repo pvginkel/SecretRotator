@@ -288,13 +288,14 @@ class TestThePlans:
     def test_dev_starts_srvk8sdev_first_and_syncs_dev_s_own_readers(self):
         plan = World(DEV_LEAF).plan()
         assert ids(plan) == [DEV_START, MINT, "kv.write", *DEV_SYNCS, PROVE, "kv.stamp"]
-        assert [s.vm for s in plan.steps] == [None, DEV_VM, None, *[DEV_VM] * 4, DEV_VM, None]
+        on = (DEV_VM,)
+        assert [s.vms for s in plan.steps] == [(), on, (), *[on] * 4, on, ()]
 
     def test_prd_s_steps_name_no_vm_and_always_answer(self):
         world = World()
         world.pve_cluster.vms = []
         plan = world.plan()
-        assert all(s.vm is None for s in plan.steps)
+        assert not any(s.vms for s in plan.steps)
         assert not any(s.unanswered(client(world.bao)) for s in plan.steps)
         assert world.pve_cluster.calls == []
 
@@ -471,6 +472,23 @@ class TestTheRuns:
         assert world.run() is Outcome.DONE
         execs = {node for node, remote in world.pve_cluster.calls if remote[2:4] == ("qm", "guest")}
         assert execs == {"pve2", "pve"}  # srvceph1 stopped is not tried; srvceph2 is, in vain
+
+    def test_a_ceph_vm_the_pve_cluster_does_not_list_is_passed_over(self):
+        world = World()
+        world.pve_cluster.vms.pop(0)
+        assert world.run() is Outcome.DONE
+        world = World()
+        _, srvceph2, srvceph3 = world.pve_cluster.vms
+        world.pve_cluster.vms.pop(0)
+        srvceph2.agent = None
+        srvceph3.status = "stopped"
+        executor = world.executor()
+        assert executor.run() is Outcome.FAILED
+        assert world.failure().error == (
+            "no Ceph VM of prd answers: srvceph1 does not exist; qm guest exec 114 on pve2 exited "
+            "255: QEMU guest agent is not running; srvceph3 is stopped"
+        )
+        assert executor.abort() is Outcome.CANCELLED
 
     def test_no_ceph_vm_answering_stops_it_before_any_change(self):
         world = World()

@@ -1,16 +1,18 @@
-"""The VM that may be off (vmsteps, slice 061 ruling D3): a plan with a step on such a VM starts
-with a vm.start of it, which finds the VM's node through the PVE cluster, starts it there if it is
-stopped, its start staged first, and waits until every step on it answers; the executor has the VM
-up for each step or undo on it, in a run, a resume, a Retry or a rollback, and shuts it down when
-the run or abort ends, whatever its outcome, if and only if the plan started it, also when an
-earlier process did; an unattended run keeps it up for the rollback that follows a failure; a VM
-that does not answer skips an unattended run and fails an attended one; PVE refusing the start
-fails the plan before anything changes; a shutdown fails nothing; a dry run starts nothing."""
+"""The VM that may be off (vmsteps, slice 061 ruling D3, Ansible slice 060 ruling D2): a plan with
+a step on such VMs starts with a vm.start of each, which finds the VM's node through the PVE
+cluster, stages where it runs for the steps on it, starts it there if it is stopped, its start
+staged first, and waits until its guest agent and every step on it answer; a VM the cluster does
+not list is absent, nothing to start; the executor has each VM up for each step or undo on it, in a
+run, a resume, a Retry or a rollback, and shuts it down when the run or abort ends, whatever its
+outcome, if and only if the plan started it, also when an earlier process did; an unattended run
+keeps it up for the rollback that follows a failure; a VM that does not answer skips an unattended
+run and fails an attended one; PVE refusing the start fails the plan before anything changes; a
+shutdown fails nothing; a dry run starts nothing."""
 
 import dataclasses
 
 import pytest
-from fake_pve import FakePve, FakeVm
+from fake_pve import FakePve, FakeVm, no_command
 from fixtures import compliant_store
 from plans import (
     LEAF,
@@ -37,12 +39,14 @@ from secret_rotator.sshsteps import Ssh
 from secret_rotator.staging import NOT_LANDED, staging_leaf
 from secret_rotator.state import LeafState
 from secret_rotator.vmsteps import (
+    ABSENT,
     DEV_VM,
     PVE_BOUND,
     PVE_NODES,
     RESOURCES,
     Pve,
     VmStart,
+    location_name,
     started_name,
 )
 
@@ -52,6 +56,11 @@ BOOT = 120  # seconds the fake VM takes to answer once started
 START = f"vm.start:{DEV_VM}"
 RECORD = started_name(DEV_VM)
 NO_ANSWER = f"{DEV_VM} did not answer within 15 min: the system does not answer"
+NO_AGENT = (
+    "its guest agent does not answer: qm guest cmd 919 ping on pve exited 255: "
+    "QEMU guest agent is not running"
+)
+SCRATCH = "wrkscratchk8s1"
 
 
 class Clock:
@@ -78,7 +87,7 @@ class Clock:
 class OnVm(Tool):
     """A Tool step on the VM, whose run and undo need what runs in it to answer."""
 
-    vm = DEV_VM
+    vms = (DEV_VM,)
 
     def __init__(self, id, journal, world, **kwargs):
         super().__init__(id, journal, **kwargs)
@@ -96,16 +105,41 @@ class OnVm(Tool):
         return super().undo(ctx)
 
 
+class Where(Tool):
+    """A Tool step on the VMs that records, at each run and undo, where each runs as staged then
+    and the status of every VM of the fake PVE cluster."""
+
+    def __init__(self, id, world, guests=(DEV_VM,), **kwargs):
+        super().__init__(id, world.journal, **kwargs)
+        self.vms = tuple(guests)
+        self.world = world
+        self.seen = []
+
+    def look(self, action, ctx):
+        where = tuple(ctx.staged(location_name(guest)) for guest in self.vms)
+        self.seen.append((action, where, tuple(vm.status for vm in self.world.fake.vms)))
+
+    def run(self, ctx):
+        self.look("run", ctx)
+        return super().run(ctx)
+
+    def undo(self, ctx):
+        self.look("undo", ctx)
+        return super().undo(ctx)
+
+
 class World:
     """The compliant store on the fake OpenBao and srvk8sdev on a node of the fake PVE cluster,
     stopped unless running; what runs in it answers BOOT seconds after a start, unless boots is
-    False, and stops answering at a shutdown. Its starts see the staging leaf's record."""
+    False, and stops answering at a shutdown; its guest agent answers agent_lag seconds after a
+    start, never when None. Its starts see the staging leaf's record."""
 
-    def __init__(self, *, running=False, node="pve", boots=True):
+    def __init__(self, *, running=False, node="pve", boots=True, agent_lag=0):
         self.clock = Clock()
         self.bao = fake()
         self.answering = running
         self.boots = boots
+        self.agent_lag = agent_lag
         self.records = []  # the staging leaf's record of the start, as each start found it
         self.vm = FakeVm(
             DEV_VM,
@@ -114,6 +148,7 @@ class World:
             "running" if running else "stopped",
             started=self.started,
             stopped=self.stopped,
+            agent=no_command if agent_lag == 0 else None,
         )
         self.fake = FakePve([self.vm])
         self.pve = Pve(self.fake, sleep=self.clock.sleep, clock=self.clock.clock)
@@ -124,6 +159,8 @@ class World:
         self.records.append(staged.get(RECORD))
         if self.boots:
             self.clock.later(BOOT, lambda: setattr(self, "answering", True))
+        if self.agent_lag:
+            self.clock.later(self.agent_lag, lambda: setattr(self.vm, "agent", no_command))
 
     def stopped(self):
         self.answering = False
@@ -168,10 +205,10 @@ class TestThePlan:
         ]
         start = plan.steps[0]
         assert isinstance(start, VmStart) and start.steps == (a, b)
-        assert (start.title, start.mutates, start.vm, start.undo) == (
+        assert (start.title, start.mutates, start.vms, start.undo) == (
             f"start {DEV_VM} if it is off",
             False,
-            None,
+            (),
             None,
         )
         no_vm = world.plan(Tool("t", world.journal))
@@ -180,7 +217,7 @@ class TestThePlan:
     def test_each_vm_gets_a_start_in_the_order_the_steps_first_name_them(self):
         world = World()
         other = world.on("other")
-        other.vm = "wrkscratchk8s1"
+        other.vms = ("wrkscratchk8s1",)
         plan = world.plan(other, world.on("dev"))
         assert [s.id for s in plan.steps[:2]] == ["vm.start:wrkscratchk8s1", START]
 
@@ -198,12 +235,13 @@ class TestARun:
         world = World(node="pve1")
         executor = world.executor(world.plan(world.on("a")))
         assert executor.run() is Outcome.DONE
-        assert world.fake.calls == [
+        assert [call for call in world.fake.calls if call[1][3:5] != ("guest", "cmd")] == [
             ("pve", RESOURCES),
             ("pve1", ("sudo", "-n", "qm", "start", "919")),
             ("pve", RESOURCES),
             ("pve1", ("sudo", "-n", "qm", "shutdown", "919", *SHUTDOWN)),
         ]
+        assert set(world.fake.pings()) == {("pve1", "919")}
         assert world.records == ["pve1"]
         assert world.vm.status == "stopped" and world.journal == [("run", "a")]
         assert world.clock.now >= BOOT
@@ -429,3 +467,108 @@ def test_no_test_reaches_the_real_ssh(tmp_path):
     known_hosts.write_text("@cert-authority * ssh-ed25519 AAAA\n")
     with pytest.raises(AssertionError, match="^a test ran the real ssh: ssh -F none "):
         Pve(Ssh(known_hosts)).find(DEV_VM)
+
+
+class TestTheGuestAgent:
+    def test_the_start_waits_until_the_vm_s_guest_agent_answers(self):
+        world = World(agent_lag=BOOT + 80)
+        executor = world.executor(world.plan(world.on("a")))
+        assert executor.run() is Outcome.DONE
+        start = executor.plan.steps[0]
+        assert Progress(start, Action.RUN, NO_AGENT) in world.recorder.events
+        assert world.clock.now >= BOOT + 80
+        assert world.journal == [("run", "a")]
+
+    def test_a_running_vm_s_agent_is_pinged_once_when_it_answers(self):
+        world = World(running=True)
+        assert world.executor(world.plan(world.on("a"))).run() is Outcome.DONE
+        assert world.fake.pings() == [("pve", "919")]
+
+    def test_unattended_a_started_vm_whose_agent_never_answers_skips_the_plan_and_is_shut_down(
+        self,
+    ):
+        world = World(agent_lag=None)
+        executor = world.executor(world.plan(world.on("a")))
+        assert executor.run(unattended=True) is Outcome.SKIPPED
+        assert executor.skip.reason == f"{DEV_VM} did not answer within 15 min: {NO_AGENT}"
+        assert world.commands() == [("pve", "start"), ("pve", "shutdown")]
+        assert world.vm.status == "stopped" and world.journal == []
+        assert world.recorder.failures() == []
+        assert flight_of(world.bao, LEAF) is None and state_of(world.bao, LEAF) == LeafState()
+
+
+class TestWhereTheVmRuns:
+    @pytest.mark.parametrize("running", [False, True])
+    def test_the_start_stages_its_node_and_id_for_the_steps_on_it(self, running):
+        world = World(running=running, node="pve2")
+        where = Where("w", world)
+        assert world.executor(world.plan(where)).run() is Outcome.DONE
+        assert where.seen == [("run", ("pve2/919",), ("running",))]
+        assert world.vm.status == ("running" if running else "stopped")
+
+    def test_a_vm_the_cluster_does_not_list_is_absent_and_nothing_is_started(self):
+        world = World()
+        world.fake.vms = []
+        where = Where("w", world)
+        executor = world.executor(world.plan(where))
+        assert executor.run(unattended=True) is Outcome.DONE
+        assert where.seen == [("run", (ABSENT,), ())]
+        assert world.fake.calls == [("pve", RESOURCES)]
+        (finished,) = [
+            e for e in world.recorder.events if e.step.id == START and isinstance(e, Finished)
+        ]
+        assert finished.detail == f"{DEV_VM} does not exist: nothing to start"
+        assert executor.settled == []
+
+    def test_one_the_plan_started_that_is_gone_at_the_end_is_not_shut_down(self):
+        world = World()
+        put_flight(world.bao, "random", LEAF, ["token"], "kv.stamp", **{RECORD: "pve"})
+        world.fake.vms = []
+        executor = world.executor(world.plan(Where("w", world)))
+        assert executor.run() is Outcome.DONE
+        assert executor.settled == [f"{DEV_VM} does not exist"]
+        assert world.commands() == []
+
+    def test_two_vms_the_cluster_lists_by_one_name_fail_the_start(self):
+        world = World()
+        world.fake.vms.append(FakeVm(DEV_VM, 990, "pve1"))
+        executor = world.executor(world.plan(Where("w", world)))
+        assert executor.run(unattended=True) is Outcome.FAILED
+        assert world.recorder.failures()[0].error == (
+            f"the PVE cluster has 2 VMs named {DEV_VM}, not one"
+        )
+        assert world.commands() == [] and world.journal == []
+
+    def test_a_resume_stages_where_the_vm_runs_now(self):
+        world = World(running=True, node="pve1")
+        where = Where("w", world)
+        location = {location_name(DEV_VM): "pve/919"}
+        put_flight(world.bao, "random", LEAF, ["token"], "w", **location)
+        assert world.executor(world.plan(where)).run() is Outcome.DONE
+        assert where.seen == [("run", ("pve1/919",), ("running",))]
+
+
+class TestAStepOnTwoVms:
+    def test_both_are_up_for_its_run_and_its_undo_and_shut_down_after_each(self):
+        world = World()
+        world.fake.vms.append(FakeVm(SCRATCH, 990, "pve1"))
+        where = Where("w", world, (DEV_VM, SCRATCH))
+        plan = world.plan(where, Tool("b", world.journal, fail=1))
+        assert [s.id for s in plan.steps[:2]] == [START, f"vm.start:{SCRATCH}"]
+        assert [s.steps for s in plan.steps[:2]] == [(where,), (where,)]
+        executor = world.executor(plan)
+        assert executor.run() is Outcome.FAILED
+        assert executor.settled == [f"{DEV_VM} shut down on pve", f"{SCRATCH} shut down on pve1"]
+        assert executor.abort() is Outcome.ROLLED_BACK
+        up = ("pve/919", "pve1/990")
+        assert where.seen == [("run", up, ("running",) * 2), ("undo", up, ("running",) * 2)]
+        assert [vm.status for vm in world.fake.vms] == ["stopped"] * 2
+        cycle = [("pve", "start"), ("pve1", "start"), ("pve", "shutdown"), ("pve1", "shutdown")]
+        assert world.commands() == cycle * 2
+
+    def test_one_absent_and_one_running_need_nothing(self):
+        world = World(running=True)
+        where = Where("w", world, (SCRATCH, DEV_VM))
+        assert world.executor(world.plan(where)).run(unattended=True) is Outcome.DONE
+        assert where.seen == [("run", (ABSENT, "pve/919"), ("running",))]
+        assert world.commands() == []

@@ -24,7 +24,7 @@ TOKEN_BOUND, TOKEN_POLL = 60, 1  # seconds: the token controller fills a new Sec
 
 
 class Reach(Protocol):
-    """A cluster, by its name, the VM that may be off it runs in (Step.vm), and the client a step
+    """A cluster, by its name, the VM that may be off it runs in (Step.vms), and the client a step
     calls it with (reach.py)."""
 
     name: str
@@ -155,7 +155,7 @@ class OnCluster(Step):
     ):
         super().__init__(f"{id}:{reach.name}", f"{title} on {reach.name}")
         self.reach = reach
-        self.vm = reach.vm
+        self.vms = (reach.vm,) if reach.vm else ()
         self.leaf = leaf
         self.key = key  # the data key the new value is staged for
         self.clusters = clusters

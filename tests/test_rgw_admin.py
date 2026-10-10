@@ -273,9 +273,9 @@ class TestThePlans:
     def test_dev_has_no_reader_and_starts_srvk8sdev_first(self):
         plan = World(DEV_LEAF).plan()
         assert ids(plan) == [DEV_START, MINT, "kv.write", PROVE, DELETE, "kv.stamp"]
-        assert [s.id for s in plan.steps if s.vm == DEV_VM] == [MINT, PROVE, DELETE]
+        assert [s.id for s in plan.steps if s.vms == (DEV_VM,)] == [MINT, PROVE, DELETE]
         assert [s.id for s in plan.steps[0].steps] == [MINT, PROVE, DELETE]
-        assert not any(s.vm for s in World().plan().steps)
+        assert not any(s.vms for s in World().plan().steps)
 
     def test_against_a_snapshot_it_plans_without_reaching_rgw(self, tmp_path):
         path = tmp_path / "snapshot.json"

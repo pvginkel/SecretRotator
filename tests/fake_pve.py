@@ -1,10 +1,11 @@
 """The PVE cluster's nodes as the rotator calls them over SSH (Ssh.run): `sudo -n pvesh get
 /cluster/resources --type vm --output-format json`, `sudo -n qm start <id>`, `sudo -n qm shutdown
-<id> --timeout 300 --forceStop 1` and `sudo -n qm guest exec <id> --timeout 60 [--pass-stdin 1] --
-<command…>`, played on the VMs it holds. A VM's started and stopped hooks are what its start and its
-shutdown do to what runs in it; its agent, the guest agent, runs a command with its stdin and
-answers (exit code, stdout, stderr), or None for a command that does not finish; a VM without one
-has no guest agent running."""
+<id> --timeout 300 --forceStop 1`, `sudo -n qm guest cmd <id> ping` and `sudo -n qm guest exec <id>
+--timeout 60 [--pass-stdin 1] -- <command…>`, played on the VMs it holds. A VM's started and stopped
+hooks are what its start and its shutdown do to what runs in it; its agent, the guest agent, answers
+a ping while the VM runs, and runs a command with its stdin and answers (exit code, stdout, stderr),
+or None for a command that does not finish; the default one is given no command. A VM whose agent
+is None has no guest agent running."""
 
 import json
 from collections.abc import Callable
@@ -12,6 +13,10 @@ from dataclasses import dataclass, field
 
 from secret_rotator.ansiblesteps import Ran
 from secret_rotator.vmsteps import PVE_BOUND, RESOURCES
+
+
+def no_command(command, stdin):
+    raise AssertionError(f"the test gave the guest agent no command to answer: {command}")
 
 
 @dataclass
@@ -22,7 +27,7 @@ class FakeVm:
     status: str = "stopped"
     started: Callable[[], None] = lambda: None
     stopped: Callable[[], None] = lambda: None
-    agent: Callable[[tuple[str, ...], str], tuple[int, str, str] | None] | None = None
+    agent: Callable[[tuple[str, ...], str], tuple[int, str, str] | None] | None = no_command
 
 
 @dataclass
@@ -41,7 +46,7 @@ class FakePve:
         if host in self.down:
             return Ran(255, f"ssh: connect to host {host} port 22: No route to host\n")
         if remote[:4] == ("sudo", "-n", "qm", "guest"):
-            return self.guest_exec(host, remote[4:], stdin)
+            return self.guest(host, remote[4:], stdin)
         assert stdin == "", stdin
         if remote == RESOURCES:
             listed = [
@@ -76,16 +81,29 @@ class FakePve:
         vm.stopped()
         return Ran(0, "")
 
-    def guest_exec(self, host, args, stdin):
+    def guest(self, host, args, stdin):
+        """qm's answer to a guest ping or a guest exec on a node: a ping's as qm on pve answered
+        one, 2026-10-10."""
+        verb, vmid = args[:2]
+        (vm,) = [vm for vm in self.vms if str(vm.vmid) == vmid]
+        if vm.node != host:
+            return Ran(255, f"Configuration file 'nodes/{host}/qemu-server/{vmid}.conf' absent\n")
+        if verb == "cmd":
+            assert args[2:] == ("ping",) and stdin == "", args
+            if vm.status != "running":
+                return Ran(2, f"VM {vmid} is not running\n")
+            if vm.agent is None:
+                return Ran(255, "QEMU guest agent is not running\n")
+            return Ran(0, "")
+        return self.guest_exec(vm, args, stdin)
+
+    def guest_exec(self, vm, args, stdin):
         """qm's answer, its result printed pretty after any warning, as `qm guest exec` prints it
         on the node the VM is on."""
         at = args.index("--")
         (exec_, vmid, *options), command = args[:at], args[at + 1 :]
         assert exec_ == "exec" and options[:2] == ["--timeout", "60"], args
         assert options[2:] == (["--pass-stdin", "1"] if stdin else []), args
-        (vm,) = [vm for vm in self.vms if str(vm.vmid) == vmid]
-        if vm.node != host:
-            return Ran(255, f"Configuration file 'nodes/{host}/qemu-server/{vmid}.conf' absent\n")
         if vm.status != "running":
             return Ran(255, f"VM {vmid} not running\n")
         if vm.agent is None:
@@ -99,8 +117,12 @@ class FakePve:
         result |= {"err-data": err} if err else {}
         return Ran(0, json.dumps(result, indent=3, sort_keys=True) + "\n")
 
+    def pings(self):
+        """(node, VM id) of every guest ping, in order."""
+        return [(node, remote[5]) for node, remote in self.calls if remote[3:5] == ("guest", "cmd")]
+
     def commands(self):
-        """(node, the qm verb) of every qm call but a guest exec, in order."""
+        """(node, the qm verb) of every qm call but a guest ping or exec, in order."""
         return [
             (node, remote[3])
             for node, remote in self.calls

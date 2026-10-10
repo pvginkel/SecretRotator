@@ -1,7 +1,7 @@
 """The cephx kind's own steps (design §4.2: custom steps are the plugin's): cephx.mint and
 cephx.prove through Ceph's CLI in one of the cluster's Ceph VMs (ceph.py), and the eso.sync of an
 ExternalSecret on dev the plan names (Site.readers). A step on a Site on a VM that may be off names
-that VM (Step.vm). No detail or error they report carries a key; an entity names a key without
+that VM (Step.vms). No detail or error they report carries a key; an entity names a key without
 being one."""
 
 from pathlib import Path
@@ -33,7 +33,7 @@ class CephStep(Step):
         self.ceph = ceph
         self.leaf = leaf
         self.site = ceph.site
-        self.vm = ceph.site.vm
+        self.vms = (ceph.site.vm,) if ceph.site.vm else ()
 
     def unanswered(self, bao: OpenBao) -> str | None:
         return self.ceph.unanswered()
@@ -142,7 +142,7 @@ class Prove(CephStep):
 
 class DevSync(Step):
     """An eso.sync of an ExternalSecret on dev, through the dev write token the KubeCoder catalog
-    holds (k8s-sa-token's Dev reach), on srvk8sdev (Step.vm). A rollback re-runs it, as any
+    holds (k8s-sa-token's Dev reach), on srvk8sdev (Step.vms). A rollback re-runs it, as any
     eso.sync, once the leaf is put back."""
 
     type = EsoSync.type
@@ -153,7 +153,7 @@ class DevSync(Step):
         super().__init__(f"eso.sync:{reach.name}:{es}", f"sync ExternalSecret {es} on {reach.name}")
         self.reach = reach
         self.es = es
-        self.vm = reach.vm
+        self.vms = (reach.vm,)
 
     def unanswered(self, bao: OpenBao) -> str | None:
         return self.reach.unanswered(bao)

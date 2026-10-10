@@ -486,7 +486,7 @@ def build(
     ansible_key: AnsibleKey | None = None,
 ) -> Plan:
     """The kind's plan of the Target; derived: a plan in flight's record of what it derived. A
-    vm.start of each VM a step of the kind's names (Step.vm) comes first, kv.stamp last."""
+    vm.start of each VM a step of the kind's names (Step.vms) comes first, kv.stamp last."""
     problems = [
         f"{entry_name(key)} args: {problem}"
         for key in leaf.keys

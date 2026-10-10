@@ -1,7 +1,7 @@
 """The rgw-admin kind's own steps (design §4.2: custom steps are the plugin's): rgw_admin.mint,
 rgw_admin.prove and rgw_admin.delete, through RGW's admin API, each request signed with a key of
 the leaf's: the one it held before the plan, or the one the plan added. A step on a Site on a VM
-that may be off names that VM (Step.vm). No detail or error they report carries a secret key; an
+that may be off names that VM (Step.vms). No detail or error they report carries a secret key; an
 access key id names a key without being one."""
 
 import json
@@ -46,7 +46,7 @@ class RgwStep(Step):
         self.gateway = gateway
         self.leaf = leaf
         self.uid = gateway.site.uid
-        self.vm = gateway.site.vm
+        self.vms = (gateway.site.vm,) if gateway.site.vm else ()
 
     def unanswered(self, bao: OpenBao) -> str | None:
         return self.gateway.unanswered()

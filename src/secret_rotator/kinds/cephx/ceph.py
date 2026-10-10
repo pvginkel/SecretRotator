@@ -53,7 +53,7 @@ DEV_READERS = (
 @dataclass(frozen=True)
 class Site:
     """A cluster's Ceph: its VMs by PVE name, the first that answers running the CLI; the two
-    entities that take turns in its leaf; the VM that may be off it runs in (Step.vm); and the
+    entities that take turns in its leaf; the VM that may be off it runs in (Step.vms); and the
     ExternalSecrets on that VM's own cluster that read the leaf, which the plan names because no
     read of that cluster finds them while it is off."""
 
@@ -143,8 +143,8 @@ def _answer(output: str) -> dict | None:
 
 class Ceph:
     """A Site's Ceph, through the guest agent of the first of its VMs that runs and answers. A VM
-    that is stopped, or that qm does not reach, is passed over; a command that ran and failed is
-    the cluster's answer."""
+    the PVE cluster does not list, one that is stopped, or one that qm does not reach, is passed
+    over; a command that ran and failed is the cluster's answer."""
 
     def __init__(self, site: Site, pve: Pve):
         self.site = site
@@ -203,6 +203,9 @@ class Ceph:
         failures = []
         for name in self.site.guests:
             guest = self.pve.find(name)
+            if guest is None:
+                failures.append(f"{name} does not exist")
+                continue
             if guest.status != RUNNING:
                 failures.append(f"{name} is {guest.status}")
                 continue

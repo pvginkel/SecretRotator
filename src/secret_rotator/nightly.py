@@ -364,10 +364,10 @@ class Night:
 
     def unanswered(self, plan: Plan) -> str | None:
         """Why a system a step of the plan acts on does not answer (Step.unanswered); None when
-        every one answers. A step on a VM that may be off is not asked here: the plan's vm.start
-        starts the VM and asks it."""
+        every one answers. A step on VMs that may be off is not asked here: the plan's vm.start of
+        each starts that VM and asks it."""
         return next(
-            (why for step in plan.steps if step.vm is None and (why := step.unanswered(self.bao))),
+            (why for step in plan.steps if not step.vms and (why := step.unanswered(self.bao))),
             None,
         )
 

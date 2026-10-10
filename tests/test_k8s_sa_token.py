@@ -1028,7 +1028,7 @@ class TestTheReach:
         built = len(world.cluster.requests)
         on_dev = [DEV_MINT, DEV_PROVE, DEV_DELETE]
         assert [s.id for s in plan.steps if s.unanswered(bao)] == on_dev
-        assert [s.id for s in plan.steps if s.vm == DEV_VM] == on_dev
+        assert [s.id for s in plan.steps if s.vms == (DEV_VM,)] == on_dev
         assert [s.id for s in plan.steps[0].steps] == on_dev
         assert len(world.cluster.requests) == built
 

@@ -11,16 +11,17 @@ one plan in flight. Step ids repeat across plans, and a leaf's plans differ by k
 only the plan of the kind and keys recorded resumes it. The staging leaf also holds the values the
 plan's steps produced, what their undos need, and, while a rollback runs, how far it got.
 
-A VM that may be off is up whenever a step on it (Step.vm) or its undo runs: the plan's vm.start
+A VM that may be off is up whenever a step on it (Step.vms) or its undo runs: the plan's vm.start
 brings it up, the first time a run or an abort needs it (vmsteps). Each run and each abort ends by
 shutting down every VM the plan's staging leaf records the plan started, whatever its outcome, so a
 plan resumed or rolled back leaves a VM as it found it; the record lives as long as the staging
 leaf, so a later process shuts down a VM an earlier one started.
 
 In a plan with a step that logs in to a host as ansible (Plan.logs_in), the file every such login
-names holds the key its leaf holds (ansiblekey) before each step, undo and re-run: from the plan's
-kv.write of a new key on, the rotator logs in with it, and with the old one again once a rollback
-has undone the write. A key that cannot be read fails the step before it runs."""
+names holds the key its leaf holds (ansiblekey) before each step, undo and re-run, and before the
+VMs the plan started are shut down: from the plan's kv.write of a new key on, the rotator logs in
+with it, and with the old one again once a rollback has undone the write. A key that cannot be read
+fails the step before it runs."""
 
 import datetime
 from collections.abc import Callable
@@ -259,21 +260,29 @@ class Executor:
     def _ready(self, step: Step, ctx: "_RunContext") -> None:
         """What a step needs before it, its undo or its re-run: in a plan that logs in as ansible,
         the rotator's Ansible key file holding the key its leaf holds, the one a step before wrote
-        there or took back or a rotation of another process; and the VM the step acts on
-        (Step.vm) up, through the plan's vm.start, once per run or abort."""
+        there or took back or a rotation of another process; and each VM the step acts on
+        (Step.vms) up, through the plan's vm.start of it, once per run or abort."""
+        self._follow()
+        for guest in step.vms:
+            if guest not in self._up:
+                self.starts[guest].up(ctx)
+                self._up.add(guest)
+
+    def _follow(self) -> None:
+        """In a plan that logs in as ansible, the rotator's Ansible key file holds the key its leaf
+        holds."""
         if self.ansible_key is not None and self.plan.logs_in:
             self.ansible_key.follow(self.bao)
-        if step.vm is None or step.vm in self._up:
-            return
-        self.starts[step.vm].up(ctx)
-        self._up.add(step.vm)
 
     def _settle(self) -> None:
-        """Every VM the plan recorded it started shut down, and its record dropped."""
-        for guest, start in self.starts.items():
-            if self.staging.get(started_name(guest)) is not None:
-                self.settled.append(start.down())
-                self.staging.drop(started_name(guest))
+        """Every VM the plan recorded it started shut down, logging in with the key the Ansible key
+        leaf holds, and its record dropped."""
+        started = [g for g in self.starts if self.staging.get(started_name(g)) is not None]
+        if started:
+            self._follow()
+        for guest in started:
+            self.settled.append(self.starts[guest].down())
+            self.staging.drop(started_name(guest))
 
     def _end(self) -> None:
         """The plan is no longer in flight: the VMs it started are shut down, then its staging

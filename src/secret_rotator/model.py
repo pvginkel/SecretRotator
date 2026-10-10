@@ -149,10 +149,10 @@ class Step(abc.ABC):
     # as not having run: nothing of it is undone or re-run, and only the steps before it gate
     # Abort (design §4.5).
     no_undo = ""
-    # The VM that may be off, by its PVE name, in which what the step acts on runs (vmsteps): the
-    # plan starts with a vm.start of it, and the executor has it up whenever the step or its undo
-    # runs.
-    vm: str | None = None
+    # The VMs that may be off, by their PVE names, in which what the step acts on runs (vmsteps):
+    # the plan starts with a vm.start of each, and the executor has each up whenever the step or
+    # its undo runs.
+    vms: tuple[str, ...] = ()
     # It logs in to a host over SSH as ansible, by the key file every such login names: in its
     # plan, the executor has that file hold the key its leaf holds (ansiblekey).
     logs_in = False
@@ -168,8 +168,9 @@ class Step(abc.ABC):
     def unanswered(self, bao: OpenBao) -> str | None:
         """Why what the step acts on does not answer; None when it answers or is no system that may
         not. The nightly run asks it before it starts the plan, and skips the plan for the night on
-        an answer; of a step on a VM that may be off (vm), the plan's vm.start asks it instead, once
-        it has the VM up. A system that answers and refuses is no reason: the step fails on it."""
+        an answer; of a step on VMs that may be off (vms), the plan's vm.start of each asks it
+        instead, once it has that VM up. A system that answers and refuses is no reason: the step
+        fails on it."""
         return None
 
     @abc.abstractmethod

@@ -63,7 +63,7 @@ class Key:
 class Site:
     """A cluster's RGW: its instances' admin API on the storage backplane, so an answer that
     carries a secret stays off the house LAN; the admin user whose key the leaf holds; and the VM
-    that may be off it runs in (Step.vm)."""
+    that may be off it runs in (Step.vms)."""
 
     cluster: str
     endpoints: tuple[str, ...]

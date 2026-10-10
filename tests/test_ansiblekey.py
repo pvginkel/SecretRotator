@@ -3,17 +3,18 @@ key the leaf iac/ansible-ssh-key holds, replaced whole, mode 0600, and only when
 in a plan with a step that logs in, the executor has it follow before each step, undo and re-run,
 so a kv.write of a new key switches the rotator to it from there on and the rollback switches it
 back, a rotator that outlived a rotation logs in with the key the leaf holds, and a VM is started
-with it; a plan with no such step never reads the leaf. ssh.key_copy switches srviac's copy to the
-new key and its undo back to the old one, from what the plan staged and never from the leaf, and
-fails not landed where it cannot write the copy."""
+and shut down with it; a plan with no such step never reads the leaf. ssh.key_copy switches
+srviac's copy to the new key and its undo back to the old one, from what the plan staged and never
+from the leaf, and fails not landed where it cannot write the copy."""
 
 import os
 import stat
 from pathlib import Path
 
 import pytest
-from plans import NOW, Journal, Recorder, Tool, client, fake, lock, plan_of, run_state
-from test_vmsteps import World
+from plans import LEAF as PLAN_LEAF
+from plans import NOW, Journal, Recorder, Tool, client, fake, lock, plan_of, put_flight, run_state
+from test_vmsteps import RECORD, World
 
 from secret_rotator.ansiblekey import COPY, KEY, LEAF, AnsibleKey
 from secret_rotator.ansiblesteps import AnsibleRun
@@ -223,6 +224,19 @@ class TestTheExecutor:
         assert executor(world.bao, plan, key).run() is Outcome.DONE
         assert world.commands() == [("pve", "start"), ("pve", "shutdown")]
         assert held and set(held) == {K1}
+
+    def test_the_vm_the_plan_started_is_shut_down_with_the_key_the_leaf_holds(self, tmp_path):
+        key = files(tmp_path)
+        key.login.write_text(K0)
+        world = World(running=True)
+        world.bao.leaves[LEAF] = {"data": {KEY: K1}, "meta": {}}
+        held = []
+        world.vm.stopped = lambda: held.append(key.login.read_text())
+        plan = world.plan(world.on("a"))
+        start = plan.steps[0]
+        put_flight(world.bao, "random", PLAN_LEAF, ["token"], start.id, **{RECORD: "pve"})
+        assert executor(world.bao, plan, key).abort() is Outcome.CANCELLED
+        assert world.commands() == [("pve", "shutdown")] and held == [K1]
 
 
 def test_the_steps_that_log_in_as_ansible_say_so():
