@@ -1,8 +1,11 @@
 """The prd apiserver as an opener for secret_rotator.kube.Kube: ExternalSecrets, the three workload
 kinds, Argo CD Applications, Secrets, and objects the rotator must never ask for (a CronJob, bare
 pods).
-Its ESO syncs a force-synced ExternalSecret and its controllers roll a restarted workload out, each
-once the fake clock, which the client's sleep advances, has passed their lag.
+Its ESO syncs a force-synced ExternalSecret, its controllers roll a restarted workload out and its
+Argo CD starts a requested operation, each once the fake clock, which the client's sleep advances,
+has passed their lag. Argo CD syncs the revision an operation names, else the head of the branch
+the Application tracks, and auto-syncs a push to that branch. A merge patch that names a
+resourceVersion is refused with a 409 once the object's is another.
 
 The compliant cluster references every eso/prd/ leaf of fixtures.COMPLIANT but
 eso/prd/yt/prd/webhook, whose copy in jenkins/youtrack is its consumer, and holds the KubeCoder
@@ -18,6 +21,7 @@ no connection, as urlopen says of a host that is down."""
 
 import base64
 import copy
+import datetime
 import io
 import itertools
 import json
@@ -39,6 +43,9 @@ ESO = "/apis/external-secrets.io/v1"
 APPS = "/apis/apps/v1"
 ARGO = "/apis/argoproj.io/v1alpha1/namespaces/argocd-prd/applications"
 KINDS = {"deployments": "Deployment", "statefulsets": "StatefulSet", "daemonsets": "DaemonSet"}
+HEAD = "5a1f3c9e0b7d4e2a8c6f1b3d5e7a9c0b2d4f6a8e"  # every Application's branch head until a push
+EPOCH = datetime.datetime(2026, 10, 5, 4, 30, tzinfo=datetime.UTC)  # the fake clock's 0
+RETRY = {"limit": 3, "backoff": {"duration": "30s", "factor": 2}}
 
 
 class FakeResponse(io.BytesIO):
@@ -201,6 +208,35 @@ def settle(kind, obj, ready=None):
     obj["status"] = {"observedGeneration": generation, **status}
 
 
+def application(name, *, health="Healthy"):
+    """An Argo CD Application as the releases chart makes one, auto-syncing main, Synced at HEAD
+    by an auto-sync that succeeded a day before the fake clock's 0."""
+    return {
+        "metadata": {"namespace": "argocd-prd", "name": name, "resourceVersion": "1"},
+        "spec": {
+            "source": {"repoURL": f"https://github.com/pvginkel/{name}.git", "path": "chart"}
+            | {"targetRevision": "main"},
+            "syncPolicy": {"automated": {"prune": True, "selfHeal": False}, "retry": RETRY},
+        },
+        "status": {
+            "sync": {"status": "Synced", "revision": HEAD},
+            "health": {"status": health},
+            "operationState": {
+                "operation": {
+                    "initiatedBy": {"automated": True},
+                    "sync": {"revision": HEAD, "prune": True},
+                    "retry": RETRY,
+                },
+                "phase": "Succeeded",
+                "message": "successfully synced (all tasks run)",
+                "startedAt": "2026-10-04T04:30:00Z",
+                "finishedAt": "2026-10-04T04:31:22Z",
+                "syncResult": {"revision": HEAD},
+            },
+        },
+    }
+
+
 def compliant_objects():
     """(resource, object) of the compliant cluster."""
     return [
@@ -314,27 +350,9 @@ def compliant_objects():
                 "spec": pod_spec(env=["kubecoder-secret-catalog"]),
             },
         ),
-        (
-            "applications",
-            {
-                "metadata": {"namespace": "argocd-prd", "name": "app-prd"},
-                "status": {"health": {"status": "Healthy"}},
-            },
-        ),
-        (
-            "applications",
-            {
-                "metadata": {"namespace": "argocd-prd", "name": "bot-prd"},
-                "status": {"health": {"status": "Healthy"}},
-            },
-        ),
-        (
-            "applications",
-            {
-                "metadata": {"namespace": "argocd-prd", "name": "kubecoder-prd"},
-                "status": {"health": {"status": "Healthy"}},
-            },
-        ),
+        ("applications", application("app-prd")),
+        ("applications", application("bot-prd")),
+        ("applications", application("kubecoder-prd")),
     ]
 
 
@@ -379,6 +397,11 @@ class FakeCluster:
         self.refused = {}  # (method, path) -> the status it answers instead
         self.bearers = []  # each request's bearer, in the order of requests
         self.off = False  # no request connects, and none is recorded
+        self.heads = {}  # Application -> the head of the branch it tracks, once pushed to
+        self.argo_lag = 2  # from a requested operation to its start
+        self.webhook_lag = 4  # from a push to the auto-sync it requests
+        self.sync_took = 80  # the PreSync hook's terraform init and apply, then the sync
+        self.sync_failing = {}  # Application -> the message its syncs fail with
 
     def kube(self, token=TOKEN):
         return Kube(token, self.addr, opener=self, sleep=self.sleep, clock=self.clock)
@@ -460,8 +483,13 @@ class FakeCluster:
         assert (
             method == "PATCH" and req.get_header("Content-type") == "application/merge-patch+json"
         )
+        version = (body.get("metadata") or {}).get("resourceVersion")
+        if version is not None and version != obj["metadata"].get("resourceVersion"):
+            message = "the object has been modified"
+            return self.answer(409, {"kind": "Status", "message": message})
         before = copy.deepcopy(obj)
         merge(obj, body)
+        self.touch(obj)
         if parts[5] == "externalsecrets" and obj["metadata"]["annotations"] != before[
             "metadata"
         ].get("annotations"):
@@ -469,6 +497,8 @@ class FakeCluster:
         if parts[5] in KINDS and obj["spec"]["template"] != before["spec"]["template"]:
             obj["metadata"]["generation"] += 1
             self.later(self.rollout_lag, lambda: self.roll_out(parts[5], obj))
+        if parts[5] == "applications" and obj.get("operation") and not before.get("operation"):
+            self.later(self.argo_lag, lambda: self.start_sync(obj))
         return self.answer(200, obj)
 
     def later(self, lag, event):
@@ -520,6 +550,69 @@ class FakeCluster:
         ref = f"{obj['metadata']['namespace']}/{obj['metadata']['name']}"
         want = obj["spec"].get("replicas", 3)
         settle(KINDS[resource], obj, ready=want - 1 if ref in self.stuck else None)
+
+    @staticmethod
+    def touch(obj):
+        """A write of an object that has a resourceVersion gives it a new one."""
+        if "resourceVersion" in obj["metadata"]:
+            obj["metadata"]["resourceVersion"] = str(int(obj["metadata"]["resourceVersion"]) + 1)
+
+    def iso(self):
+        return (EPOCH + datetime.timedelta(seconds=self.now)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def head(self, app):
+        return self.heads.get(app, HEAD)
+
+    def push(self, app, sha, *, webhook=True):
+        """A commit on the branch the Application tracks, which leaves it OutOfSync; webhook:
+        GitHub's push webhook reaches Argo CD, which auto-syncs the commit."""
+        self.heads[app] = sha
+        obj = self.get("applications", "argocd-prd", app)
+        obj["status"]["sync"]["status"] = "OutOfSync"
+        self.touch(obj)
+        if webhook and "automated" in obj["spec"]["syncPolicy"]:
+            self.later(self.webhook_lag, lambda: self.auto_sync(obj, sha))
+
+    def auto_sync(self, obj, sha):
+        """Auto-sync requests a sync of the pushed commit once no operation runs."""
+        if obj.get("operation") is not None:
+            self.later(5, lambda: self.auto_sync(obj, sha))
+            return
+        obj["operation"] = {
+            "initiatedBy": {"automated": True},
+            "sync": {"revision": sha, "prune": True},
+            "retry": RETRY,
+        }
+        self.touch(obj)
+        self.later(self.argo_lag, lambda: self.start_sync(obj))
+
+    def start_sync(self, obj):
+        """Argo CD starts the requested operation: of the revision it names, else of the head."""
+        operation = obj["operation"]
+        revision = operation["sync"].get("revision") or self.head(obj["metadata"]["name"])
+        obj["status"]["operationState"] = {
+            "operation": copy.deepcopy(operation),
+            "phase": "Running",
+            "message": "waiting for completion of hook batch/Job/terraform-presync",
+            "startedAt": self.iso(),
+            "syncResult": {"revision": revision},
+        }
+        self.touch(obj)
+        self.later(self.sync_took, lambda: self.finish_sync(obj))
+
+    def finish_sync(self, obj):
+        name = obj["metadata"]["name"]
+        state = obj["status"]["operationState"]
+        failing = self.sync_failing.get(name)
+        state["phase"] = "Failed" if failing else "Succeeded"
+        state["message"] = failing or "successfully synced (all tasks run)"
+        state["finishedAt"] = self.iso()
+        del obj["operation"]
+        if not failing:
+            revision = state["syncResult"]["revision"]
+            synced = "Synced" if revision == self.head(name) else "OutOfSync"
+            obj["status"]["sync"] = {"status": synced, "revision": revision}
+        self.touch(obj)
 
     @staticmethod
     def answer(status, doc):

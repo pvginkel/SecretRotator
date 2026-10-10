@@ -559,23 +559,6 @@ class TestActivation:
         assert plan.ask == "restart the app by hand; tell the copy's reader"
         assert all(s.mutates and s.activator and s.undo is None for s in confirms)
 
-    @pytest.mark.parametrize(
-        ("activate", "problem"),
-        [
-            (
-                {"eso__prd__app__prd__token": "none", "iac__copy": "argocd-sync:app-prd"},
-                f"{LEAF}: {COPY}'s rotation_token activate argocd-sync:app-prd: no step",
-            ),
-            (
-                {"eso__prd__app__prd__token": "argocd-sync:app-prd"},
-                f"{LEAF}: rotation_token activate argocd-sync:app-prd: no step",
-            ),
-        ],
-    )
-    def test_a_spec_no_step_is_built_for_refuses_the_plan(self, activate, problem):
-        with pytest.raises(PlanError, match=problem):
-            plan_for(LEAF, "random", ["token"], store_of(**activate))
-
 
 class TestOperatorSteps:
     class Ctx:

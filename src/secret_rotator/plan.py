@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from secret_rotator.ansiblesteps import Ansible, AnsibleRun, Playbook
+from secret_rotator.argocdsteps import ArgocdSync, Pushed
 from secret_rotator.audit import Audit, Leaf
 from secret_rotator.cluster import Cluster, Derived, Ref, Workload
 from secret_rotator.contract import NONE, Activator, Entry, copy_target, entry_name, is_scheduled
@@ -209,13 +210,21 @@ class StepFactory:
         rollouts = [K8sRollout(cluster, w, bound=bounds.get(w, ROLLOUT_BOUND)) for w in targets]
         return [*syncs, *rollouts]
 
+    def argocd_sync(
+        self, app: str, pushed: Pushed | None = None, *, healthy: bool = True
+    ) -> list[Step]:
+        """An argocd.sync of the Argo CD Application: of the commit a step before it pushed, or
+        without one of any sync that starts once it runs; healthy False leaves the Application's
+        health to the steps after it."""
+        return [ArgocdSync(self._cluster(), app, pushed, healthy=healthy)]
+
     def activate(self, *, bounds: Mapping[Workload, int] | None = None) -> list[Step]:
         """The activation of every entry the plan writes, in the Target's order: each spec of its
         activate as its steps. The Kubernetes specs of all of them are one eso_sync_and_rollout,
         at the first one's place, since a workload may read the Secrets of several of their leaves;
-        bounds as there. A job runs once, a manual: text once per leaf. A jenkins-credential: and a
-        github-webhook: take the value of the key whose entry names them, and a credential or a
-        hook two entries name refuses the plan, as does a spec no step is built for."""
+        bounds as there. A job and an Application's sync run once, a manual: text once per leaf. A
+        jenkins-credential: and a github-webhook: take the value of the key whose entry names
+        them, and a credential or a hook two entries name refuses the plan."""
         steps: list[Step] = []
         kubernetes = False
         credentials: dict[str, Activation] = {}
@@ -232,6 +241,10 @@ class StepFactory:
                     job = JenkinsJob(self.jenkins, *parse_job(spec.arg))
                     if job.id not in {step.id for step in steps}:
                         steps.append(job)
+                elif spec.name == "argocd-sync":
+                    sync = ArgocdSync(self._cluster(), spec.arg)
+                    if sync.id not in {step.id for step in steps}:
+                        steps.append(sync)
                 elif spec.name == "jenkins-credential":
                     if other := credentials.get(spec.arg):
                         raise self._refused(
@@ -261,8 +274,6 @@ class StepFactory:
                     steps.append(
                         OperatorConfirm(f"{leaf}:{n}", spec.arg, f"for {leaf}", activator=True)
                     )
-                else:
-                    raise self._refused(activation, spec, "no step is built for it yet")
         return steps
 
     def _entry(self, activation: Activation) -> str:

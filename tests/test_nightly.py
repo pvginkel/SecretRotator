@@ -353,6 +353,24 @@ class TestHealthFirst:
         assert state_of(bao, LEAF).stamps["token"] == (TODAY + DAY).isoformat()
         assert "1 resolved" in night.card()["comments"][-1]
 
+    def test_a_plan_whose_application_is_not_synced_is_skipped_onto_the_card(self):
+        bao = world(due=(LEAF,))
+        edit(bao.meta(LEAF), "token", activate="argocd-sync:app-prd")
+        night = Night(bao)
+        app = night.cluster.get("applications", "argocd-prd", "app-prd")
+        app["status"]["sync"]["status"] = "OutOfSync"
+        assert night() == 0
+        assert "token" not in state_of(bao, LEAF).stamps
+        assert night.telegram.messages == [] and night.cluster.patches() == []
+        assert (
+            f"- `{LEAF}`: its random plan of token: Argo Application app-prd is OutOfSync, Healthy"
+        ) in night.card()["description"]
+        app["status"]["sync"]["status"] = "Synced"
+        night(now=NOW + DAY)
+        assert state_of(bao, LEAF).stamps["token"] == (TODAY + DAY).isoformat()
+        (requested,) = [body for _, body in night.cluster.patches() if "operation" in body]
+        assert requested["operation"]["initiatedBy"] == {"username": "secret-rotator"}
+
 
 class TestFailure:
     def test_a_failed_plan_is_rolled_back_told_due_again_and_the_run_goes_on(self):
@@ -451,13 +469,15 @@ class TestFailure:
 
     def test_a_plan_that_cannot_be_built_goes_on_the_card(self):
         bao = world(due=(LEAF,))
-        edit(bao.meta(LEAF), "token", activate="argocd-sync:app-prd")
+        edit(bao.meta(LEAF), "token", activate="jenkins-credential:app-token")
+        edit(bao.meta(COPY), "token", activate="jenkins-credential:app-token")
         night = Night(bao)
         assert night() == 0
         assert night.telegram.messages == []
         assert (
-            f"- `{LEAF}`: its random plan of token: rotation_token activate argocd-sync:app-prd: "
-            "no step is built for it yet"
+            f"- `{LEAF}`: its random plan of token: {COPY}'s rotation_token activate "
+            "jenkins-credential:app-token: rotation_token names the credential too, and it takes "
+            "one value"
         ) in night.card()["description"]
 
 

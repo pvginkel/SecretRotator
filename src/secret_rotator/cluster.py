@@ -1,6 +1,6 @@
 """What the rotator reads of the prd cluster (design §4.3): the ExternalSecrets that reference a
-leaf, the workloads whose pod templates read their Secrets, and whether a workload is rolled out
-with its Argo Application Healthy.
+leaf, the workloads whose pod templates read their Secrets, whether a workload is rolled out with
+its Argo Application Healthy, and whether an Argo Application is Synced and Healthy.
 
 One match serves auto, the sync before every rollout and the orphan check (design R70): an
 ExternalSecret references a leaf when a data[].remoteRef.key or a dataFrom[].extract.key names it.
@@ -182,6 +182,13 @@ def _pod_template(kind: str, obj: dict) -> tuple[Workload, dict]:
     return workload, obj["spec"]["template"].get("spec") or {}
 
 
+def sync_state(application: dict) -> tuple[str, str]:
+    """An Argo Application's sync status and health status, each Unknown where it has none."""
+    status = application.get("status") or {}
+    sync = (status.get("sync") or {}).get("status") or "Unknown"
+    return sync, (status.get("health") or {}).get("status") or "Unknown"
+
+
 def owning_app(obj: dict) -> str | None:
     """The Argo CD Application that deployed the object; None when none did."""
     tracking = (obj["metadata"].get("annotations") or {}).get(TRACKING)
@@ -280,3 +287,13 @@ class Cluster:
             return f"its Argo Application {app} does not exist"
         health = ((application.get("status") or {}).get("health") or {}).get("status")
         return None if health == "Healthy" else f"its Argo Application {app} is {health}"
+
+    def synced(self, app: str) -> str | None:
+        """Why the Argo Application is not Synced and Healthy, read live; None when it is."""
+        application = self.kube.get(f"{APPLICATIONS}/{app}")
+        if application is None:
+            return f"Argo Application {app} does not exist"
+        sync, health = sync_state(application)
+        if (sync, health) == ("Synced", "Healthy"):
+            return None
+        return f"Argo Application {app} is {sync}, {health}"

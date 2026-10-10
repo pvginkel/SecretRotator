@@ -1,11 +1,11 @@
 """The nightly run, `secret-rotator run` without a path: design §8's run loop. The lock first: held,
 the run says so in Telegram and ends there. Then compliance, the due set oldest first, admission —
 a plan with an operator step is marked manual-due and never started (design §4.4) — whether what
-each plan acts on answers, the health of its rollout targets, and the plans under the executor, a
-failed one rolled back by the run itself (ruling D2). Last the standing card, the digest and the
-metrics (design §3.4): the run health every night, the lock held included, the state and the
-findings once it audited the store. One plan's failure never ends the run: it exits non-zero only
-when the run itself broke."""
+each plan acts on answers, the health of its rollout targets and of the Argo Applications it syncs,
+and the plans under the executor, a failed one rolled back by the run itself (ruling D2). Last the
+standing card, the digest and the metrics (design §3.4): the run health every night, the lock held
+included, the state and the findings once it audited the store. One plan's failure never ends the
+run: it exits non-zero only when the run itself broke."""
 
 import datetime
 import time
@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 from secret_rotator import card as cards
 from secret_rotator import metrics
+from secret_rotator.argocdsteps import ArgocdSync
 from secret_rotator.audit import Audit, Leaf, audit, due_keys, live_store, report
 from secret_rotator.cluster import Cluster
 from secret_rotator.executor import Executor, Outcome
@@ -359,13 +360,14 @@ class Night:
         return next((why for step in plan.steps if (why := step.unanswered(self.bao))), None)
 
     def unhealthy(self, plan: Plan) -> str | None:
-        """Why a rollout target of the plan is not Ready with its Argo Application Healthy; None
-        when every one is."""
-        whys = [
-            f"{step.workload}: {why}"
-            for step in plan.steps
-            if isinstance(step, K8sRollout) and (why := self.cluster.health(step.workload))
-        ]
+        """Why a rollout target of the plan is not Ready with its Argo Application Healthy, or an
+        Argo Application it syncs is not Synced and Healthy; None when every one is."""
+        whys = []
+        for step in plan.steps:
+            if isinstance(step, K8sRollout) and (why := self.cluster.health(step.workload)):
+                whys.append(f"{step.workload}: {why}")
+            elif isinstance(step, ArgocdSync) and (why := self.cluster.synced(step.app)):
+                whys.append(why)
         return "; ".join(whys) or None
 
     def execute(self, plan: Plan, due: Due) -> None:

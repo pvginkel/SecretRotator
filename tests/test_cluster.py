@@ -234,6 +234,17 @@ class TestHealth:
         del fake.objects["applications", "argocd-prd", "app-prd"]
         assert cluster.health(self.APP) == "its Argo Application app-prd does not exist"
 
+    def test_an_application_synced_and_healthy_or_why_not(self):
+        fake, cluster = cluster_of()
+        assert cluster.synced("app-prd") is None
+        app = fake.get("applications", "argocd-prd", "app-prd")
+        app["status"]["sync"]["status"] = "OutOfSync"
+        assert cluster.synced("app-prd") == "Argo Application app-prd is OutOfSync, Healthy"
+        del app["status"]["sync"]
+        app["status"]["health"]["status"] = "Degraded"
+        assert cluster.synced("app-prd") == "Argo Application app-prd is Unknown, Degraded"
+        assert cluster.synced("gone") == "Argo Application gone does not exist"
+
     def test_a_workload_no_application_tracks_needs_none(self):
         fake, cluster = cluster_of()
         assert cluster.health(Workload("app-prd", "statefulset", "app-db")) is None

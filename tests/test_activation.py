@@ -246,6 +246,59 @@ class TestEntriesCombined:
         ]
 
 
+class TestArgocdSync:
+    """An argocd-sync:<app> activator, the leaf's or a copy's, builds argocd.sync at its place,
+    once per Application (design §4.3); a rollback runs it again after the KV undos."""
+
+    def test_it_stands_at_its_place_once_per_application(self):
+        store = store_of(
+            eso__prd__app__prd__token="argocd-sync:app-prd,eso",
+            iac__copy="argocd-sync:app-prd,argocd-sync:bot-prd",
+        )
+        plan = plan_of(store)
+        assert ids(plan)[3:] == [
+            "argocd.sync:app-prd",
+            "eso.sync:app-prd/app-token",
+            "argocd.sync:bot-prd",
+            "kv.stamp",
+        ]
+        sync = plan.steps[3]
+        assert (sync.app, sync.pushed, sync.healthy) == ("app-prd", None, True)
+
+    def test_an_offline_plan_without_a_snapshot_refuses_it(self):
+        store = store_of(eso__prd__app__prd__token="argocd-sync:app-prd")
+        with pytest.raises(PlanError, match="offline plan without a snapshot does not reach"):
+            make(KINDS, LEAF, "random", ["token"], audit(store))
+
+    def test_a_failed_sync_is_rolled_back_by_undoing_kv_then_syncing_again(self):
+        fake = FakeCluster()
+        fake.sync_failing["app-prd"] = "one or more synchronization tasks completed unsuccessfully"
+        store = store_of(eso__prd__app__prd__token="argocd-sync:app-prd")
+        bao = fake_of(store)
+        old = bao.data(LEAF)["token"]
+        recorder = Recorder()
+        executor, outcome = run(bao, plan_of(store, fake), recorder=recorder)
+        assert outcome is Outcome.FAILED
+        state = state_of(bao, LEAF)
+        assert state.status == "failed-activation"
+        assert state.last_error == (
+            "the sync of app-prd at 5a1f3c9 ended Failed: one or more synchronization tasks "
+            "completed unsuccessfully"
+        )
+        del fake.sync_failing["app-prd"]
+        recorder.events.clear()
+        assert executor.abort() is Outcome.ROLLED_BACK
+        done = [(line[1], line[2]) for line in recorder.lines() if line[0] == "ok"]
+        assert done == [
+            (f"kv.copy:{COPY}#token", Action.UNDO),
+            ("kv.write", Action.UNDO),
+            ("argocd.sync:app-prd", Action.RERUN),
+        ]
+        assert bao.data(LEAF)["token"] == old
+        requested = [body for _, body in fake.patches() if "operation" in body]
+        assert len(requested) == 2
+
+
 class TestConsumers:
     def test_the_stamp_records_them_and_removes_them_when_there_are_none(self):
         bao = fake_of(store_of())
