@@ -36,13 +36,14 @@ def new_text(ctx, held):
 class Committing(RandomLike):
     """random's shape with the commit of the new value between the generate and the write."""
 
-    def __init__(self, *extra, no_undo=""):
+    def __init__(self, *extra, no_undo="", text=new_text):
         super().__init__(*extra)
         self.no_undo = no_undo
+        self.text = text
 
     def plan(self, leaf, ctx):
         commit = ctx.steps.commit_file(
-            REPO, PATH, new_text, credentials=TOKEN_LEAF, message=MESSAGE, no_undo=self.no_undo
+            REPO, PATH, self.text, credentials=TOKEN_LEAF, message=MESSAGE, no_undo=self.no_undo
         )
         return [*ctx.steps.generate("token"), *commit, *ctx.steps.write(), *self.extra]
 
@@ -51,13 +52,13 @@ class World:
     """The plan on the fake OpenBao, which holds the commit's token leaf, with the Ansible repo on
     the fake GitHub; extra: steps after the write."""
 
-    def __init__(self, *extra, no_undo="", files=None):
+    def __init__(self, *extra, no_undo="", files=None, text=new_text):
         self.bao = fake()
         self.bao.leaves[TOKEN_LEAF] = {"data": {"token": CONTENTS_TOKEN}, "meta": {}}
         self.github = FakeGitHub()
         files = {PATH: OLD, "README.md": "readme\n"} if files is None else files
         self.github.repo(REPO, files, sha=HEAD)
-        kind = Committing(*extra, no_undo=no_undo)
+        kind = Committing(*extra, no_undo=no_undo, text=text)
         self.plan = build(
             kind,
             target(LEAF, "random", ["token"], audit(compliant_store())),
@@ -286,6 +287,17 @@ class TestTheUndo:
         assert world.failure().step.id == "after"
         assert world.executor.abort() is Outcome.ROLLED_BACK
         assert world.text() == OLD
+
+    def test_a_run_that_found_the_file_holding_the_text_has_nothing_to_commit_back(self):
+        world = World(failing(), text=lambda ctx, held: held)
+        assert world.executor.run() is Outcome.FAILED
+        assert world.failure().step.id == "after"
+        assert world.details()[STEP] == f"{PATH} on main holds the new text already"
+        assert world.executor.abort() is Outcome.ROLLED_BACK
+        assert world.details(Action.UNDO)[STEP] == (
+            f"nothing to commit back: the step committed nothing to {PATH}"
+        )
+        assert world.puts() == [] and world.text() == OLD
 
     def test_a_push_to_the_file_during_the_undo_is_read_again_and_retried(self):
         world = World(failing())
