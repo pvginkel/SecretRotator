@@ -204,6 +204,24 @@ class TestAPushedCommit:
         assert step.run(ctx) == "b2c4e6a synced by secret-rotator: Synced, Healthy"
         assert ctx.progressed[0] == REQUESTED and len(requested(fake)) == 1
 
+    def test_a_retry_whose_new_sync_fails_too_fails_it_at_once_with_argo_cd_s_message(self):
+        fake = FakeCluster()
+        fake.sync_failing[APP] = "one or more synchronization tasks completed unsuccessfully"
+        fake.push(APP, COMMIT)
+        step, _, ctx = pushed_sync(fake)
+        with pytest.raises(StepFailed):
+            step.run(ctx)
+        first = ctx.values["argocd.sync:app-prd:failed"]
+        fake.sync_failing[APP] = "the PreSync hook failed again"
+        with pytest.raises(StepFailed) as e:
+            step.run(ctx)
+        assert e.value.error == (
+            "the sync of app-prd at b2c4e6a ended Failed: the PreSync hook failed again"
+        )
+        assert len(requested(fake)) == 1
+        failed = fake.get("applications", "argocd-prd", APP)["status"]["operationState"]
+        assert ctx.values["argocd.sync:app-prd:failed"] == failed["startedAt"] != first
+
     def test_health_is_verified_unless_left_to_the_steps_after_it(self):
         fake = FakeCluster()
         fake.get("applications", "argocd-prd", APP)["status"]["health"]["status"] = "Degraded"
