@@ -579,6 +579,22 @@ class TestTheReach:
             "wrkdev does not answer: ssh: connect to host wrkdev port 22: No route to host"
         )
 
+    @pytest.mark.parametrize(
+        ("scenario", "said"),
+        [
+            ("unreachable", "ssh: connect to host pve port 22: No route to host"),
+            ("unresolved", "ssh: Could not resolve hostname pve: Name or service not known"),
+            ("banner", "Connection timed out during banner exchange"),
+            ("kex", "kex_exchange_identification: read: Connection reset by peer"),
+        ],
+    )
+    def test_each_way_ssh_reaches_no_sshd_does_not_answer(self, tmp_path, scenario, said):
+        world = World(tmp_path)
+        world.scenario(pve=scenario)
+        assert Reach(world.ssh, ("pve",)).unanswered(client(world.bao)) == (
+            f"pve does not answer: {said}"
+        )
+
     def test_a_host_whose_ssh_does_not_finish_does_not_answer(self, tmp_path):
         world = World(tmp_path)
         world.scenario(pve="hang")

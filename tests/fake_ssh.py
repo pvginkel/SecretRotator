@@ -68,6 +68,17 @@ def main():
     elif scenario == "unreachable":
         print(f"ssh: connect to host {host} port 22: No route to host", file=sys.stderr)
         sys.exit(255)
+    elif scenario == "unresolved":
+        print(f"ssh: Could not resolve hostname {host}: Name or service not known", file=sys.stderr)
+        sys.exit(255)
+    elif scenario == "banner":
+        print("Connection timed out during banner exchange", file=sys.stderr)
+        print("Connection to UNKNOWN port 65535 timed out", file=sys.stderr)
+        sys.exit(255)
+    elif scenario == "kex":
+        print("kex_exchange_identification: read: Connection reset by peer", file=sys.stderr)
+        print(f"Connection reset by {host} port 22", file=sys.stderr)
+        sys.exit(255)
     elif scenario == "hostkey":
         print("Host key verification failed.", file=sys.stderr)
         sys.exit(255)
