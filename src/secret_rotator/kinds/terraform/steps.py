@@ -157,7 +157,11 @@ class CommitKeeper(Step):
             try:
                 found = self.github.contents(repo, file, BRANCH)
                 if found is None:
-                    raise StepFailed(f"{repo} has no {file} on {BRANCH}")
+                    # GitHub answers a token that cannot see a private repository the same.
+                    raise StepFailed(
+                        f"{repo} has no {file} on {BRANCH}, or the token in {CREDENTIALS} lacks "
+                        "the repository"
+                    )
                 text, blob = found
                 try:
                     head, epochs = keepers.parse(text)

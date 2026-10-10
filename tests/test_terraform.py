@@ -426,7 +426,11 @@ class TestARotation:
     @pytest.mark.parametrize(
         ("text", "why"),
         [
-            (None, f"pvginkel/IotDeploy has no {FILE} on main"),
+            (
+                None,
+                f"pvginkel/IotDeploy has no {FILE} on main, or the token in "
+                "rotator/terraform/credentials lacks the repository",
+            ),
             (
                 'stage = "prd"\n',
                 f"pvginkel/IotDeploy {FILE}: not one `rotation_epoch = {{ … }}` map",
