@@ -41,12 +41,22 @@ srviac, in the `iac` container:
 ssh -t ansible@srviac "sudo iac -c 'secret-rotator run <leaf>'"
 ```
 
-srvk8sdev, the dev cluster's VM, is off by default. A plan with a step on it (`Step.vm`) starts
-with `vm.start`, which starts the VM through a PVE node if it is stopped (SSH as `ansible`, `sudo -n
-qm` on the VM's node) and waits up to 15 min until what the plan acts on in it answers. Once the
-plan is done, rolled back or stopped failed, the executor shuts the VM down again if the plan
-started it, and leaves running one it found running. A VM that does not answer in time skips the
-nightly run's plan and fails a `run <path>` one.
+Ansible's playbooks and the rotator's own `ssh` log in to hosts as `ansible` with
+`~/.ssh/id_ed25519_ansible`, which `iac-impl` writes from `kv/iac/ansible-ssh-key#private` when the
+container starts. In a plan with a step that logs in as `ansible` (`Step.logs_in`), the executor
+rewrites that file from the leaf before each step, undo and re-run (`ansiblekey`): a plan that
+rotates the key switches the running command to the new key at its `kv.write`, and back at that
+write's undo.
+
+srvk8sdev, the dev cluster's VM, is off by default, and a scratch VM may be off or not exist. A plan
+with a step on such VMs (`Step.vms`) starts with a `vm.start` of each, which finds the VM through a
+PVE node (SSH as `ansible`, `sudo -n pvesh`), starts it if it is stopped (`sudo -n qm` on the VM's
+node), hands the steps on it where it runs, `<node>/<vmid>`, and waits up to 15 min until its guest
+agent and what the plan acts on in it answer. A VM the PVE cluster does not list is absent: there
+is nothing to start, and where it runs is handed on as `absent`. Once the plan is done, rolled back
+or stopped failed, the executor shuts the VM down again if the plan started it, and leaves running
+one it found running. A VM that does not answer in time skips the nightly run's plan and fails a
+`run <path>` one.
 
 The UI starts with `ssh -t ansible@srviac secret-rotator-ui` (Ansible `support/iac-agent/bin/`),
 which runs it in srviac's tmux session `secret-rotator`: a lost SSH session leaves the UI running
@@ -102,8 +112,10 @@ series `metrics.HELP` names.
   (`session`), the list the UI shows (`listing`), the generic steps
   (`kvsteps`, `k8ssteps`, `argocdsteps`, `jenkinssteps`, `githubsteps`, `ansiblesteps`, `sshsteps`,
   `opsteps`), the start and shutdown of a VM that may be off and the PVE client they go through
-  (`vmsteps`), the nightly run (`nightly`), the standing card, the metrics (`metrics`), and the
-  clients for OpenBao, Kubernetes, Jenkins, GitHub, YouTrack and Telegram.
+  (`vmsteps`), the key file the rotator logs in as `ansible` with, which follows its leaf, and
+  srviac's own copy of that key (`ansiblekey`), the nightly run (`nightly`), the standing card, the
+  metrics (`metrics`), and the clients for OpenBao, Kubernetes, Jenkins, GitHub, YouTrack and
+  Telegram.
 - `src/secret_rotator/ui/` is `secret-rotator ui`, a Textual app over the executor: the app
   (`app.py`) and its stylesheet (`app.tcss`), the widgets, the wizard's screens collated from a
   plan's steps (`collate`), and `run.py`, which runs a plan's executor on a thread of its own.
@@ -111,24 +123,31 @@ series `metrics.HELP` names.
   `keycloak_client`, `cnpg_role`, `jenkins_token`, `jenkins_job_token`, `grafana_admin`, `external`,
   `pve_root_password`, `samba_user`, `step_ca_password`, `github_webhook_secret`, `youtrack_token`,
   `home_assistant_token`, `google_sa_key`, `elastic_user`, `kubecoder_client`, `k8s_sa_token`,
-  `terraform`, `rgw_admin` and `cephx`. Each is registered as a `secret_rotator.kinds` entry point
-  in `pyproject.toml`, under its kind's name (`keycloak-client` for `keycloak_client`). The leaves
-  of a kind the contract knows but no package implements are skipped. A kind that reaches a system
-  of its own keeps that system's address in its package: Keycloak's two realms (`keycloak_client`,
-  the one place a realm's URL is set), Postgres (`cnpg_role`), Grafana (`grafana_admin`), the PVE
-  nodes (`pve_root_password`), step-ca (`step_ca_password`), Home Assistant
-  (`home_assistant_token`), Google's token endpoint and IAM API (`google_sa_key`), Elasticsearch
-  (`elastic_user`), KubeCoder's controller (`kubecoder_client`), each cluster's RGW admin API on the
-  storage backplane (`rgw_admin`) and each cluster's Ceph VMs, which `cephx` reaches through the
-  guest agent from their PVE node (`sudo -n qm guest exec`). `youtrack_token` reaches YouTrack and
-  its Hub through the core's YouTrack client, `github_webhook_secret` GitHub through the core's
-  `github.webhook` step, and `k8s_sa_token` the dev cluster at the apiserver and CA the KubeCoder
-  catalog's `kubeconfig-dev-write` names; `cephx` reaches it the same way, through `k8s_sa_token`'s
-  reach. `terraform` reaches GitHub through the core's GitHub client, under its own token
-  `rotator/terraform/credentials`, and Argo CD through the core's `argocd.sync` step.
-  `kinds/manual/types/<type>.md` holds one document per credential type: the standard
-  instructions a `manual` key's `type` arg picks, under a front matter of the credential's name, the
-  shape a pasted value has (and whether it is entered as lines) and whether it expires.
+  `terraform`, `rgw_admin`, `cephx` and `ssh_key`. Each is registered as a `secret_rotator.kinds`
+  entry point in `pyproject.toml`, under its kind's name (`keycloak-client` for `keycloak_client`).
+  The leaves of a kind the contract knows but no package implements are skipped. A kind that reaches
+  a system of its own keeps that system's address in its package: Keycloak's two realms
+  (`keycloak_client`, the one place a realm's URL is set), Postgres (`cnpg_role`), Grafana
+  (`grafana_admin`), the PVE nodes (`pve_root_password`), step-ca (`step_ca_password`), Home
+  Assistant (`home_assistant_token`), Google's token endpoint and IAM API (`google_sa_key`),
+  Elasticsearch (`elastic_user`), KubeCoder's controller (`kubecoder_client`), each cluster's RGW
+  admin API on the storage backplane (`rgw_admin`) and each cluster's Ceph VMs, which `cephx`
+  reaches through the guest agent from their PVE node (`sudo -n qm guest exec`). `youtrack_token`
+  reaches YouTrack and its Hub through the core's YouTrack client, `github_webhook_secret` GitHub
+  through the core's `github.webhook` step, and `k8s_sa_token` the dev cluster at the apiserver and
+  CA the KubeCoder catalog's `kubeconfig-dev-write` names; `cephx` reaches it the same way, through
+  `k8s_sa_token`'s reach. `terraform` commits its keeper file to GitHub through `Commit`, the base
+  of the core's `github.commit` step, under its own token `rotator/terraform/credentials`, and
+  reaches Argo CD through the core's `argocd.sync` step. `ssh_key` takes the hosts that hold the
+  Ansible key from the Ansible clone's `inventories/prd/hosts.yml` when it builds its plan (the
+  groups `ansible_key_always_up` and `ansible_key_may_be_off`); its own step `ssh_key.reach` runs
+  `true` as `ansible` on each always-up host, and one that does not answer skips the nightly plan.
+  It runs Ansible's `playbooks/rotate-ansible-key.yml` through `ansible.run` and commits the public
+  half to the Ansible repo's `ansible/roles/bootstrap/files/ansible.pub` through `github.commit`,
+  under its own token `rotator/ssh-key/credentials`.
+  `kinds/manual/types/<type>.md` holds one document per credential type: the standard instructions a
+  `manual` key's `type` arg picks, under a front matter of the credential's name, the shape a pasted
+  value has (and whether it is entered as lines) and whether it expires.
 - `src/secret_rotator/seed.yaml` holds the annotations `annotate` writes, transcribed from the
   catalog, in a compact form: per leaf, a default and per-key fields under `keys:`, which `annotate`
   expands into one entry per data key. `store-keys.json` lists the store's leaves and key names,
@@ -144,6 +163,15 @@ Postgres login, Keycloak, Jenkins, Grafana, YouTrack and its Hub, Telegram, step
 Home Assistant, Google, Elasticsearch, KubeCoder's controller, `ansible-playbook`, `ssh` and
 step-cli, the PVE nodes' `pvesh` and `qm`, the Ceph CLI in a Ceph VM and RGW's admin API, never a
 live system: `tests/conftest.py` fails a test that runs the real `ssh`.
+`tests/fake_ansible_playbook.py` stands in for `ansible-playbook` by named scenario; its `rotate`
+scenario plays `rotate-ansible-key.yml` on a simulated estate, logins with the controller's key
+file included.
+`nightly.run` and `Night` take what the plans reach as seams (`pve`, `ansible`, `ssh`, `github`) and
+the rotator's Ansible key files as `ansible_key`, which a test of the `ssh-key` kind sets to
+temporary files: without them the executor follows no leaf and the plan's `ssh.key_copy` writes the
+real copy. `cli.main` has no such seam and always hands the real files, so a test through it must
+not run a plan that logs in as `ansible` with `iac/ansible-ssh-key` in its store: the `iac` sidecar
+shares the dev environment's `~/.ssh`.
 The UI's pilot tests (`test_ui`, `test_wizard`, `test_wizard_failure`, `test_filter`) drive the
 Textual app over the executor and the fake OpenBao, with `tests/sim.py`'s steps standing in for a
 vendor's side.
