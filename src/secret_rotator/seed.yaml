@@ -789,7 +789,8 @@ shared/dev/ceph-rgw/s3:
   interval: 365d
   activate: none
   keys:
-    access_key_id: {kind: none}
+    access_key_id: {kind: rgw-admin}
+    secret_access_key: {kind: rgw-admin}
 
 shared/jenkins/admin-password:
   kind: manual
@@ -811,7 +812,8 @@ shared/prd/ceph-rgw/s3:
   interval: 365d
   activate: none
   keys:
-    access_key_id: {kind: none}
+    access_key_id: {kind: rgw-admin}
+    secret_access_key: {kind: rgw-admin}
 
 shared/samba/users:
   kind: samba-user

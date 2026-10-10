@@ -31,6 +31,7 @@ from secret_rotator.kinds.kubecoder_client import KubeCoderClient
 from secret_rotator.kinds.manual import TYPES, Manual, load_type
 from secret_rotator.kinds.pve_root_password import PveRootPassword
 from secret_rotator.kinds.random import Random
+from secret_rotator.kinds.rgw_admin import RgwAdmin
 from secret_rotator.kinds.samba_user import SambaUser
 from secret_rotator.kinds.step_ca_password import StepCaPassword
 from secret_rotator.kinds.terraform import Terraform
@@ -116,6 +117,7 @@ class TestTheRegistry:
             "kubecoder-client",
             "k8s-sa-token",
             "terraform",
+            "rgw-admin",
             "external",
         }
         assert isinstance(KINDS["random"], Random) and isinstance(KINDS["manual"], Manual)
@@ -137,6 +139,7 @@ class TestTheRegistry:
         assert isinstance(KINDS["kubecoder-client"], KubeCoderClient)
         assert isinstance(KINDS["terraform"], Terraform)
         assert isinstance(KINDS["k8s-sa-token"], K8sSaToken)
+        assert isinstance(KINDS["rgw-admin"], RgwAdmin)
 
     @pytest.mark.parametrize(
         ("found", "problem"),
