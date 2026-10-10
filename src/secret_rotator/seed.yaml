@@ -1006,3 +1006,76 @@ rotator/bootstrap/seal-key:
   notes: "The bootstrap tier: OpenBao's static seal key, rotated on compromise only (SOPs
     bootstrap-secrets-rotation.md). Its seal migration is sketched in Ansible
     docs/runbooks/openbao.md §5, Static seal key."
+
+# Marker leaves for the credentials Terraform mints in an app's PreSync hook (R11), each at
+# rotator/terraform/<Argo Application>/<keeper>; a keeper is named after the Terraform block whose
+# credential it re-mints.
+rotator/terraform/electronics-inventory-prd/db:
+  marker: password
+  kind: terraform
+  args: {"repo":"pvginkel/ElectronicsInventoryDeploy","path":"","app":"electronics-inventory-prd","keeper":"db","secret":"electronics-inventory-prd/electronics-inventory-db"}
+  interval: 14d
+  activate: none
+
+rotator/terraform/electronics-inventory-prd/s3:
+  marker: access_key
+  kind: terraform
+  args: {"repo":"pvginkel/ElectronicsInventoryDeploy","path":"","app":"electronics-inventory-prd","keeper":"s3","secret":"electronics-inventory-prd/s3-credentials"}
+  interval: 14d
+  activate: none
+
+rotator/terraform/guacamole-prd/db:
+  marker: password
+  kind: terraform
+  args: {"repo":"pvginkel/GuacamoleDeploy","path":"","app":"guacamole-prd","keeper":"db","secret":"guacamole-prd/guacamole-db"}
+  interval: 14d
+  activate: none
+
+rotator/terraform/iot-prd/db:
+  marker: password
+  kind: terraform
+  args: {"repo":"pvginkel/IotDeploy","path":"","app":"iot-prd","keeper":"db","secret":"iot-prd/iotsupport-db"}
+  interval: 14d
+  activate: none
+
+rotator/terraform/iot-prd/s3:
+  marker: access_key
+  kind: terraform
+  args: {"repo":"pvginkel/IotDeploy","path":"","app":"iot-prd","keeper":"s3","secret":"iot-prd/s3-credentials"}
+  interval: 14d
+  activate: none
+
+rotator/terraform/keycloak-dev/db:
+  marker: password
+  kind: terraform
+  args: {"repo":"pvginkel/KeycloakDeploy","path":"","app":"keycloak-dev","keeper":"db","secret":"keycloak-dev/keycloak-db"}
+  interval: 14d
+  activate: none
+
+rotator/terraform/keycloak-prd/db:
+  marker: password
+  kind: terraform
+  args: {"repo":"pvginkel/KeycloakDeploy","path":"","app":"keycloak-prd","keeper":"db","secret":"keycloak-prd/keycloak-db"}
+  interval: 14d
+  activate: none
+
+rotator/terraform/postgres-pas-prd/backups:
+  marker: token
+  kind: terraform
+  args: {"repo":"pvginkel/PostgresPasDeploy","path":"","app":"postgres-pas-prd","keeper":"backups","secret":"postgres-pas-prd/postgres-backup-upload"}
+  interval: 14d
+  activate: none
+
+rotator/terraform/storage-prd/backup_reader:
+  marker: access_key
+  kind: terraform
+  args: {"repo":"pvginkel/StorageDeploy","path":"","app":"storage-prd","keeper":"backup_reader","secret":"storage-prd/backup-reader-credentials"}
+  interval: 14d
+  activate: none
+
+rotator/terraform/youtrack-prd/backups:
+  marker: token
+  kind: terraform
+  args: {"repo":"pvginkel/YoutrackDeploy","path":"","app":"youtrack-prd","keeper":"backups","secret":"youtrack-prd/youtrack-backup-upload"}
+  interval: 14d
+  activate: none

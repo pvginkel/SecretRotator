@@ -13,12 +13,15 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from fake_cluster import pod_spec, snapshot, workload
 
 from secret_rotator import annotate as ann
 from secret_rotator import audit as aud
-from secret_rotator import cli
+from secret_rotator import cli, registry
+from secret_rotator.cluster import Cluster
 from secret_rotator.contract import MAX_VALUE_BYTES, dump_entry, is_scheduled
 from secret_rotator.kinds.manual import TYPES
+from secret_rotator.plan import make
 
 APPROLES = ("backup", "eso", "eso-dev", "iac-agent", "jenkins", "openbao-admin")
 BOOTSTRAP = (
@@ -30,6 +33,48 @@ BOOTSTRAP = (
     "seal-key",
 )
 CATALOG = "eso/prd/kubecoder/prd/catalog"
+# rotator/terraform/<app>/<keeper>: its data key, its deploy repo, the Secret Terraform writes in
+# the Application's namespace, and the Deployments that read it on prd. A Secret only CronJobs
+# read has none.
+TERRAFORM = {
+    "electronics-inventory-prd/db": (
+        "password",
+        "ElectronicsInventoryDeploy",
+        "electronics-inventory-db",
+        ("electronics-inventory",),
+    ),
+    "electronics-inventory-prd/s3": (
+        "access_key",
+        "ElectronicsInventoryDeploy",
+        "s3-credentials",
+        ("electronics-inventory",),
+    ),
+    "guacamole-prd/db": ("password", "GuacamoleDeploy", "guacamole-db", ("guacamole",)),
+    "iot-prd/db": ("password", "IotDeploy", "iotsupport-db", ("iotsupport",)),
+    "iot-prd/s3": ("access_key", "IotDeploy", "s3-credentials", ("iotsupport",)),
+    "keycloak-dev/db": ("password", "KeycloakDeploy", "keycloak-db", ("keycloak",)),
+    "keycloak-prd/db": ("password", "KeycloakDeploy", "keycloak-db", ("keycloak",)),
+    "postgres-pas-prd/backups": ("token", "PostgresPasDeploy", "postgres-backup-upload", ()),
+    "storage-prd/backup_reader": ("access_key", "StorageDeploy", "backup-reader-credentials", ()),
+    "youtrack-prd/backups": ("token", "YoutrackDeploy", "youtrack-backup-upload", ()),
+}
+# The Deployments of the markers' namespaces as a snapshot of prd held them on 2026-10-10, with the
+# markers' Secrets each reads; the CronJobs s3-mirror, youtrack-backup and postgres-backup read the
+# other three.
+PRD = {
+    ("electronics-inventory-prd", "electronics-inventory"): (
+        "electronics-inventory-db",
+        "s3-credentials",
+    ),
+    ("guacamole-prd", "guacamole"): ("guacamole-db",),
+    ("iot-prd", "iotsupport"): ("iotsupport-db", "s3-credentials"),
+    ("keycloak-dev", "keycloak"): ("keycloak-db",),
+    ("keycloak-prd", "keycloak"): ("keycloak-db",),
+    ("postgres-pas-prd", "postgres-pooler-rw"): (),
+    ("storage-prd", "backup-server"): (),
+    ("storage-prd", "storage"): (),
+    ("youtrack-prd", "youtrack"): (),
+}
 
 
 def audit_offline(keys_file: Path) -> tuple[int, list[str]]:
@@ -345,9 +390,10 @@ def test_the_rotators_own_leaves_are_annotated(entries):
         assert [f["activate"] for f in scheduled] == ["none"], leaf
 
 
-def test_the_markers_are_the_approles_and_the_bootstrap_tier(seed, store):
+def test_the_markers_are_the_approles_the_bootstrap_tier_and_the_terraform_credentials(seed, store):
     want = {f"rotator/approle/{r}": "secret_id" for r in APPROLES}
     want |= {f"rotator/bootstrap/{b}": b for b in BOOTSTRAP}
+    want |= {f"rotator/terraform/{at}": key for at, (key, *_) in TERRAFORM.items()}
     assert seed.markers == want
     for leaf, key in want.items():
         assert store[leaf] == [key], leaf
@@ -377,3 +423,53 @@ def test_every_approle_has_the_one_args_shape(entries):
         entries["rotator/approle/eso"]["secret_id"]["activate"]
         == "k8s-rollout:external-secrets-prd/deployment/external-secrets-prd"
     )
+
+
+def test_every_terraform_marker_names_its_repo_application_keeper_and_secret(entries):
+    terraform = {
+        leaf: by_key
+        for leaf, by_key in entries.items()
+        if any(f["kind"] == "terraform" for f in by_key.values())
+    }
+    assert sorted(terraform) == sorted(f"rotator/terraform/{at}" for at in TERRAFORM)
+    for at, (key, repo, secret, _) in TERRAFORM.items():
+        app, keeper = at.split("/")
+        args = {"repo": f"pvginkel/{repo}", "path": "", "app": app, "keeper": keeper}
+        assert terraform[f"rotator/terraform/{at}"] == {
+            key: {
+                "kind": "terraform",
+                "args": args | {"secret": f"{app}/{secret}"},
+                "interval": "14d",
+                "activate": "none",
+            }
+        }, at
+
+
+@pytest.mark.parametrize("at", sorted(TERRAFORM))
+def test_against_a_snapshot_of_prd_a_terraform_marker_commits_syncs_proves_restarts_and_stamps(
+    seed, at, tmp_path
+):
+    key, _, secret, readers = TERRAFORM[at]
+    app, keeper = at.split("/")
+    path = tmp_path / "snapshot.json"
+    deployments = [
+        ("deployments", workload("Deployment", ns, name, pod_spec(env=read), app=ns))
+        for (ns, name), read in PRD.items()
+    ]
+    path.write_text(json.dumps(snapshot(deployments)))
+    cluster = Cluster.of_snapshot(path)
+    kinds = registry.load()
+    store = ann.offline_store(Path(str(ann.DEFAULT_KEYS)), seed, print)
+    result = aud.audit(store, cluster.referenced(), kinds)
+    plan = make(kinds, f"rotator/terraform/{at}", "terraform", [key], result, cluster)
+    assert [step.id for step in plan.steps] == [
+        f"terraform.marker:{key}",
+        f"terraform.commit_keeper:{app}/{keeper}",
+        f"argocd.sync:{app}",
+        f"terraform.prove_remint:{app}/{secret}",
+        "kv.write",
+        *(f"k8s.rollout:{app}/deployment/{name}" for name in readers),
+        "kv.stamp",
+    ]
+    assert plan.steps[2].healthy == (not readers)
+    assert not plan.needs_operator

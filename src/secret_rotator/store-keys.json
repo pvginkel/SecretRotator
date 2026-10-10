@@ -445,6 +445,36 @@
   "rotator/terraform/credentials": [
     "token"
   ],
+  "rotator/terraform/electronics-inventory-prd/db": [
+    "password"
+  ],
+  "rotator/terraform/electronics-inventory-prd/s3": [
+    "access_key"
+  ],
+  "rotator/terraform/guacamole-prd/db": [
+    "password"
+  ],
+  "rotator/terraform/iot-prd/db": [
+    "password"
+  ],
+  "rotator/terraform/iot-prd/s3": [
+    "access_key"
+  ],
+  "rotator/terraform/keycloak-dev/db": [
+    "password"
+  ],
+  "rotator/terraform/keycloak-prd/db": [
+    "password"
+  ],
+  "rotator/terraform/postgres-pas-prd/backups": [
+    "token"
+  ],
+  "rotator/terraform/storage-prd/backup_reader": [
+    "access_key"
+  ],
+  "rotator/terraform/youtrack-prd/backups": [
+    "token"
+  ],
   "rotator/youtrack": [
     "token"
   ],
