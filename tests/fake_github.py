@@ -3,10 +3,17 @@ configs, which it gives with the secret masked; their pings, which it delivers o
 which the client's sleep advances, has passed their lag; their deliveries, listed newest first a
 page at a time with the next page's cursor in the Link header; and their redeliveries. A delivery
 is signed with the hook's secret when GitHub makes it, and the hook's receiver answers 200 when
-that is the secret it holds, else 401."""
+that is the secret it holds, else 401.
 
+Its repositories each have one branch, main, a line of commits: a file's contents at the head, a
+commit of a new text over the blob it held, answered 409 once the file is another, and how two
+commits compare. Hooks take TOKEN, rotator/github's, and repositories CONTENTS_TOKEN, the terraform
+kind's, as fine-grained tokens each scoped to its own."""
+
+import base64
 import datetime
 import email.message
+import hashlib
 import io
 import json
 import re
@@ -18,6 +25,7 @@ from secret_rotator.github import ADDR, GitHub
 
 TOKEN = "SECRET-github-token"
 CREDENTIALS = {"token": TOKEN}  # rotator/github
+CONTENTS_TOKEN = "SECRET-github-contents-token"  # rotator/terraform/credentials
 REPO = "pvginkel/Fieldnotes"
 HOOK = 682399688
 SPEC = f"{REPO}/{HOOK}"
@@ -32,6 +40,8 @@ START = datetime.datetime(2026, 10, 5, 4, 0, tzinfo=datetime.UTC)  # the fake cl
 HOOKS = re.compile(
     r"/repos/([^/]+/[^/]+)/hooks/(\d+)/(config|pings|deliveries)(?:/(\d+)/attempts)?"
 )
+CONTENTS = re.compile(r"/repos/([^/]+/[^/]+)/contents/(.+)")
+COMPARE = re.compile(r"/repos/([^/]+/[^/]+)/compare/([0-9a-f]+)\.\.\.([0-9a-f]+)")
 
 
 class FakeResponse(io.BytesIO):
@@ -45,6 +55,11 @@ class FakeResponse(io.BytesIO):
 
 def stamp(at):
     return at.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def blob(text):
+    """A git object SHA of the text, as GitHub names a blob."""
+    return hashlib.sha1(text.encode()).hexdigest()
 
 
 class FakeGitHub:
@@ -63,6 +78,10 @@ class FakeGitHub:
         self.broken = {}  # (method, path) -> the OSError it raises
         self.refused = {}  # (method, path) -> the HTTP status it answers
         self.mangle = False  # a config PATCH also changes the hook's content_type
+        # repo -> its main branch's commits, oldest first: {"sha", "message", "files"}
+        self.repos = {}
+        self.on_commit = []  # called with (repo, sha) after each commit
+        self.racing = []  # called with the repo, each once, as a commit arrives: a concurrent push
 
     def github(self):
         return GitHub(opener=self, sleep=self.sleep, clock=self.clock)
@@ -115,6 +134,26 @@ class FakeGitHub:
         """The guids of the redeliveries, in the order made."""
         return [d["guid"] for d in self.hooks[repo, hook]["deliveries"] if d["redelivery"]]
 
+    def repo(self, repo, files, *, sha):
+        """A repository whose main holds the files, at its first commit."""
+        self.repos[repo] = [{"sha": sha, "message": "initial", "files": dict(files)}]
+
+    def head(self, repo):
+        return self.repos[repo][-1]
+
+    def file_at(self, repo, sha, path):
+        """The file's text at the commit; None when it has none."""
+        return next(c for c in self.repos[repo] if c["sha"] == sha)["files"].get(path)
+
+    def push(self, repo, path, text, message="a push"):
+        """A commit of the file's new text on main, as another writer's push; its SHA."""
+        files = self.head(repo)["files"] | {path: text}
+        commit = {"sha": blob(f"{len(self.repos[repo])}{message}{files}"), "message": message}
+        self.repos[repo].append(commit | {"files": files})
+        for event in self.on_commit:
+            event(repo, commit["sha"])
+        return commit["sha"]
+
     def __call__(self, req):
         url = urllib.parse.urlsplit(req.full_url)
         assert f"{url.scheme}://{url.netloc}" == ADDR, url
@@ -126,7 +165,13 @@ class FakeGitHub:
             raise self.broken[method, path]
         if (method, path) in self.refused:
             return self.error(self.refused[method, path], "Refused")
-        if req.get_header("Authorization") != f"Bearer {TOKEN}":
+        bearer = req.get_header("Authorization")
+        for pattern, answer in ((CONTENTS, self.contents), (COMPARE, self.compare)):
+            if found := pattern.fullmatch(path):
+                if bearer != f"Bearer {CONTENTS_TOKEN}" or found[1] not in self.repos:
+                    return self.error(404 if bearer else 401, "Not Found")
+                return answer(method, found, query, body)
+        if bearer != f"Bearer {TOKEN}":
             return self.error(401, "Bad credentials")
         found = HOOKS.fullmatch(path)
         if found is None or (found[1], int(found[2])) not in self.hooks:
@@ -183,6 +228,37 @@ class FakeGitHub:
         signed = self.signed[delivery] if self.redelivery_signed == "original" else None
         self.deliver(original["event"], repo=repo, hook=hook, guid=original["guid"], signed=signed)
         return FakeResponse(202, b"{}")
+
+    def contents(self, method, found, query, body):
+        repo, path = found[1], urllib.parse.unquote(found[2])
+        if method == "GET":
+            assert query == {"ref": "main"}, query
+            text = self.head(repo)["files"].get(path)
+            if text is None:
+                return self.error(404, "Not Found")
+            content = base64.b64encode(text.encode()).decode()
+            return self.json({"type": "file", "path": path, "sha": blob(text), "content": content})
+        assert method == "PUT" and body["branch"] == "main", (method, body)
+        if self.racing:
+            self.racing.pop(0)(repo)
+        held = self.head(repo)["files"].get(path)
+        if held is None or blob(held) != body["sha"]:
+            return self.error(409, f"{path} does not match {body['sha']}")
+        sha = self.push(repo, path, base64.b64decode(body["content"]).decode(), body["message"])
+        return self.json(
+            {"content": {"path": path, "sha": blob(self.file_at(repo, sha, path))}}
+            | {"commit": {"sha": sha, "message": body["message"]}}
+        )
+
+    def compare(self, method, found, query, body):
+        assert method == "GET", method
+        shas = [c["sha"] for c in self.repos[found[1]]]
+        base, head = found[2], found[3]
+        if base not in shas or head not in shas:
+            return self.error(404, "Not Found")
+        at = shas.index(head) - shas.index(base)
+        status = "identical" if at == 0 else "ahead" if at > 0 else "behind"
+        return self.json({"status": status, "ahead_by": max(at, 0), "behind_by": max(-at, 0)})
 
     @staticmethod
     def json(doc):

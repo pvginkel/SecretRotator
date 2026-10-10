@@ -1,6 +1,7 @@
 """What the rotator reads of the cluster: the one match from leaf to ExternalSecret (ruling B1),
-auto's rollout targets derived through the Secrets pod templates read, never a bare pod, and a
-workload's health as `kubectl rollout status` and Argo CD judge it. The ServiceAccount manifest."""
+auto's rollout targets derived through the Secrets pod templates read, never a bare pod, the
+readers of a Secret a kind names, and a workload's health as `kubectl rollout status` and Argo CD
+judge it. The ServiceAccount manifest."""
 
 import json
 import re
@@ -15,6 +16,7 @@ from secret_rotator.cluster import (
     SNAPSHOT_KINDS,
     Cluster,
     Ref,
+    SecretRef,
     SnapshotError,
     Workload,
     leaves_of,
@@ -99,6 +101,15 @@ class TestConsumers:
         )
         _, cluster = cluster_of(fake)
         assert cluster.consumers("x/leaf") == [Workload("x-prd", "deployment", "reads-it")]
+
+    def test_a_secret_a_kind_names_is_read_as_an_external_secret_s_is_and_by_namespace(self):
+        _, cluster = cluster_of()
+        assert [str(w) for w in cluster.readers(SecretRef("app-prd", "app-oidc"))] == [
+            "app-prd/daemonset/app-agent",  # a secret volume
+            "app-prd/deployment/app",  # envFrom
+        ]
+        assert cluster.readers(SecretRef("bot-prd", "app-oidc")) == []
+        assert SecretRef("x-prd", "db").path == "/api/v1/namespaces/x-prd/secrets/db"
 
     def test_one_cluster_lists_each_kind_once(self):
         fake, cluster = cluster_of()

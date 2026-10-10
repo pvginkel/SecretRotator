@@ -33,6 +33,7 @@ from secret_rotator.kinds.pve_root_password import PveRootPassword
 from secret_rotator.kinds.random import Random
 from secret_rotator.kinds.samba_user import SambaUser
 from secret_rotator.kinds.step_ca_password import StepCaPassword
+from secret_rotator.kinds.terraform import Terraform
 from secret_rotator.kinds.youtrack_token import YouTrackToken
 from secret_rotator.model import StepFailed, expiry_name, value_name
 from secret_rotator.openbao import Version
@@ -114,6 +115,7 @@ class TestTheRegistry:
             "elastic-user",
             "kubecoder-client",
             "k8s-sa-token",
+            "terraform",
             "external",
         }
         assert isinstance(KINDS["random"], Random) and isinstance(KINDS["manual"], Manual)
@@ -133,6 +135,7 @@ class TestTheRegistry:
         assert isinstance(KINDS["google-sa-key"], GoogleSaKey)
         assert isinstance(KINDS["elastic-user"], ElasticUser)
         assert isinstance(KINDS["kubecoder-client"], KubeCoderClient)
+        assert isinstance(KINDS["terraform"], Terraform)
         assert isinstance(KINDS["k8s-sa-token"], K8sSaToken)
 
     @pytest.mark.parametrize(

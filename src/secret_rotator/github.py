@@ -1,7 +1,9 @@
-"""GitHub's REST API, as much of it as the github.webhook step uses: a repository hook's config,
-its pings and its deliveries, under the token rotator/github holds. No request or error carries the
-token or a hook's secret."""
+"""GitHub's REST API, as much of it as the rotator uses: a repository hook's config, its pings and
+its deliveries for the github.webhook step, under the token rotator/github holds; a file's contents,
+a commit of a new text over it, and how two commits compare for the terraform kind, under its own
+token. No request or error carries the token or a hook's secret."""
 
+import base64
 import datetime
 import functools
 import http.client
@@ -129,3 +131,33 @@ class GitHub:
 
     def redeliver(self, repo: str, hook: int, delivery: int) -> None:
         self.call("POST", f"/repos/{repo}/hooks/{hook}/deliveries/{delivery}/attempts")
+
+    def contents(self, repo: str, path: str, branch: str) -> tuple[str, str] | None:
+        """A file's text on the branch and its blob's SHA; None when the branch has no such file."""
+        quoted = urllib.parse.quote(path)
+        try:
+            doc, _ = self.call("GET", f"/repos/{repo}/contents/{quoted}?ref={branch}")
+        except GitHubError as e:
+            if e.status == 404:
+                return None
+            raise
+        return base64.b64decode(doc["content"]).decode(), doc["sha"]
+
+    def commit_file(
+        self, repo: str, path: str, text: str, *, blob: str, branch: str, message: str
+    ) -> str:
+        """Commits the file's new text to the branch, over the blob it held; the commit's SHA.
+        GitHub answers 409 when the file is no longer that blob."""
+        body = {
+            "message": message,
+            "content": base64.b64encode(text.encode()).decode(),
+            "sha": blob,
+            "branch": branch,
+        }
+        doc, _ = self.call("PUT", f"/repos/{repo}/contents/{urllib.parse.quote(path)}", body)
+        return doc["commit"]["sha"]
+
+    def compare(self, repo: str, base: str, head: str) -> str:
+        """How head stands to base: identical, ahead (it has base), behind or diverged."""
+        doc, _ = self.call("GET", f"/repos/{repo}/compare/{base}...{head}?per_page=1")
+        return doc["status"]

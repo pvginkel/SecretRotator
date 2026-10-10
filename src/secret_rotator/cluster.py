@@ -1,6 +1,7 @@
 """What the rotator reads of the prd cluster (design §4.3): the ExternalSecrets that reference a
-leaf, the workloads whose pod templates read their Secrets, whether a workload is rolled out with
-its Argo Application Healthy, and whether an Argo Application is Synced and Healthy.
+leaf, the workloads whose pod templates read their Secrets or a Secret a kind names, whether a
+workload is rolled out with its Argo Application Healthy, and whether an Argo Application is Synced
+and Healthy.
 
 One match serves auto, the sync before every rollout and the orphan check (design R70): an
 ExternalSecret references a leaf when a data[].remoteRef.key or a dataFrom[].extract.key names it.
@@ -48,6 +49,21 @@ class Ref:
 
 
 @dataclass(frozen=True, order=True)
+class SecretRef:
+    """A Secret."""
+
+    namespace: str
+    name: str
+
+    def __str__(self) -> str:
+        return f"{self.namespace}/{self.name}"
+
+    @property
+    def path(self) -> str:
+        return f"/api/v1/namespaces/{self.namespace}/secrets/{self.name}"
+
+
+@dataclass(frozen=True, order=True)
 class Workload:
     """A rollout target: a Deployment, StatefulSet or DaemonSet; a bare pod never is one."""
 
@@ -75,8 +91,8 @@ class Workload:
 class Derived:
     """What a plan derived from the cluster, by leaf (design §4.5): the ExternalSecrets that
     reference the leaf, and the workloads that read their Secrets where a rollout's targets are
-    derived. A plan in flight keeps it in its record and is rebuilt from it, not from the
-    cluster."""
+    derived; the workloads that read a Secret a kind names are by `secret:<ns>/<name>`. A plan in
+    flight keeps it in its record and is rebuilt from it, not from the cluster."""
 
     externalsecrets: dict[str, list[Ref]] = field(default_factory=dict)
     workloads: dict[str, list[Workload]] = field(default_factory=dict)
@@ -258,16 +274,25 @@ class Cluster:
         """auto's rollout targets: every workload whose pod template reads the Secret of an
         ExternalSecret that references the leaf. A CronJob or a Job needs none, a bare pod is
         never one: neither is a workload."""
-        secrets = {
-            (es["metadata"]["namespace"], _target_secret(es))
-            for es in self.externalsecrets
-            if leaf in leaves_of(es)
-        }
+        return self._reading(
+            {
+                SecretRef(es["metadata"]["namespace"], _target_secret(es))
+                for es in self.externalsecrets
+                if leaf in leaves_of(es)
+            }
+        )
+
+    def readers(self, secret: SecretRef) -> list[Workload]:
+        """Every workload whose pod template reads the Secret; a CronJob, a Job and a bare pod are
+        none, as for consumers."""
+        return self._reading({secret})
+
+    def _reading(self, secrets: set[SecretRef]) -> list[Workload]:
         return sorted(
             {
                 workload
                 for workload, pod in self.workloads
-                if any((workload.namespace, name) in secrets for name in secrets_read(pod))
+                if any(SecretRef(workload.namespace, name) in secrets for name in secrets_read(pod))
             }
         )
 

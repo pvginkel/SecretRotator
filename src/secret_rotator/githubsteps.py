@@ -11,15 +11,16 @@ CREDENTIALS = "rotator/github"  # key token
 PING_BOUND, PING_POLL = 120, 5  # seconds, from the ping's request to its delivery
 
 
-def connect(github: GitHub, ctx: Context) -> None:
-    """Authenticates the client with the token rotator/github holds."""
-    version = ctx.bao.read(CREDENTIALS)
+def connect(github: GitHub, ctx: Context, credentials: str = CREDENTIALS) -> None:
+    """Authenticates the client with the token the credentials leaf holds, rotator/github's
+    unless a kind names its own."""
+    version = ctx.bao.read(credentials)
     if version is None:
         raise StepFailed(
-            f"{CREDENTIALS} cannot be read: no such leaf, or its current version is deleted"
+            f"{credentials} cannot be read: no such leaf, or its current version is deleted"
         )
     if not version.data.get("token"):
-        raise StepFailed(f"{CREDENTIALS} has no token")
+        raise StepFailed(f"{credentials} has no token")
     github.authenticate(version.data["token"])
 
 

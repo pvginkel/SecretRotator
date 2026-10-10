@@ -35,6 +35,7 @@ google-sa-key = "secret_rotator.kinds.google_sa_key:GoogleSaKey"
 elastic-user = "secret_rotator.kinds.elastic_user:ElasticUser"
 kubecoder-client = "secret_rotator.kinds.kubecoder_client:KubeCoderClient"
 k8s-sa-token = "secret_rotator.kinds.k8s_sa_token:K8sSaToken"
+terraform = "secret_rotator.kinds.terraform:Terraform"
 external = "secret_rotator.kinds.external:External"
 
 [tool.poetry]

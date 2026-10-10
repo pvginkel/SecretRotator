@@ -10,7 +10,7 @@ from typing import Protocol
 from secret_rotator.ansiblesteps import Ansible, AnsibleRun, Playbook
 from secret_rotator.argocdsteps import ArgocdSync, Pushed
 from secret_rotator.audit import Audit, Leaf
-from secret_rotator.cluster import Cluster, Derived, Ref, Workload
+from secret_rotator.cluster import Cluster, Derived, Ref, SecretRef, Workload
 from secret_rotator.contract import NONE, Activator, Entry, copy_target, entry_name, is_scheduled
 from secret_rotator.github import GitHub
 from secret_rotator.githubsteps import GitHubWebhook
@@ -209,6 +209,16 @@ class StepFactory:
         bounds = bounds or {}
         rollouts = [K8sRollout(cluster, w, bound=bounds.get(w, ROLLOUT_BOUND)) for w in targets]
         return [*syncs, *rollouts]
+
+    def rollout_readers(self, secret: SecretRef) -> list[Step]:
+        """A k8s.rollout of every workload whose pod template reads the Secret (Cluster.readers):
+        a Secret the kind names, which no ExternalSecret need write."""
+        key = f"secret:{secret}"
+        if key not in self.derived.workloads:
+            self.derived.workloads[key] = self._cluster().readers(secret)
+        found = self.derived.workloads[key]
+        self._consumed(str(w) for w in found)
+        return [K8sRollout(self._cluster(), w) for w in found]
 
     def argocd_sync(
         self, app: str, pushed: Pushed | None = None, *, healthy: bool = True

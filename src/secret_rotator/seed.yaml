@@ -889,6 +889,17 @@ rotator/keycloak-client/homelab-dev:
   interval: 365d
   activate: none
 
+# The terraform kind's GitHub token, minted by the operator.
+rotator/terraform/credentials:
+  kind: manual
+  args: {"type":"github-pat"}
+  interval: 365d
+  activate: none
+  notes: "The terraform kind's token: fine-grained, on pvginkel, permission Contents read and write
+    and nothing more, repository access only these seven: ElectronicsInventoryDeploy, IotDeploy,
+    KeycloakDeploy, GuacamoleDeploy, StorageDeploy, YoutrackDeploy, PostgresPasDeploy. It commits
+    their keepers to config/<stage>/rotation.tfvars on main."
+
 # OpenBao's own OIDC login client: the openbao role reads its secret from here, and its rotation
 # writes it into auth/oidc/config.
 rotator/oidc-auth-client:

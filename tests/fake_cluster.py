@@ -4,7 +4,8 @@ pods).
 Its ESO syncs a force-synced ExternalSecret, its controllers roll a restarted workload out and its
 Argo CD starts a requested operation, each once the fake clock, which the client's sleep advances,
 has passed their lag. Argo CD syncs the revision an operation names, else the head of the branch
-the Application tracks, and auto-syncs a push to that branch. A merge patch that names a
+the Application tracks, running the Application's PreSync hook where a test gives it one, and
+auto-syncs a push to that branch. A merge patch that names a
 resourceVersion is refused with a 409 once the object's is another.
 
 The compliant cluster references every eso/prd/ leaf of fixtures.COMPLIANT but
@@ -208,14 +209,18 @@ def settle(kind, obj, ready=None):
     obj["status"] = {"observedGeneration": generation, **status}
 
 
-def application(name, *, health="Healthy"):
+def application(name, *, health="Healthy", hook=None):
     """An Argo CD Application as the releases chart makes one, auto-syncing main, Synced at HEAD
-    by an auto-sync that succeeded a day before the fake clock's 0."""
+    by an auto-sync that succeeded a day before the fake clock's 0; hook: its PreSync hook's
+    parameters, each hook.<key> as the chart renders it."""
+    source = {"repoURL": f"https://github.com/pvginkel/{name}.git", "path": "chart"}
+    if hook:
+        params = [{"name": f"hook.{key}", "value": value} for key, value in hook.items()]
+        source["helm"] = {"parameters": params, "valueFiles": ["../config/prd/values.yaml"]}
     return {
         "metadata": {"namespace": "argocd-prd", "name": name, "resourceVersion": "1"},
         "spec": {
-            "source": {"repoURL": f"https://github.com/pvginkel/{name}.git", "path": "chart"}
-            | {"targetRevision": "main"},
+            "source": source | {"targetRevision": "main"},
             "syncPolicy": {"automated": {"prune": True, "selfHeal": False}, "retry": RETRY},
         },
         "status": {
@@ -402,6 +407,7 @@ class FakeCluster:
         self.webhook_lag = 4  # from a push to the auto-sync it requests
         self.sync_took = 80  # the PreSync hook's terraform init and apply, then the sync
         self.sync_failing = {}  # Application -> the message its syncs fail with
+        self.presync = {}  # Application -> its PreSync hook, called with the revision it syncs
 
     def kube(self, token=TOKEN):
         return Kube(token, self.addr, opener=self, sleep=self.sleep, clock=self.clock)
@@ -604,6 +610,8 @@ class FakeCluster:
         name = obj["metadata"]["name"]
         state = obj["status"]["operationState"]
         failing = self.sync_failing.get(name)
+        if not failing and name in self.presync:
+            self.presync[name](state["syncResult"]["revision"])
         state["phase"] = "Failed" if failing else "Succeeded"
         state["message"] = failing or "successfully synced (all tasks run)"
         state["finishedAt"] = self.iso()
