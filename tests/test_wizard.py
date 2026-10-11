@@ -482,21 +482,21 @@ async def test_the_bar_shows_the_screen_s_progress_and_the_box_takes_the_colour_
             return progress(app, VENDOR)
 
         await until(pilot, lambda: shown() != "")  # a screen's new bar draws once it has composed
-        assert shown().startswith("Step 1 of 3") and shown().endswith("~2 min left")
+        assert shown().startswith("Step 1 of 3") and shown().endswith("~5 min left")
         assert tones(box) == {"accent"} and str(box.border_title).startswith("● ")  # your move
         info = box.query_one(".info", Static).content.plain
-        assert info == "overdue 37d · paste a new vendor token · ~2 min"  # the plan's estimate
+        assert info == "overdue 37d · paste a new vendor token · ~5 min"  # the plan's estimate
         await pilot.press(*TOKEN)
         await submit(pilot, app)
         await until(pilot, lambda: cue.holding.is_set() and tones(box) == {"primary"})
         await until(pilot, lambda: shown() != "")
-        assert shown().startswith("Step 2 of 3") and shown().endswith("~2 min left")
+        assert shown().startswith("Step 2 of 3") and shown().endswith("~3 min left")
         assert "[" not in str(box.border_title).split("]")[-1]  # one colour: the glyph unstyled
         assert box.query_one(".info", Static).content.plain == info
         cue.go()
         await until(pilot, lambda: phase(app, VENDOR) is Phase.WAITING and tones(box) == {"accent"})
         await until(pilot, lambda: shown() != "")
-        assert shown().startswith("Step 3 of 3") and shown().endswith("<1 min left")
+        assert shown().startswith("Step 3 of 3") and shown().endswith("~1 min left")
 
 
 async def test_a_log_shows_at_most_eight_lines_the_earliest_folded():

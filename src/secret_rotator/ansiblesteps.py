@@ -158,6 +158,7 @@ class AnsibleRun(Step):
 
     type = "ansible.run"
     mutates = True
+    estimate = 120
     logs_in = True
 
     def __init__(

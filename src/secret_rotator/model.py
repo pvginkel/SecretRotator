@@ -157,11 +157,15 @@ class Step(abc.ABC):
     # It logs in to a host over SSH as ansible, by the key file every such login names: in its
     # plan, the executor has that file hold the key its leaf holds (ansiblekey).
     logs_in = False
+    # Seconds it takes, shown rounded to the minute: 0 unless its type knows better (design R34,
+    # §4.5); an instance may override it.
+    estimate = 0
 
-    def __init__(self, id: str, title: str, *, estimate: int = 0):
+    def __init__(self, id: str, title: str, *, estimate: int | None = None):
         self.id = id  # stable across rebuilds of the same plan
         self.title = title  # plain words
-        self.estimate = estimate  # seconds
+        if estimate is not None:
+            self.estimate = estimate
 
     def __repr__(self) -> str:
         return f"<{self.type} {self.id}>"

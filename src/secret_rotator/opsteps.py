@@ -68,6 +68,7 @@ class OperatorCredential(Step):
 
     type = "operator.credential"
     actor = Actor.OPERATOR
+    estimate = 120  # minting at the vendor
 
     def __init__(
         self,
@@ -132,6 +133,7 @@ class OperatorShow(Step):
 
     type = "operator.show"
     actor = Actor.OPERATOR
+    estimate = 60
 
     def __init__(self, name: str, title: str, instruction: str, *, irreversible: str = ""):
         super().__init__(f"operator.show:{name}", title)
@@ -157,6 +159,7 @@ class OperatorConfirm(Step):
 
     type = "operator.confirm"
     actor = Actor.OPERATOR
+    estimate = 60
 
     def __init__(
         self,

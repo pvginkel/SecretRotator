@@ -304,16 +304,16 @@ async def test_the_information_line_of_each_state_with_the_due_text_in_its_colou
         assert lines == {
             FAILED: "due now · failed at step 2 of 2 · write eso/prd/mixed/prd/creds",
             IN_FLIGHT: "in flight since 4 Oct 21:14 · put the new openbao-admin secret_id in "
-            "place · <1 min",
-            f"{BOT}#telegram-bot-token": "due now · paste a new telegram-bot-token · <1 min",
-            WAITING: "due now · paste a new pin · <1 min",
-            f"{PAT}#token": "overdue 37d · paste a new GitHub personal access token · <1 min",
-            f"{HOOK}#secret": "due today · tell Bob · <1 min",
+            "place · ~1 min",
+            f"{BOT}#telegram-bot-token": "due now · paste a new telegram-bot-token · ~2 min",
+            WAITING: "due now · paste a new pin · ~2 min",
+            f"{PAT}#token": "overdue 37d · paste a new GitHub personal access token · ~2 min",
+            f"{HOOK}#secret": "due today · tell Bob · ~1 min",
             f"{IAC_AGENT}#secret_id": "due in 10 days · put the new iac-agent secret_id in place "
-            "· <1 min",
-            f"{SHOP}#api-key": "due in 137 days · paste a new api-key · <1 min",
-            f"{SEAL}#seal-key": "due in 205 days · rotate it outside the tool · <1 min",
-            f"{WIFI}#password": "no due date configured · paste a new password · <1 min",
+            "· ~1 min",
+            f"{SHOP}#api-key": "due in 137 days · paste a new api-key · ~2 min",
+            f"{SEAL}#seal-key": "due in 205 days · rotate it outside the tool · ~1 min",
+            f"{WIFI}#password": "no due date configured · paste a new password · ~2 min",
         }
         assert styles(info(app, f"{PAT}#token"))["overdue 37d"] == ERR
         assert styles(info(app, f"{IAC_AGENT}#secret_id"))["due in 10 days"] == HEAD

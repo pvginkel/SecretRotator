@@ -58,6 +58,7 @@ class ArgocdSync(Step):
     type = "argocd.sync"
     mutates = True
     activator = True
+    estimate = 60
 
     def __init__(
         self, cluster: Cluster, app: str, pushed: Pushed | None = None, *, healthy: bool = True

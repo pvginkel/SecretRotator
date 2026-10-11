@@ -149,6 +149,7 @@ class VmStart(Step):
     the plan's outcome."""
 
     type = "vm.start"
+    estimate = 180  # a boot of microk8s and microceph
     logs_in = True
 
     def __init__(self, pve: Pve, guest: str, steps: Sequence[Step]):

@@ -43,6 +43,7 @@ class JenkinsJob(Step):
     type = "jenkins.job"
     mutates = True
     activator = True
+    estimate = 300  # the queue, an agent pod and the build
 
     def __init__(self, jenkins: Jenkins, job: str, params: Mapping[str, str]):
         self.jenkins = jenkins

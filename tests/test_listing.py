@@ -14,11 +14,18 @@ from plans import COPY, LEAF, client, fake_of, put_flight, put_state
 from test_kinds import KINDS, store_of
 
 from secret_rotator import annotate as ann
+from secret_rotator.ansiblesteps import AnsibleRun
+from secret_rotator.argocdsteps import ArgocdSync
 from secret_rotator.audit import Leaf, audit, live_store
 from secret_rotator.cluster import Cluster
 from secret_rotator.executor import Stand
+from secret_rotator.jenkinssteps import JenkinsJob
+from secret_rotator.k8ssteps import EsoSync, K8sRollout
+from secret_rotator.kvsteps import KvStamp, KvWrite
 from secret_rotator.listing import listed
+from secret_rotator.opsteps import OperatorConfirm, OperatorCredential, OperatorShow
 from secret_rotator.staging import ROLLBACK, staging_leaf
+from secret_rotator.vmsteps import VmStart
 
 PAT = "eso/prd/gh/prd/pat"  # manual, a GitHub personal access token, yearly
 BOT = "eso/prd/bot/prd/config"  # manual without a credential type, yearly
@@ -140,6 +147,26 @@ class TestTheTexts:
             step.estimate = seconds
         assert pat.estimate == 155
         assert dataclasses.replace(pat, stand=Stand.IN_FLIGHT, at=1).estimate == 35
+
+    def test_a_step_is_estimated_by_its_type(self):
+        """The operator's steps and the slow tool steps say how long they take, in seconds; the
+        rest take 0, so a PAT's plan is its credential's 2 min."""
+        types = (OperatorCredential, OperatorShow, OperatorConfirm, EsoSync, K8sRollout)
+        types += (ArgocdSync, AnsibleRun, VmStart, JenkinsJob, KvWrite, KvStamp)
+        assert {t.type: t.estimate for t in types} == {
+            "operator.credential": 120,
+            "operator.show": 60,
+            "operator.confirm": 60,
+            "eso.sync": 10,
+            "k8s.rollout": 60,
+            "argocd.sync": 60,
+            "ansible.run": 120,
+            "vm.start": 180,
+            "jenkins.job": 300,
+            "kv.write": 0,
+            "kv.stamp": 0,
+        }
+        assert by_plan(listing(fake_of(store())))[PAT, ("token",)].estimate == 120
 
 
 class TestWhenEachIsDue:

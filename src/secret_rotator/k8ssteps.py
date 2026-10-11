@@ -27,6 +27,7 @@ class EsoSync(Step):
     type = "eso.sync"
     mutates = True
     activator = True
+    estimate = 10
 
     def __init__(self, cluster: Cluster, es: Ref):
         super().__init__(f"eso.sync:{es}", f"sync ExternalSecret {es}")
@@ -69,6 +70,7 @@ class K8sRollout(Step):
     type = "k8s.rollout"
     mutates = True
     activator = True
+    estimate = 60
 
     def __init__(self, cluster: Cluster, workload: Workload, *, bound: int = ROLLOUT_BOUND):
         super().__init__(f"k8s.rollout:{workload}", f"roll out {workload}")
