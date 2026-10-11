@@ -152,7 +152,8 @@ class TestTheSeed:
         assert GrafanaAdmin().args_problems({"url": BASE}) == ["url: grafana-admin takes no args"]
 
     def test_it_reaches_grafana_at_its_root_url(self):
-        # GrafanaDeploy config/prd/values.yaml's root_url; 12.3.1 answered there on 2026-10-08.
+        # PlatformAddOnsDeploy grafana/config/prd/values.yaml's root_url; 12.3.1 answered there on
+        # 2026-10-08.
         assert grafana_admin.BASE == BASE
 
 

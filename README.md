@@ -95,8 +95,9 @@ proxy with the `SECRET_ROTATOR_K8S_TOKEN` token: each key's due day and rotation
 leaf's status. The nightly run adds `audit`, the findings, and `nightly`, its run health; a night
 that found the lock held or that `paused` stopped pushes `nightly` alone. A group not pushed is one
 line, `metrics: the <group> group is not pushed: <error>`, and changes nothing else. The series are
-AnsibleSpecs design §3.4's. PrometheusDeploy's rule group `secret-rotator` alerts on them:
-`SecretRotatorStale`, `SecretRotationFailed` and `SecretRotationOverdue`.
+AnsibleSpecs design §3.4's. The rule group `secret-rotator` of PlatformAddOnsDeploy's
+`prometheus/` alerts on them: `SecretRotatorStale`, `SecretRotationFailed` and
+`SecretRotationOverdue`.
 
 `dashboards/secret-rotation.json` is the Grafana dashboard "Secret rotation" (uid
 `secret-rotation`), kept by hand, which the build publishes. A change made in Grafana's UI is lost

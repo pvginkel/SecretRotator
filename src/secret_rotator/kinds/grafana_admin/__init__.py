@@ -1,10 +1,11 @@
 """The grafana-admin kind (design §6): a new password for Grafana's local admin. Grafana takes its
-admin Secret only when it creates its database (GrafanaDeploy config/prd/values.yaml), so the kind
-sets the password through Grafana's API. Its plan logs in with the password the leaf holds, which
-stops it before it writes when Grafana refuses that one. It generates the new password, writes it
-to the leaf and its copies, syncs every ExternalSecret that reads them, whatever the leaf's
-activate, and activates. Only then does it set the password in Grafana, logged in with the one
-Grafana held, so no Secret holds a password Grafana no longer takes (ruling F3)."""
+admin Secret only when it creates its database (PlatformAddOnsDeploy
+grafana/config/prd/values.yaml), so the kind sets the password through Grafana's API. Its plan logs
+in with the password the leaf holds, which stops it before it writes when Grafana refuses that one.
+It generates the new password, writes it to the leaf and its copies, syncs every ExternalSecret
+that reads them, whatever the leaf's activate, and activates. Only then does it set the password in
+Grafana, logged in with the one Grafana held, so no Secret holds a password Grafana no longer takes
+(ruling F3)."""
 
 from collections.abc import Callable, Mapping
 
@@ -13,7 +14,7 @@ from secret_rotator.kinds.grafana_admin.steps import Login, SetAdminPassword
 from secret_rotator.model import Step
 from secret_rotator.plan import PlanContext, PlanError, Target, tool_part
 
-# The URL Grafana is served at: GrafanaDeploy config/prd/values.yaml's root_url.
+# The URL Grafana is served at: PlatformAddOnsDeploy grafana/config/prd/values.yaml's root_url.
 BASE = "http://grafana.home"
 
 
