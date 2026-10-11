@@ -2,12 +2,13 @@
 hook, rotated by a new value of the keeper the hook's Terraform passes to the resource that mints
 it. Its leaf is a marker leaf (catalog § rotator/): no credential passes through the rotator.
 
-Its plan commits the keeper to config/<stage>/rotation.tfvars of the deploy repo, waits for the
-Application's sync of a revision that contains the commit, proves that the Secret Terraform writes
-changed, rewrites the marker, restarts every workload whose pod template reads that Secret, and
-activates. Where none does, the sync judges the Application Healthy. With no operator step it runs
-at night. Nothing undoes the commit, since the value it replaced mints a third credential: a plan
-that fails past it stops for `secret-rotator run <leaf>`."""
+Its plan commits the keeper to config/<stage>/rotation.tfvars in the app's directory of the deploy
+repo (its root where the marker names none), waits for the Application's sync of a revision that
+contains the commit, proves that the Secret Terraform writes changed, rewrites the marker, restarts
+every workload whose pod template reads that Secret, and activates. Where none does, the sync
+judges the Application Healthy. With no operator step it runs at night. Nothing undoes the commit,
+since the value it replaced mints a third credential: a plan that fails past it stops for
+`secret-rotator run <leaf>`."""
 
 import re
 from collections.abc import Mapping
