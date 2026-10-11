@@ -21,6 +21,7 @@ from secret_rotator import cli, registry
 from secret_rotator.cluster import Cluster
 from secret_rotator.contract import MAX_VALUE_BYTES, dump_entry, is_scheduled
 from secret_rotator.kinds.manual import TYPES
+from secret_rotator.kinds.terraform.steps import Keeper, keeper_file
 from secret_rotator.plan import make
 
 APPROLES = ("backup", "eso", "eso-dev", "iac-agent", "jenkins", "openbao-admin")
@@ -33,30 +34,56 @@ BOOTSTRAP = (
     "seal-key",
 )
 CATALOG = "eso/prd/kubecoder/prd/catalog"
-# rotator/terraform/<app>/<keeper>: its data key, its deploy repo, the Secret Terraform writes in
-# the Application's namespace, and the Deployments that read it on prd. A Secret only CronJobs
-# read has none.
+# rotator/terraform/<app>/<keeper>: its data key, its deploy repo and the app's directory in it
+# ("" for its root), the Secret Terraform writes in the Application's namespace, and the
+# Deployments that read it on prd. A Secret only CronJobs read has none.
 TERRAFORM = {
     "electronics-inventory-prd/db": (
         "password",
         "ElectronicsInventoryDeploy",
+        "",
         "electronics-inventory-db",
         ("electronics-inventory",),
     ),
     "electronics-inventory-prd/s3": (
         "access_key",
         "ElectronicsInventoryDeploy",
+        "",
         "s3-credentials",
         ("electronics-inventory",),
     ),
-    "guacamole-prd/db": ("password", "GuacamoleDeploy", "guacamole-db", ("guacamole",)),
-    "iot-prd/db": ("password", "IotDeploy", "iotsupport-db", ("iotsupport",)),
-    "iot-prd/s3": ("access_key", "IotDeploy", "s3-credentials", ("iotsupport",)),
-    "keycloak-dev/db": ("password", "KeycloakDeploy", "keycloak-db", ("keycloak",)),
-    "keycloak-prd/db": ("password", "KeycloakDeploy", "keycloak-db", ("keycloak",)),
-    "postgres-pas-prd/backups": ("token", "PostgresPasDeploy", "postgres-backup-upload", ()),
-    "storage-prd/backup_reader": ("access_key", "StorageDeploy", "backup-reader-credentials", ()),
-    "youtrack-prd/backups": ("token", "YoutrackDeploy", "youtrack-backup-upload", ()),
+    "guacamole-prd/db": (
+        "password",
+        "HomelabAppsDeploy",
+        "guacamole",
+        "guacamole-db",
+        ("guacamole",),
+    ),
+    "iot-prd/db": ("password", "IotDeploy", "", "iotsupport-db", ("iotsupport",)),
+    "iot-prd/s3": ("access_key", "IotDeploy", "", "s3-credentials", ("iotsupport",)),
+    "keycloak-dev/db": ("password", "HomelabAppsDeploy", "keycloak", "keycloak-db", ("keycloak",)),
+    "keycloak-prd/db": ("password", "HomelabAppsDeploy", "keycloak", "keycloak-db", ("keycloak",)),
+    "postgres-pas-prd/backups": (
+        "token",
+        "HomelabAppsDeploy",
+        "postgres-pas",
+        "postgres-backup-upload",
+        (),
+    ),
+    "storage-prd/backup_reader": (
+        "access_key",
+        "HomelabAppsDeploy",
+        "storage",
+        "backup-reader-credentials",
+        (),
+    ),
+    "youtrack-prd/backups": (
+        "token",
+        "HomelabAppsDeploy",
+        "youtrack",
+        "youtrack-backup-upload",
+        (),
+    ),
 }
 # The Deployments of the markers' namespaces as a snapshot of prd held them on 2026-10-10, with the
 # markers' Secrets each reads; the CronJobs s3-mirror, youtrack-backup and postgres-backup read the
@@ -435,9 +462,9 @@ def test_every_terraform_marker_names_its_repo_application_keeper_and_secret(ent
         if any(f["kind"] == "terraform" for f in by_key.values())
     }
     assert sorted(terraform) == sorted(f"rotator/terraform/{at}" for at in TERRAFORM)
-    for at, (key, repo, secret, _) in TERRAFORM.items():
+    for at, (key, repo, path, secret, _) in TERRAFORM.items():
         app, keeper = at.split("/")
-        args = {"repo": f"pvginkel/{repo}", "path": "", "app": app, "keeper": keeper}
+        args = {"repo": f"pvginkel/{repo}", "path": path, "app": app, "keeper": keeper}
         assert terraform[f"rotator/terraform/{at}"] == {
             key: {
                 "kind": "terraform",
@@ -449,10 +476,33 @@ def test_every_terraform_marker_names_its_repo_application_keeper_and_secret(ent
 
 
 @pytest.mark.parametrize("at", sorted(TERRAFORM))
+def test_a_terraform_marker_takes_the_keeper_file_its_application_s_hook_reads(entries, at):
+    # The hook parameters as the releases chart renders them, which prd's Applications held on
+    # 2026-10-11: hook.path only for an app in a directory of its repo.
+    key, repo, path, _, _ = TERRAFORM[at]
+    app = at.split("/")[0]
+    stage = app.rsplit("-", 1)[1]
+    params = {"hook.repo": f"https://github.com/pvginkel/{repo}.git", "hook.stage": stage}
+    if path:
+        params["hook.path"] = path
+    application = {
+        "spec": {
+            "source": {
+                "targetRevision": "main",
+                "helm": {"parameters": [{"name": n, "value": v} for n, v in params.items()]},
+            }
+        }
+    }
+    keeper = Keeper.of(entries[f"rotator/terraform/{at}"][key]["args"])
+    where = f"{path}/" if path else ""
+    assert keeper_file(application, keeper) == f"{where}config/{stage}/rotation.tfvars"
+
+
+@pytest.mark.parametrize("at", sorted(TERRAFORM))
 def test_against_a_snapshot_of_prd_a_terraform_marker_commits_syncs_proves_restarts_and_stamps(
     seed, at, tmp_path
 ):
-    key, _, secret, readers = TERRAFORM[at]
+    key, _, _, secret, readers = TERRAFORM[at]
     app, keeper = at.split("/")
     path = tmp_path / "snapshot.json"
     deployments = [

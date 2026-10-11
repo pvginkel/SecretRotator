@@ -13,7 +13,8 @@ from secret_rotator.kinds.home_assistant_token import websocket
 from secret_rotator.kinds.home_assistant_token.websocket import WebSocketError
 from secret_rotator.model import StepFailed
 
-# Home Assistant's address, HomeassistantMcpDeploy config/prd/values.yaml's homeAssistant.url.
+# Home Assistant's address, HomelabAppsDeploy homeassistant-mcp/config/prd/values.yaml's
+# homeAssistant.url.
 URL = "wss://homeassistant.webathome.org/api/websocket"
 LONG_LIVED = "long_lived_access_token"  # a refresh token's type
 # The code of a login Home Assistant refuses: its auth_invalid answer, which closes the connection.

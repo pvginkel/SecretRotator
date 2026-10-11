@@ -16,12 +16,13 @@ from secret_rotator.kinds.elastic_user.steps import COUNTERPART, SUPERUSER, Logi
 from secret_rotator.model import Step
 from secret_rotator.plan import PlanContext, PlanError, Target, tool_part
 
-# The address Elasticsearch is served at off the cluster: ElasticsearchDeploy README.md's.
+# The address Elasticsearch is served at off the cluster: HomelabAppsDeploy
+# elasticsearch/README.md's.
 BASE = "http://elasticsearch.home"
 ARGS = ("user",)
 USER = re.compile(r"[A-Za-z0-9_.@-]+")
 # Elasticsearch's startupProbe alone gives it five minutes to start, k8s.rollout's whole default
-# bound (ElasticsearchDeploy chart/templates/elasticsearch-deployment.yaml).
+# bound (HomelabAppsDeploy elasticsearch/chart/templates/elasticsearch-deployment.yaml).
 ELASTICSEARCH = Workload("elasticsearch-prd", "deployment", "elasticsearch")
 BOUNDS = {ELASTICSEARCH: 600}
 

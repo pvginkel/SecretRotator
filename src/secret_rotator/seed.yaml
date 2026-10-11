@@ -308,8 +308,9 @@ eso/prd/jenkins-mcp/prd/config:
   keys:
     token:
       kind: jenkins-token
-      notes: "JenkinsDeploy's ExternalSecret templates the Basic <base64(user:token)> header that
-        jenkins-mcp's mcp-filter sends to Jenkins' /mcp-server/stateless from user and token."
+      notes: "The ExternalSecret of HomelabAppsDeploy's jenkins/ templates the Basic
+        <base64(user:token)> header that jenkins-mcp's mcp-filter sends to Jenkins'
+        /mcp-server/stateless from user and token."
     user: {kind: none}
 
 eso/prd/jenkins-telegram-bot/prd/config:
@@ -900,9 +901,9 @@ rotator/terraform/credentials:
   interval: 365d
   activate: none
   notes: "The terraform kind's token: fine-grained, on pvginkel, permission Contents read and write
-    and nothing more, repository access only these seven: ElectronicsInventoryDeploy, IotDeploy,
-    KeycloakDeploy, GuacamoleDeploy, StorageDeploy, YoutrackDeploy, PostgresPasDeploy. It commits
-    their keepers to config/<stage>/rotation.tfvars on main."
+    and nothing more, repository access only these three: ElectronicsInventoryDeploy, IotDeploy,
+    HomelabAppsDeploy. It commits their keepers to config/<stage>/rotation.tfvars on main, in
+    HomelabAppsDeploy to <app>/config/<stage>/rotation.tfvars."
 
 # The ssh-key kind's GitHub token, minted by the operator.
 rotator/ssh-key/credentials:
@@ -1041,7 +1042,7 @@ rotator/terraform/electronics-inventory-prd/s3:
 rotator/terraform/guacamole-prd/db:
   marker: password
   kind: terraform
-  args: {"repo":"pvginkel/GuacamoleDeploy","path":"","app":"guacamole-prd","keeper":"db","secret":"guacamole-prd/guacamole-db"}
+  args: {"repo":"pvginkel/HomelabAppsDeploy","path":"guacamole","app":"guacamole-prd","keeper":"db","secret":"guacamole-prd/guacamole-db"}
   interval: 14d
   activate: none
 
@@ -1062,34 +1063,34 @@ rotator/terraform/iot-prd/s3:
 rotator/terraform/keycloak-dev/db:
   marker: password
   kind: terraform
-  args: {"repo":"pvginkel/KeycloakDeploy","path":"","app":"keycloak-dev","keeper":"db","secret":"keycloak-dev/keycloak-db"}
+  args: {"repo":"pvginkel/HomelabAppsDeploy","path":"keycloak","app":"keycloak-dev","keeper":"db","secret":"keycloak-dev/keycloak-db"}
   interval: 14d
   activate: none
 
 rotator/terraform/keycloak-prd/db:
   marker: password
   kind: terraform
-  args: {"repo":"pvginkel/KeycloakDeploy","path":"","app":"keycloak-prd","keeper":"db","secret":"keycloak-prd/keycloak-db"}
+  args: {"repo":"pvginkel/HomelabAppsDeploy","path":"keycloak","app":"keycloak-prd","keeper":"db","secret":"keycloak-prd/keycloak-db"}
   interval: 14d
   activate: none
 
 rotator/terraform/postgres-pas-prd/backups:
   marker: token
   kind: terraform
-  args: {"repo":"pvginkel/PostgresPasDeploy","path":"","app":"postgres-pas-prd","keeper":"backups","secret":"postgres-pas-prd/postgres-backup-upload"}
+  args: {"repo":"pvginkel/HomelabAppsDeploy","path":"postgres-pas","app":"postgres-pas-prd","keeper":"backups","secret":"postgres-pas-prd/postgres-backup-upload"}
   interval: 14d
   activate: none
 
 rotator/terraform/storage-prd/backup_reader:
   marker: access_key
   kind: terraform
-  args: {"repo":"pvginkel/StorageDeploy","path":"","app":"storage-prd","keeper":"backup_reader","secret":"storage-prd/backup-reader-credentials"}
+  args: {"repo":"pvginkel/HomelabAppsDeploy","path":"storage","app":"storage-prd","keeper":"backup_reader","secret":"storage-prd/backup-reader-credentials"}
   interval: 14d
   activate: none
 
 rotator/terraform/youtrack-prd/backups:
   marker: token
   kind: terraform
-  args: {"repo":"pvginkel/YoutrackDeploy","path":"","app":"youtrack-prd","keeper":"backups","secret":"youtrack-prd/youtrack-backup-upload"}
+  args: {"repo":"pvginkel/HomelabAppsDeploy","path":"youtrack","app":"youtrack-prd","keeper":"backups","secret":"youtrack-prd/youtrack-backup-upload"}
   interval: 14d
   activate: none

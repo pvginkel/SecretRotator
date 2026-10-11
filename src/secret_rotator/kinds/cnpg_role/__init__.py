@@ -17,8 +17,8 @@ ARGS = ("role",)
 ROLE = re.compile(r"[a-z_][a-z0-9_]*")
 DEV = "eso/dev/"
 # The CNPG Cluster whose managed roles the prd leaves are, and the address its read-write primary
-# is reached at: the postgres-tf-rw LoadBalancer Terraform uses (PostgresPasDeploy
-# config/prd/values.yaml), not a port-forward.
+# is reached at: the postgres-tf-rw LoadBalancer Terraform uses (HomelabAppsDeploy
+# postgres-pas/config/prd/values.yaml), not a port-forward.
 NAMESPACE, CLUSTER = "postgres-pas-prd", "postgres"
 HOST, PORT = "postgres-pas.home", 5432
 

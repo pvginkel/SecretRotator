@@ -197,7 +197,8 @@ class TestTheSeed:
         ]
 
     def test_it_reaches_home_assistant_at_the_address_its_mcp_server_does(self):
-        # HomeassistantMcpDeploy config/prd/values.yaml: https://homeassistant.webathome.org
+        # HomelabAppsDeploy homeassistant-mcp/config/prd/values.yaml:
+        # https://homeassistant.webathome.org
         assert homeassistant.URL == "wss://homeassistant.webathome.org/api/websocket"
 
 

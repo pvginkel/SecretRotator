@@ -82,10 +82,11 @@ def seed_store():
 
 
 def elastic_objects():
-    """(resource, object) of the leaves' readers as prd holds them (2026-10-09): ElasticsearchDeploy
-    delivers each leaf to its setup Job, the superuser's to Elasticsearch and kibana_system's to
-    Kibana; FilebeatDeploy and IotDeploy their own leaf, username and password, to filebeat and
-    iotsupport; the KubeCoder catalog extracts its whole leaf, which holds the reader's copy."""
+    """(resource, object) of the leaves' readers as prd holds them (2026-10-09): HomelabAppsDeploy's
+    elasticsearch/ delivers each leaf to its setup Job, the superuser's to Elasticsearch and
+    kibana_system's to Kibana; its filebeat/ and IotDeploy their own leaf, username and password,
+    to filebeat and iotsupport; the KubeCoder catalog extracts its whole leaf, which holds the
+    reader's copy."""
     ns = "elasticsearch-prd"
     own = {
         "elasticsearch-elastic": SUPER,
@@ -292,7 +293,7 @@ class TestTheSeed:
         assert ElasticUser().args_problems(args) == problems
 
     def test_it_reaches_elasticsearch_at_the_readme_s_address(self):
-        # ElasticsearchDeploy README.md; prd answered there on 2026-10-09.
+        # HomelabAppsDeploy elasticsearch/README.md; prd answered there on 2026-10-09.
         assert elastic_user.BASE == BASE
 
 
