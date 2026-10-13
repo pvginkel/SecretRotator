@@ -495,12 +495,6 @@ eso/prd/media/prd/mydownloads-user:
   keys:
     username: {kind: none}
 
-eso/prd/media/prd/mydownloads-users:
-  kind: manual
-  interval: never
-  activate: none
-  notes: "human users' password hashes"
-
 eso/prd/newsfilter/prd/openai:
   kind: manual
   args: {"type":"openai-api-key"}

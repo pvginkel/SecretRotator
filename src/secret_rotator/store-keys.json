@@ -255,9 +255,6 @@
     "password",
     "username"
   ],
-  "eso/prd/media/prd/mydownloads-users": [
-    "users.yml"
-  ],
   "eso/prd/newsfilter/prd/openai": [
     "api_key"
   ],
