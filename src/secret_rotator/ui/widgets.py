@@ -661,6 +661,19 @@ class FilterNotice(Static):
         )
 
 
+class HiddenRunNotice(Static):
+    """The light yellow bar under the status bar while the filter hides the running wizard's box
+    (§7.5)."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(
+            Text.assemble(
+                "A running wizard is hidden — ", ("f", "bold"), " shows every box again."
+            ),
+            **kwargs,
+        )
+
+
 # --- dialogs ------------------------------------------------------------------
 
 

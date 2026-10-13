@@ -8,6 +8,16 @@ Screen {
     background: $panel;
 }
 
+/* Under the status bar, outside the list's scroll: a light yellow attention bar, not $warning,
+   while the filter hides the running wizard's box (§7.5). Two bars docked top would overlap. */
+#hidden-run {
+    height: 1;
+    padding: 0 1;
+    background: #FFF1B8;
+    color: #3D2E00;
+    display: none;
+}
+
 #footer {
     dock: bottom;
     height: 1;

@@ -1,7 +1,8 @@
 """`secret-rotator ui`'s app (design §7): the status bar, a box per listed rotation with the
-selected one expanded, the footer with the filter on the selected box's type (R89); a box's Start
-runs its plan as the wizard of §7.4, one plan at a time (§4.3), with Retry, Abort behind its guard,
-the rollback screen and Details (§4.5)."""
+selected one expanded, the footer with the filter on the selected box's type (R89), and a bar while
+the filter hides the running wizard's box (§7.5); a box's Start runs its plan as the wizard of
+§7.4, one plan at a time (§4.3), with Retry, Abort behind its guard, the rollback screen and
+Details (§4.5)."""
 
 import datetime
 import time
@@ -46,6 +47,7 @@ from secret_rotator.ui.widgets import (
     ExpiryField,
     FilterNotice,
     HelpModal,
+    HiddenRunNotice,
     Instruction,
     Notice,
     Spacer,
@@ -167,6 +169,7 @@ class RotatorApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield StatusBar(id="status")
+        yield HiddenRunNotice(id="hidden-run")
         with BoxList(id="list"):
             if not self.waiting():
                 yield self.empty_state()
@@ -193,6 +196,10 @@ class RotatorApp(App[None]):
         """The boxes the list shows, in its order: every one, or the filter's type's."""
         return [rid for rid in self.order if self.filtered in (None, self.items[rid].rotation.type)]
 
+    def hides_run(self) -> bool:
+        """The filter hides the box of the plan running (§7.5)."""
+        return self.active is not None and self.active.item.id not in self.shown()
+
     def similar(self) -> int:
         """The boxes of the selected box's type, it included: what `f` keeps."""
         if self.selected is None:
@@ -210,7 +217,8 @@ class RotatorApp(App[None]):
         self._refresh_status()
 
     def _refresh_status(self) -> None:
-        """The status bar, and the footer, whose filter label follows the selection."""
+        """The status bar, the bar saying the filter hides the running wizard's box, and the
+        footer, whose filter label follows the selection."""
         self.query_one("#status", StatusBar).update(
             Text.assemble(
                 (" secret-rotator ui ", f"bold {HEAD}"),
@@ -218,6 +226,7 @@ class RotatorApp(App[None]):
                 f"{self.waiting()} waiting · {self.done_count} done this session",
             )
         )
+        self.query_one("#hidden-run", HiddenRunNotice).display = self.hides_run()
         self.query_one("#footer", Static).update(self.footer())
 
     def footer(self) -> Text:

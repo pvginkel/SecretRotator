@@ -33,10 +33,12 @@ from test_ui import (
     until,
     world,
 )
+from test_wizard import at_credential
+from textual.color import Color
 from textual.widgets import Static
 
 from secret_rotator.ui.app import FOOTER
-from secret_rotator.ui.widgets import GREYED, Box, EmptyState, FilterNotice
+from secret_rotator.ui.widgets import GREYED, Box, EmptyState, FilterNotice, HiddenRunNotice
 
 GIT = "rotator/bootstrap/git-api-token"  # external, never stamped
 PAT2 = "eso/prd/gh2/prd/pat"  # manual, a GitHub personal access token, yearly
@@ -196,3 +198,29 @@ async def test_a_filter_holds_after_a_box_is_done_and_an_emptied_list_says_a_fil
         assert app.filtered is None and shown(app) == app.order
         assert app.selected == app.order[0] and app.box(app.selected).has_class("-selected")
         assert visible(app)[0] is EmptyState
+
+
+async def test_a_light_yellow_bar_at_the_top_says_so_while_the_filter_hides_the_running_wizard():
+    """SR-1: the filter hides the running wizard's box like any other box of another type; while
+    it does, a light yellow bar under the status bar says so, gone on `f` again and once the run
+    ends, the filter still on."""
+    app = app_of(world())
+    running = f"{PAT}#token"
+    async with app.run_test(size=SIZE) as pilot:
+        await at_credential(pilot, app, running)  # the wizard waits on the operator
+        bar = app.query_one(HiddenRunNotice)
+        assert not bar.display
+        await select(pilot, app, f"{IAC_AGENT}#secret_id")
+        await pilot.press("f")
+        await settled(pilot)
+        assert shown(app) == [IN_FLIGHT, f"{IAC_AGENT}#secret_id"] and bar.display
+        assert bar.content.plain == "A running wizard is hidden — f shows every box again."
+        assert bar.styles.background == Color.parse("#FFF1B8")
+        assert bar.region.y == 1 and app.box_list.region.y == 2  # under the status bar
+        await pilot.press("f")
+        assert shown(app) == ORDER and not bar.display
+        await pilot.press("f")
+        assert bar.display
+        app._abort(app.items[running])  # nothing mutated yet: the run ends, the box due again
+        await until(pilot, lambda: app.active is None)
+        assert app.filtered == "approle" and running not in shown(app) and not bar.display
