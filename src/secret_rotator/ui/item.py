@@ -146,15 +146,16 @@ class Item:
 
     def visible(self) -> list[Line]:
         """The step log of its screen, in plan order: its tool steps' lines, a silent one's only
-        once it failed."""
+        once it failed; its operator step's while the step, answered, runs a check and reports
+        its progress (SR-6), until it finishes or asks again."""
         lines = (self.lines.get((step.id, Action.RUN)) for step in self.screen.steps)
-        return [
-            line
-            for line in lines
-            if line is not None
-            and line.step.actor is Actor.TOOL
-            and (not line.step.silent or line.state is LineState.FAILED)
-        ]
+        return [line for line in lines if line is not None and self._shows(line)]
+
+    def _shows(self, line: Line) -> bool:
+        if line.step.actor is Actor.OPERATOR:
+            checking = self.phase is Phase.RUNNING and line.state is LineState.RUNNING
+            return checking and bool(line.detail)
+        return not line.step.silent or line.state is LineState.FAILED
 
     def rollback_lines(self) -> list[Line]:
         """The rollback screen's log: the lines of its undos and re-runs this session, in their

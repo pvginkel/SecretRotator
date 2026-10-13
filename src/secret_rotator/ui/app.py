@@ -814,6 +814,11 @@ class RotatorApp(App[None]):
         else:
             item.request = message.request
             item.phase = Phase.WAITING
+            # Asked again after its check failed: the failed check's detail must not show after
+            # the next Done, before that check reports.
+            line = item.lines.get((message.step.id, Action.RUN))
+            if line is not None:
+                line.detail = ""
             self._changed(item)
 
     def on_run_said(self, message: Run.Said) -> None:

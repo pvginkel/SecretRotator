@@ -10,6 +10,7 @@ import datetime
 import io
 import json
 import sys
+import threading
 import urllib.error
 from pathlib import Path
 
@@ -50,7 +51,7 @@ from secret_rotator.opsteps import ShowRequest
 from secret_rotator.plan import PlanError, make, of_leaf
 from secret_rotator.staging import staging_leaf
 from secret_rotator.ui.item import Phase
-from secret_rotator.ui.widgets import Instruction, ValueBox
+from secret_rotator.ui.widgets import Instruction, StepLog, ValueBox
 
 KINDS = registry.load()
 SEED = ann.load_seed(ann.DEFAULT_SEED)
@@ -66,6 +67,7 @@ SAME_KEY = (
     "step-ca serves kubecoder-jwk under the key it served when the rotation started: the "
     "playbook has not run, or the key was re-encrypted, not replaced"
 )
+CHECKING = "checking the kubecoder-jwk key step-ca serves"
 
 
 def seed_store():
@@ -515,14 +517,25 @@ class TestTheFrontEnds:
             request = app.items[rid].request
             return phase(app, rid) is Phase.WAITING and reason in request.instruction
 
+        def logged():
+            return [line.detail for log in app.box(rid).area.of(StepLog) for line in log.lines]
+
         async with app.run_test(size=SIZE) as pilot:
             await select(pilot, app, rid)
             await go(pilot, app)
             await until(pilot, lambda: phase(app, rid) is Phase.WAITING and in_box(app))
             value = app.items[rid].request.value
+            held, release = threading.Event(), threading.Event()
+            world.ca.on_get = lambda: (held.set(), release.wait(5))  # the check, held at its GET
             app.action_press_button("done")
+            try:
+                await until(pilot, lambda: held.is_set() and logged() == [CHECKING])
+                assert not specs(app, rid)["done"].enabled
+            finally:
+                release.set()
             await until(pilot, reopened)
             box = app.box(rid)
+            assert logged() == []  # asked again: the reason is under the instruction
             assert reason in box.query_one(Instruction).content.plain
             assert labels(app, rid) == ["Done", "Reveal", "Copy", "Abort"]
             assert specs(app, rid)["abort"].enabled and specs(app, rid)["done"].enabled

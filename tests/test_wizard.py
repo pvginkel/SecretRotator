@@ -546,6 +546,23 @@ def test_an_answered_operator_screen_shows_only_a_failed_silent_step_s_line():
     assert [line.step for line in item.visible()] == [stamp]
 
 
+def test_an_operator_step_s_line_shows_while_its_answered_step_checks_and_reports():
+    """SR-6: Done pressed, the step's check under way with its progress: its line shows; waiting
+    on the operator, without a detail, or once it finished, it does not."""
+    item = Item.of(vendor())
+    item.at = 3  # the confirm
+    revoke = item.rotation.plan.steps[3]
+    line = item.lines[(revoke.id, Action.RUN)] = Line(revoke, Action.RUN, 0.0)
+    item.phase = Phase.RUNNING
+    assert item.visible() == []  # answered, no check reported
+    line.detail = "checking the old key is revoked"
+    assert item.visible() == [line]
+    item.phase = Phase.WAITING  # asked again
+    assert item.visible() == []
+    item.phase, line.state = Phase.RUNNING, LineState.OK
+    assert item.visible() == []
+
+
 def test_a_failed_line_has_its_error_under_it_on_top_of_the_eight():
     steps = [Held(f"s{n}", f"step {n}") for n in range(9)]
     lines = [Line(step, Action.RUN, 0.0, LineState.OK, elapsed=1.5) for step in steps]
