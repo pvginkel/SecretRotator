@@ -234,12 +234,14 @@ class TestRandom:
 class TestCredentialTypes:
     """manual's documents (design §6, ruling 054 D1): one per credential type of the catalog."""
 
-    def test_the_plugin_documents_the_catalogs_eleven_types(self):
+    def test_the_plugin_documents_the_catalogs_twelve_types(self):
         assert set(TYPES) == {
             "argocd-token",
             "github-pat",
             "grafana-api-key",
             "mouser-api-key",
+            "ntfy-access-token",
+            "ntfy-password",
             "openai-api-key",
             "ssh-private-key",
             "telegram-bot-token",
@@ -287,6 +289,21 @@ class TestCredentialTypes:
                 "trello-api-credential",
                 ["0123456789abcdef" * 2, "0123456789abcdef" * 4, "ATTA" + "0a1B" * 17],
                 ["0123456789abcdef", "ATTA", "Bearer 0123456789abcdef0123456789abcdef"],
+            ),
+            (
+                "ntfy-password",
+                ["Ab3-_xYz0123456789abcdEF"],
+                [
+                    "$2a$10$" + "a" * 53,
+                    "tk_" + "a" * 29,
+                    "Ab3-_xYz0123456789abcdE",
+                    "Ab3+/xYz0123456789abcdEF",
+                ],
+            ),
+            (
+                "ntfy-access-token",
+                ["tk_" + "a-_9" * 7 + "Z"],
+                ["tk_" + "a" * 28, "tk_" + "a" * 30, "a" * 32, "$2a$10$" + "a" * 53],
             ),
             (
                 "ssh-private-key",

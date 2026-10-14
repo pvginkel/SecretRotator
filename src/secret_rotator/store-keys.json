@@ -262,6 +262,26 @@
     "bot-token",
     "chat-ids"
   ],
+  "eso/prd/notifications/prd/ntfy-auth": [
+    "bridge-hash",
+    "bridge-token",
+    "operator-hash",
+    "operator-password"
+  ],
+  "eso/prd/notifications/prd/registrations": [
+    "alertmanager-telegram-bot-token",
+    "alertmanager-telegram-chat-ids",
+    "alertmanager-token",
+    "jenkins-telegram-bot-token",
+    "jenkins-telegram-chat-ids",
+    "jenkins-token",
+    "kubecoder-dev-telegram-bot-token",
+    "kubecoder-dev-telegram-chat-ids",
+    "kubecoder-dev-token",
+    "kubecoder-telegram-bot-token",
+    "kubecoder-telegram-chat-ids",
+    "kubecoder-token"
+  ],
   "eso/prd/pgadmin/prd/oidc": [
     "client_id",
     "client_secret"

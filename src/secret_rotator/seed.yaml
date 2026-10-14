@@ -512,6 +512,56 @@ eso/prd/newsfilter/prd/telegram:
       notes: "The newsfilter bot: posts qualifying articles to the chats in chat-ids."
     chat-ids: {kind: none}
 
+# The keys without a kind of their own are the leaf's manual ones: operator-password and
+# bridge-token.
+eso/prd/notifications/prd/ntfy-auth:
+  kind: manual
+  interval: 365d
+  activate: k8s-rollout:notifications-prd/deployment/notifications
+  keys:
+    bridge-hash:
+      kind: external
+      activate: none
+      notes: "The bcrypt hash of a throwaway password, never stored, for the ntfy user bridge,
+        which never logs in with a password: it authenticates with bridge-token. ntfy user hash
+        makes it from a new throwaway, and a sync of the ExternalSecret ntfy-auth and a rollout of
+        deployment/notifications in notifications-prd put it in force (Ansible
+        docs/runbooks/notifications.md#seeding-both-leaves)."
+    bridge-token:
+      args: {"type":"ntfy-access-token"}
+      notes: "The ntfy user bridge's access token: ntfy's NTFY_AUTH_TOKENS and the bridge's
+        NTFY_TOKEN are both composed from it, so the one rollout moves both. ntfy token generate
+        makes it, run from the ntfy release binary of the version the chart pins (Ansible
+        docs/runbooks/notifications.md#seeding-both-leaves)."
+    operator-hash:
+      kind: external
+      activate: none
+      notes: "The bcrypt hash of operator-password, the form in which ntfy's auth config takes the
+        operator's password. ntfy user hash makes it from operator-password, and a new
+        operator-password needs its hash here, written before that key's plan rolls ntfy (Ansible
+        docs/runbooks/notifications.md#seeding-both-leaves)."
+    operator-password:
+      args: {"type":"ntfy-password"}
+      notes: "The password of the ntfy user operator, an admin: the phone and ntfy's web app log in
+        with it at https://ntfy.webathome.org. ntfy takes only operator-hash: hash the new password
+        into it before pasting it here (Ansible docs/runbooks/notifications.md#seeding-both-leaves).
+        The phone then logs in again."
+
+# The keys without a kind of their own are the four registrations' bearer tokens.
+eso/prd/notifications/prd/registrations:
+  kind: random
+  interval: 14d
+  activate: k8s-rollout:notifications-prd/deployment/notifications
+  keys:
+    alertmanager-telegram-bot-token: {kind: "copy:eso/prd/prometheus/prd/telegram#bot_token"}
+    alertmanager-telegram-chat-ids: {kind: "copy:eso/prd/prometheus/prd/telegram#chat_id"}
+    jenkins-telegram-bot-token: {kind: "copy:eso/prd/jenkins-telegram-bot/prd/config#telegram-bot-token"}
+    jenkins-telegram-chat-ids: {kind: "copy:eso/prd/jenkins-telegram-bot/prd/config#telegram-chat-id"}
+    kubecoder-dev-telegram-bot-token: {kind: "copy:eso/prd/kubecoder/dev/bot-token#token"}
+    kubecoder-dev-telegram-chat-ids: {kind: none}
+    kubecoder-telegram-bot-token: {kind: "copy:eso/prd/kubecoder/prd/bot-token#token"}
+    kubecoder-telegram-chat-ids: {kind: none}
+
 eso/prd/pgadmin/prd/oidc:
   kind: keycloak-client
   args: {"realm":"homelab"}

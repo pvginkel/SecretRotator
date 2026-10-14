@@ -4,8 +4,9 @@ secret-rotation/catalog.md says.
 
 store-keys.json maps each leaf to its data key names (no values): the value-blind inventory of
 2026-10-04 after slice 044's cutover, plus the rotator's own leaves and markers (catalog
-§ rotator/) and jenkins/grafana-api, which the store holds once the operator stores Jenkins'
-Grafana token (slice 046). A leaf added to the seed is added there with its key names."""
+§ rotator/), jenkins/grafana-api, which the store holds once the operator stores Jenkins'
+Grafana token (slice 046), and the two Notifications leaves, which the operator seeds at the
+platform's go-live (slice 065). A leaf added to the seed is added there with its key names."""
 
 import datetime
 import json
@@ -34,6 +35,8 @@ BOOTSTRAP = (
     "seal-key",
 )
 CATALOG = "eso/prd/kubecoder/prd/catalog"
+NTFY_AUTH = "eso/prd/notifications/prd/ntfy-auth"
+REGISTRATIONS = "eso/prd/notifications/prd/registrations"
 # rotator/terraform/<app>/<keeper>: its data key, its deploy repo and the app's directory in it
 # ("" for its root), the Secret Terraform writes in the Application's namespace, and the
 # Deployments that read it on prd. A Secret only CronJobs read has none.
@@ -223,6 +226,8 @@ def test_a_note_the_catalog_gives_one_key_of_a_leaf_is_that_key_s_alone(entries)
         "eso/prd/newsfilter/prd/telegram": {"bot-token"},
         "eso/prd/telegram-mcp/prd/telegram": {"bot-token"},
         "eso/prd/prometheus/prd/telegram": {"bot_token"},
+        NTFY_AUTH: {"operator-password", "operator-hash", "bridge-hash", "bridge-token"},
+        REGISTRATIONS: set(),
     }
     for leaf, keys in noted.items():
         assert {k for k, f in entries[leaf].items() if "notes" in f} == keys, leaf
@@ -270,6 +275,8 @@ def test_the_keys_rotated_outside_the_tool_are_external_at_365_days(entries):
         ("iac/tf-backend", "age_secret_key"),
         ("eso/prd/storage/prd/s3-mirror", "password"),
         ("eso/prd/storage/prd/s3-mirror", "salt"),
+        (NTFY_AUTH, "operator-hash"),
+        (NTFY_AUTH, "bridge-hash"),
     }
     external = {
         (leaf, key): fields
@@ -362,6 +369,8 @@ def test_every_scheduled_manual_key_names_the_type_the_catalog_gives_it(entries)
         (CATALOG, "ssh-key-pve"): "ssh-private-key",
         ("eso/prd/trello-mcp/prd/trello", "api-key"): "trello-api-credential",
         ("eso/prd/trello-mcp/prd/trello", "token"): "trello-api-credential",
+        (NTFY_AUTH, "operator-password"): "ntfy-password",
+        (NTFY_AUTH, "bridge-token"): "ntfy-access-token",
     }
     manual = {
         (leaf, key): fields
@@ -373,6 +382,36 @@ def test_every_scheduled_manual_key_names_the_type_the_catalog_gives_it(entries)
     assert {at: f.get("args", {}).get("type") for at, f in scheduled.items()} == want
     assert set(want.values()) == set(TYPES)
     assert [at for at, f in manual.items() if f.get("interval") == "never" and "args" in f] == []
+
+
+def test_the_notifications_leaves_mint_their_tokens_and_copy_the_bots_keys(entries):
+    rollout = "k8s-rollout:notifications-prd/deployment/notifications"
+    tokens = ("jenkins-token", "alertmanager-token", "kubecoder-token", "kubecoder-dev-token")
+    copies = {
+        "jenkins-telegram-bot-token": "eso/prd/jenkins-telegram-bot/prd/config#telegram-bot-token",
+        "jenkins-telegram-chat-ids": "eso/prd/jenkins-telegram-bot/prd/config#telegram-chat-id",
+        "alertmanager-telegram-bot-token": "eso/prd/prometheus/prd/telegram#bot_token",
+        "alertmanager-telegram-chat-ids": "eso/prd/prometheus/prd/telegram#chat_id",
+        "kubecoder-telegram-bot-token": "eso/prd/kubecoder/prd/bot-token#token",
+        "kubecoder-dev-telegram-bot-token": "eso/prd/kubecoder/dev/bot-token#token",
+    }
+    got = {
+        key: (f["kind"], f.get("interval"), f.get("activate"))
+        for key, f in entries[REGISTRATIONS].items()
+    }
+    assert got == {
+        **{key: ("random", "14d", rollout) for key in tokens},
+        **{key: (f"copy:{source}", None, rollout) for key, source in copies.items()},
+        "kubecoder-telegram-chat-ids": ("none", None, None),
+        "kubecoder-dev-telegram-chat-ids": ("none", None, None),
+    }
+    got = {key: (f["kind"], f["interval"], f["activate"]) for key, f in entries[NTFY_AUTH].items()}
+    assert got == {
+        "operator-password": ("manual", "365d", rollout),
+        "bridge-token": ("manual", "365d", rollout),
+        "operator-hash": ("external", "365d", "none"),
+        "bridge-hash": ("external", "365d", "none"),
+    }
 
 
 def test_the_catalog_corrections(entries):
