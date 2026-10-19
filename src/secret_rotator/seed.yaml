@@ -386,7 +386,8 @@ eso/prd/kubecoder/prd/bot-token:
     alerts group, where it must be a member that can post."
 
 # The keys without a kind of their own are the leaf's manual ones: argocd-token, grafana-api-key,
-# openai-api-key and ssh-key-pve. ansible-vault-password is the bootstrap tier, external.
+# openai-api-key, ssh-key-homeassistant and ssh-key-pve. ansible-vault-password is the bootstrap
+# tier, external.
 eso/prd/kubecoder/prd/catalog:
   kind: manual
   interval: 365d
@@ -426,6 +427,12 @@ eso/prd/kubecoder/prd/catalog:
         DesignAssistant), whose suites call the live API; the dev bag copies it."
     proxmox-password: {kind: "copy:iac/proxmox#password"}
     ssh-key-ansible: {kind: "copy:iac/ansible-ssh-key#private"}
+    ssh-key-homeassistant:
+      args: {"type":"ssh-private-key"}
+      notes: "Logs in as root to Home Assistant's Terminal & SSH add-on on srvhomeassistant.home;
+        its public half is Ansible ansible/files/homeassistant.pub (comment kubecoder-homeassistant),
+        in the add-on's authorized_keys option; the Ansible environment mounts it at
+        /run/secrets/ssh-key-homeassistant."
     ssh-key-pve:
       args: {"type":"ssh-private-key"}
       notes: "Logs in as root on the PVE nodes pve, pve1 and pve2 and on the UDM Pro (router.home);

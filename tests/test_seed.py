@@ -216,6 +216,7 @@ def test_a_note_the_catalog_gives_one_key_of_a_leaf_is_that_key_s_alone(entries)
             "argocd-token",
             "grafana-api-key",
             "openai-api-key",
+            "ssh-key-homeassistant",
             "ssh-key-pve",
         },
         "iac/tf-backend": {"age_secret_key", "github_token"},
@@ -261,6 +262,7 @@ def test_the_bags_vault_passphrase_is_the_bootstrap_tier_external_and_activates_
         "argocd-token",
         "grafana-api-key",
         "openai-api-key",
+        "ssh-key-homeassistant",
         "ssh-key-pve",
     }
 
@@ -366,6 +368,7 @@ def test_every_scheduled_manual_key_names_the_type_the_catalog_gives_it(entries)
         (CATALOG, "argocd-token"): "argocd-token",
         (CATALOG, "grafana-api-key"): "grafana-api-key",
         ("jenkins/grafana-api", "token"): "grafana-api-key",
+        (CATALOG, "ssh-key-homeassistant"): "ssh-private-key",
         (CATALOG, "ssh-key-pve"): "ssh-private-key",
         ("eso/prd/trello-mcp/prd/trello", "api-key"): "trello-api-credential",
         ("eso/prd/trello-mcp/prd/trello", "token"): "trello-api-credential",

@@ -218,6 +218,7 @@
     "openai-api-key",
     "proxmox-password",
     "ssh-key-ansible",
+    "ssh-key-homeassistant",
     "ssh-key-pve",
     "tf-backend-age-public-key",
     "tf-backend-age-secret-key",
