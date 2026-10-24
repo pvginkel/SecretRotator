@@ -217,6 +217,7 @@
     "kubeconfig-prd-write",
     "openai-api-key",
     "proxmox-password",
+    "share-deployment-password",
     "ssh-key-ansible",
     "ssh-key-homeassistant",
     "ssh-key-pve",
@@ -307,6 +308,10 @@
   ],
   "eso/prd/storage/prd/backup-server": [
     "management_token"
+  ],
+  "eso/prd/storage/prd/deploy-user": [
+    "password",
+    "username"
   ],
   "eso/prd/storage/prd/s3-mirror": [
     "password",

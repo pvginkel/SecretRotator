@@ -426,6 +426,7 @@ eso/prd/kubecoder/prd/catalog:
       notes: "The environments whose manifest asks for it (NewsFilter, ElectronicsInventory,
         DesignAssistant), whose suites call the live API; the dev bag copies it."
     proxmox-password: {kind: "copy:iac/proxmox#password"}
+    share-deployment-password: {kind: "copy:eso/prd/storage/prd/deploy-user#password"}
     ssh-key-ansible: {kind: "copy:iac/ansible-ssh-key#private"}
     ssh-key-homeassistant:
       args: {"type":"ssh-private-key"}
@@ -617,6 +618,14 @@ eso/prd/storage/prd/backup-server:
   kind: random
   interval: 14d
   activate: auto
+
+eso/prd/storage/prd/deploy-user:
+  kind: samba-user
+  args: {"account":"app"}
+  interval: 14d
+  activate: k8s-rollout:storage-prd/deployment/storage
+  keys:
+    username: {kind: none}
 
 eso/prd/storage/prd/s3-mirror:
   kind: external

@@ -417,6 +417,26 @@ def test_the_notifications_leaves_mint_their_tokens_and_copy_the_bots_keys(entri
     }
 
 
+def test_share_home_s_deploy_account_is_generated_and_the_prd_bag_copies_its_password(entries):
+    got = {
+        key: (f["kind"], f.get("args"), f.get("interval"), f.get("activate"))
+        for key, f in entries["eso/prd/storage/prd/deploy-user"].items()
+    }
+    assert got == {
+        "password": (
+            "samba-user",
+            {"account": "app"},
+            "14d",
+            "k8s-rollout:storage-prd/deployment/storage",
+        ),
+        "username": ("none", None, None, None),
+    }
+    assert (
+        entries[CATALOG]["share-deployment-password"]["kind"]
+        == "copy:eso/prd/storage/prd/deploy-user#password"
+    )
+
+
 def test_the_catalog_corrections(entries):
     assert (
         entries["eso/prd/argocd/prd/oidc"]["client_secret"]["activate"]
