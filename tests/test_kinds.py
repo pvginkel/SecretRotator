@@ -234,12 +234,13 @@ class TestRandom:
 class TestCredentialTypes:
     """manual's documents (design §6, ruling 054 D1): one per credential type of the catalog."""
 
-    def test_the_plugin_documents_the_catalogs_twelve_types(self):
+    def test_the_plugin_documents_the_catalogs_thirteen_types(self):
         assert set(TYPES) == {
             "argocd-token",
             "github-pat",
             "grafana-api-key",
             "mouser-api-key",
+            "notification-bridge-token",
             "ntfy-access-token",
             "ntfy-password",
             "openai-api-key",
@@ -299,6 +300,11 @@ class TestCredentialTypes:
                     "Ab3-_xYz0123456789abcdE",
                     "Ab3+/xYz0123456789abcdEF",
                 ],
+            ),
+            (
+                "notification-bridge-token",
+                ["Ab3-_xYz" * 5 + "0Z9"],
+                ["Ab3-_xYz" * 5 + "0Z", "Ab3+/xYz" * 5 + "0Z9", "tk_" + "a" * 29],
             ),
             (
                 "ntfy-access-token",

@@ -284,7 +284,9 @@
     "kubecoder-dev-token",
     "kubecoder-telegram-bot-token",
     "kubecoder-telegram-chat-ids",
-    "kubecoder-token"
+    "kubecoder-token",
+    "pilot-app-mvdbovenkamp-token",
+    "pilot-app-pvginkel-token"
   ],
   "eso/prd/pgadmin/prd/oidc": [
     "client_id",

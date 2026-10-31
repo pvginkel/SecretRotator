@@ -235,7 +235,7 @@ def test_a_note_the_catalog_gives_one_key_of_a_leaf_is_that_key_s_alone(entries)
             "bridge-hash",
             "bridge-token",
         },
-        REGISTRATIONS: set(),
+        REGISTRATIONS: {"pilot-app-pvginkel-token", "pilot-app-mvdbovenkamp-token"},
     }
     for leaf, keys in noted.items():
         assert {k for k, f in entries[leaf].items() if "notes" in f} == keys, leaf
@@ -383,6 +383,8 @@ def test_every_scheduled_manual_key_names_the_type_the_catalog_gives_it(entries)
         (NTFY_AUTH, "pvginkel-password"): "ntfy-password",
         (NTFY_AUTH, "mvdbovenkamp-password"): "ntfy-password",
         (NTFY_AUTH, "bridge-token"): "ntfy-access-token",
+        (REGISTRATIONS, "pilot-app-pvginkel-token"): "notification-bridge-token",
+        (REGISTRATIONS, "pilot-app-mvdbovenkamp-token"): "notification-bridge-token",
     }
     manual = {
         (leaf, key): fields
@@ -416,6 +418,8 @@ def test_the_notifications_leaves_mint_their_tokens_and_copy_the_bots_keys(entri
         **{key: (f"copy:{source}", None, rollout) for key, source in copies.items()},
         "kubecoder-telegram-chat-ids": ("none", None, None),
         "kubecoder-dev-telegram-chat-ids": ("none", None, None),
+        "pilot-app-pvginkel-token": ("manual", "365d", rollout),
+        "pilot-app-mvdbovenkamp-token": ("manual", "365d", rollout),
     }
     got = {key: (f["kind"], f["interval"], f["activate"]) for key, f in entries[NTFY_AUTH].items()}
     assert got == {

@@ -582,6 +582,20 @@ eso/prd/notifications/prd/registrations:
     kubecoder-dev-telegram-chat-ids: {kind: none}
     kubecoder-telegram-bot-token: {kind: "copy:eso/prd/kubecoder/prd/bot-token#token"}
     kubecoder-telegram-chat-ids: {kind: none}
+    pilot-app-mvdbovenkamp-token:
+      kind: manual
+      args: {"type":"notification-bridge-token"}
+      interval: 365d
+      notes: "The registration pilot-app-mvdbovenkamp's token: mvdbovenkamp pastes it on Pilot's
+        profile page, and Pilot's backend sends mvdbovenkamp's notifications under it. Pilot keeps
+        it in its own database; no leaf holds a copy. Hand mvdbovenkamp the new token to paste."
+    pilot-app-pvginkel-token:
+      kind: manual
+      args: {"type":"notification-bridge-token"}
+      interval: 365d
+      notes: "The registration pilot-app-pvginkel's token: the operator pastes it on Pilot's profile
+        page, and Pilot's backend sends the operator's notifications under it. Pilot keeps it in
+        its own database; no leaf holds a copy."
 
 eso/prd/pgadmin/prd/oidc:
   kind: keycloak-client
