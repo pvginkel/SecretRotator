@@ -267,8 +267,10 @@
   "eso/prd/notifications/prd/ntfy-auth": [
     "bridge-hash",
     "bridge-token",
-    "operator-hash",
-    "operator-password"
+    "mvdbovenkamp-hash",
+    "mvdbovenkamp-password",
+    "pvginkel-hash",
+    "pvginkel-password"
   ],
   "eso/prd/notifications/prd/registrations": [
     "alertmanager-telegram-bot-token",

@@ -520,7 +520,7 @@ eso/prd/newsfilter/prd/telegram:
       notes: "The newsfilter bot: posts qualifying articles to the chats in chat-ids."
     chat-ids: {kind: none}
 
-# The keys without a kind of their own are the leaf's manual ones: operator-password and
+# The keys without a kind of their own are the leaf's manual ones: the users' passwords and
 # bridge-token.
 eso/prd/notifications/prd/ntfy-auth:
   kind: manual
@@ -541,17 +541,30 @@ eso/prd/notifications/prd/ntfy-auth:
         NTFY_TOKEN are both composed from it, so the one rollout moves both. ntfy token generate
         makes it, run from the ntfy release binary of the version the chart pins (Ansible
         docs/runbooks/notifications.md#seeding-both-leaves)."
-    operator-hash:
+    mvdbovenkamp-hash:
       kind: external
       activate: none
-      notes: "The bcrypt hash of operator-password, the form in which ntfy's auth config takes the
-        operator's password. ntfy user hash makes it from operator-password, and a new
-        operator-password needs its hash here, written before that key's plan rolls ntfy (Ansible
-        docs/runbooks/notifications.md#seeding-both-leaves)."
-    operator-password:
+      notes: "The bcrypt hash of mvdbovenkamp-password, the form in which ntfy's auth config takes
+        that user's password. ntfy user hash makes it from mvdbovenkamp-password, and a new
+        mvdbovenkamp-password needs its hash here, written before that key's plan rolls ntfy
+        (Ansible docs/runbooks/notifications.md#seeding-both-leaves)."
+    mvdbovenkamp-password:
       args: {"type":"ntfy-password"}
-      notes: "The password of the ntfy user operator, an admin: the phone and ntfy's web app log in
-        with it at https://ntfy.webathome.org. ntfy takes only operator-hash: hash the new password
+      notes: "The password of the ntfy user mvdbovenkamp, read-only on pilot-app-mvdbovenkamp:
+        mvdbovenkamp's phone logs in with it at https://ntfy.webathome.org. ntfy takes only
+        mvdbovenkamp-hash: hash the new password into it first (Ansible
+        docs/runbooks/notifications.md#seeding-both-leaves). mvdbovenkamp then logs in again."
+    pvginkel-hash:
+      kind: external
+      activate: none
+      notes: "The bcrypt hash of pvginkel-password, the form in which ntfy's auth config takes the
+        operator's password. ntfy user hash makes it from pvginkel-password, and a new
+        pvginkel-password needs its hash here, written before that key's plan rolls ntfy (Ansible
+        docs/runbooks/notifications.md#seeding-both-leaves)."
+    pvginkel-password:
+      args: {"type":"ntfy-password"}
+      notes: "The password of the ntfy user pvginkel, an admin: the phone and ntfy's web app log in
+        with it at https://ntfy.webathome.org. ntfy takes only pvginkel-hash: hash the new password
         into it before pasting it here (Ansible docs/runbooks/notifications.md#seeding-both-leaves).
         The phone then logs in again."
 

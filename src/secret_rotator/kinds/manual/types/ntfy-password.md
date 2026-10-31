@@ -6,7 +6,7 @@ shape:
 expires: false
 ---
 ntfy's auth config takes the user's bcrypt hash, never the password: the leaf keeps the hash
-beside the password (operator-hash is derived from operator-password with ntfy user hash), so a
+beside the password (<user>-hash is derived from <user>-password with ntfy user hash), so a
 rotation of the password rewrites the hash with it.
 
 1. Generate the new password:
