@@ -603,6 +603,10 @@ eso/prd/pgadmin/prd/oidc:
   interval: 14d
   activate: auto
 
+eso/prd/pilot/prd/youtrack-webhook-token:
+  kind: copy:eso/prd/youtrack/prd/webhook-token#token
+  activate: auto
+
 eso/prd/postgres-pas/pgadmin-admin:
   kind: cnpg-role
   args: {"role":"pgadmin_admin"}

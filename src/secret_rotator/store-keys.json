@@ -292,6 +292,9 @@
     "client_id",
     "client_secret"
   ],
+  "eso/prd/pilot/prd/youtrack-webhook-token": [
+    "token"
+  ],
   "eso/prd/postgres-pas/pgadmin-admin": [
     "password",
     "username"
