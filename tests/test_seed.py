@@ -414,11 +414,6 @@ def test_the_notifications_leaves_mint_their_tokens_and_hold_or_copy_the_bots_ke
     assert got == {
         **{key: ("random", "14d", rollout) for key in tokens},
         **{key: (f"copy:{source}", None, rollout) for key, source in copies.items()},
-        # jenkins and alertmanager send to ntfy alone: their Telegram keys are unread.
-        "alertmanager-telegram-bot-token": ("none", None, None),
-        "alertmanager-telegram-chat-ids": ("none", None, None),
-        "jenkins-telegram-bot-token": ("none", None, None),
-        "jenkins-telegram-chat-ids": ("none", None, None),
         "kubecoder-telegram-chat-ids": ("none", None, None),
         "kubecoder-dev-telegram-chat-ids": ("none", None, None),
         "pilot-app-pvginkel-token": ("manual", "365d", rollout),

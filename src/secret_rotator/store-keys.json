@@ -272,11 +272,7 @@
     "pvginkel-password"
   ],
   "eso/prd/notifications/prd/registrations": [
-    "alertmanager-telegram-bot-token",
-    "alertmanager-telegram-chat-ids",
     "alertmanager-token",
-    "jenkins-telegram-bot-token",
-    "jenkins-telegram-chat-ids",
     "jenkins-token",
     "kubecoder-dev-telegram-bot-token",
     "kubecoder-dev-telegram-chat-ids",
