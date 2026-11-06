@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from fake_cluster import pod_spec, snapshot, workload
+from fake_cluster import externalsecret, pod_spec, snapshot, workload
 
 from secret_rotator import annotate as ann
 from secret_rotator import audit as aud
@@ -446,6 +446,61 @@ def test_the_jenkins_adapter_mints_its_jenkins_token_and_copies_its_registration
         "notifications-token": (f"copy:{REGISTRATIONS}#jenkins-token", None, "auto"),
     }
     assert "eso/prd/jenkins-telegram-bot/prd/config" not in entries
+
+
+def test_a_rotation_of_alertmanager_s_token_syncs_its_copy_and_leaves_alertmanager_running(
+    seed, tmp_path
+):
+    """The adapter sidecar re-reads its token file on every call, so the copy's eso alone carries
+    the token into the Alertmanager pod: the StatefulSet that mounts its Secret is not rolled."""
+    leaf = "eso/prd/prometheus/prd/notifications"
+    path = tmp_path / "snapshot.json"
+    objects = [
+        (
+            "externalsecrets",
+            externalsecret("notifications-prd", "registrations", extract=[REGISTRATIONS]),
+        ),
+        (
+            "externalsecrets",
+            externalsecret("prometheus-prd", "alertmanager-notifications", data=[(leaf, "token")]),
+        ),
+        (
+            "deployments",
+            workload(
+                "Deployment",
+                "notifications-prd",
+                "notifications",
+                pod_spec(env_from=["registrations"]),
+                app="notifications-prd",
+            ),
+        ),
+        (
+            "statefulsets",
+            workload(
+                "StatefulSet",
+                "prometheus-prd",
+                "prometheus-prd-alertmanager",
+                pod_spec(volume=["alertmanager-notifications"]),
+                app="prometheus-prd",
+            ),
+        ),
+    ]
+    path.write_text(json.dumps(snapshot(objects)))
+    cluster = Cluster.of_snapshot(path)
+    kinds = registry.load()
+    store = ann.offline_store(Path(str(ann.DEFAULT_KEYS)), seed, print)
+    result = aud.audit(store, cluster.referenced(), kinds)
+    plan = make(kinds, REGISTRATIONS, "random", ["alertmanager-token"], result, cluster)
+    assert [step.id for step in plan.steps] == [
+        "random.generate:alertmanager-token",
+        "kv.write",
+        f"kv.copy:{leaf}#token",
+        "eso.sync:notifications-prd/registrations",
+        "eso.sync:prometheus-prd/alertmanager-notifications",
+        "k8s.rollout:notifications-prd/deployment/notifications",
+        "kv.stamp",
+    ]
+    assert not plan.needs_operator
 
 
 def test_share_home_s_deploy_account_is_generated_and_the_prd_bag_copies_its_password(entries):

@@ -629,6 +629,10 @@ eso/prd/prometheus/prd/healthchecks:
   activate: none
   notes: "the ping URL is the check"
 
+eso/prd/prometheus/prd/notifications:
+  kind: copy:eso/prd/notifications/prd/registrations#alertmanager-token
+  activate: eso
+
 eso/prd/prometheus/prd/telegram:
   kind: manual
   args: {"type":"telegram-bot-token"}

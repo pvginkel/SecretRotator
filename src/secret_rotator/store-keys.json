@@ -305,6 +305,9 @@
   "eso/prd/prometheus/prd/healthchecks": [
     "ping_url"
   ],
+  "eso/prd/prometheus/prd/notifications": [
+    "token"
+  ],
   "eso/prd/prometheus/prd/telegram": [
     "bot_token",
     "chat_id"
