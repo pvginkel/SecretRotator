@@ -5,8 +5,9 @@ secret-rotation/catalog.md says.
 store-keys.json maps each leaf to its data key names (no values): the value-blind inventory of
 2026-10-04 after slice 044's cutover, plus the rotator's own leaves and markers (catalog
 § rotator/), jenkins/grafana-api, which the store holds once the operator stores Jenkins'
-Grafana token (slice 046), and the two Notifications leaves, which the operator seeds at the
-platform's go-live (slice 065). A leaf added to the seed is added there with its key names."""
+Grafana token (slice 046), the two Notifications leaves, which the operator seeds at the
+platform's go-live (slice 065), and the Jenkins adapter's leaf, which the operator seeds at its
+go-live (slice 066). A leaf added to the seed is added there with its key names."""
 
 import datetime
 import json
@@ -223,7 +224,6 @@ def test_a_note_the_catalog_gives_one_key_of_a_leaf_is_that_key_s_alone(entries)
         "eso/prd/jenkins-mcp/prd/config": {"token"},
         "eso/prd/trello-mcp/prd/trello": {"api-key", "token"},
         "shared/samba/users": {"mvdbovenkamp"},
-        "eso/prd/jenkins-telegram-bot/prd/config": {"telegram-bot-token"},
         "eso/prd/newsfilter/prd/telegram": {"bot-token"},
         "eso/prd/telegram-mcp/prd/telegram": {"bot-token"},
         "eso/prd/prometheus/prd/telegram": {"bot_token"},
@@ -235,7 +235,11 @@ def test_a_note_the_catalog_gives_one_key_of_a_leaf_is_that_key_s_alone(entries)
             "bridge-hash",
             "bridge-token",
         },
-        REGISTRATIONS: {"pilot-app-pvginkel-token", "pilot-app-mvdbovenkamp-token"},
+        REGISTRATIONS: {
+            "jenkins-telegram-bot-token",
+            "pilot-app-pvginkel-token",
+            "pilot-app-mvdbovenkamp-token",
+        },
     }
     for leaf, keys in noted.items():
         assert {k for k, f in entries[leaf].items() if "notes" in f} == keys, leaf
@@ -358,7 +362,7 @@ def test_every_scheduled_manual_key_names_the_type_the_catalog_gives_it(entries)
         ("rotator/github", "token"): "github-pat",
         ("rotator/ssh-key/credentials", "token"): "github-pat",
         ("rotator/terraform/credentials", "token"): "github-pat",
-        ("eso/prd/jenkins-telegram-bot/prd/config", "telegram-bot-token"): "telegram-bot-token",
+        (REGISTRATIONS, "jenkins-telegram-bot-token"): "telegram-bot-token",
         ("eso/prd/kubecoder/dev/bot-token", "token"): "telegram-bot-token",
         ("eso/prd/kubecoder/prd/bot-token", "token"): "telegram-bot-token",
         ("eso/prd/newsfilter/prd/telegram", "bot-token"): "telegram-bot-token",
@@ -398,12 +402,10 @@ def test_every_scheduled_manual_key_names_the_type_the_catalog_gives_it(entries)
     assert [at for at, f in manual.items() if f.get("interval") == "never" and "args" in f] == []
 
 
-def test_the_notifications_leaves_mint_their_tokens_and_copy_the_bots_keys(entries):
+def test_the_notifications_leaves_mint_their_tokens_and_hold_or_copy_the_bots_keys(entries):
     rollout = "k8s-rollout:notifications-prd/deployment/notifications"
     tokens = ("jenkins-token", "alertmanager-token", "kubecoder-token", "kubecoder-dev-token")
     copies = {
-        "jenkins-telegram-bot-token": "eso/prd/jenkins-telegram-bot/prd/config#telegram-bot-token",
-        "jenkins-telegram-chat-ids": "eso/prd/jenkins-telegram-bot/prd/config#telegram-chat-id",
         "alertmanager-telegram-bot-token": "eso/prd/prometheus/prd/telegram#bot_token",
         "alertmanager-telegram-chat-ids": "eso/prd/prometheus/prd/telegram#chat_id",
         "kubecoder-telegram-bot-token": "eso/prd/kubecoder/prd/bot-token#token",
@@ -416,6 +418,8 @@ def test_the_notifications_leaves_mint_their_tokens_and_copy_the_bots_keys(entri
     assert got == {
         **{key: ("random", "14d", rollout) for key in tokens},
         **{key: (f"copy:{source}", None, rollout) for key, source in copies.items()},
+        "jenkins-telegram-bot-token": ("manual", "365d", rollout),
+        "jenkins-telegram-chat-ids": ("none", None, None),
         "kubecoder-telegram-chat-ids": ("none", None, None),
         "kubecoder-dev-telegram-chat-ids": ("none", None, None),
         "pilot-app-pvginkel-token": ("manual", "365d", rollout),
@@ -430,6 +434,18 @@ def test_the_notifications_leaves_mint_their_tokens_and_copy_the_bots_keys(entri
         "mvdbovenkamp-hash": ("external", "365d", "none"),
         "bridge-hash": ("external", "365d", "none"),
     }
+
+
+def test_the_jenkins_adapter_mints_its_jenkins_token_and_copies_its_registration_s(entries):
+    got = {
+        key: (f["kind"], f.get("interval"), f.get("activate"))
+        for key, f in entries["eso/prd/jenkins-notifications-bridge/prd/config"].items()
+    }
+    assert got == {
+        "jenkins-token": ("jenkins-token", "14d", "auto"),
+        "notifications-token": (f"copy:{REGISTRATIONS}#jenkins-token", None, "auto"),
+    }
+    assert "eso/prd/jenkins-telegram-bot/prd/config" not in entries
 
 
 def test_share_home_s_deploy_account_is_generated_and_the_prd_bag_copies_its_password(entries):

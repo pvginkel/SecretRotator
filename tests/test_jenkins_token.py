@@ -31,7 +31,7 @@ from secret_rotator.plan import PlanError, make
 SEED = ann.load_seed(ann.DEFAULT_SEED)
 KIND = "jenkins-token"
 MCP = "eso/prd/jenkins-mcp/prd/config"
-BOT = "eso/prd/jenkins-telegram-bot/prd/config"
+BRIDGE = "eso/prd/jenkins-notifications-bridge/prd/config"
 POLLER = "eso/prd/version-poller/prd/jenkins"
 CATALOG = "eso/prd/kubecoder/prd/catalog"
 STATS = "eso/prd/infra-statistics/prd/jenkins"
@@ -40,7 +40,7 @@ ADMIN_PASSWORD = "shared/jenkins/admin-password"
 # Each leaf's key of the kind.
 LEAVES = {
     MCP: "token",
-    BOT: "jenkins-token",
+    BRIDGE: "jenkins-token",
     POLLER: "token",
     CATALOG: "jenkins-token",
     STATS: "token",
@@ -48,24 +48,20 @@ LEAVES = {
 }
 DATA = {
     MCP: {"bearer-token": "SECRET-bearer", "token": "SECRET-old-mcp", "user": USER},
-    BOT: {
-        "jenkins-token": "SECRET-old-bot",
-        "telegram-bot-token": "SECRET-bot",
-        "telegram-chat-id": "-100",
-    },
+    BRIDGE: {"jenkins-token": "SECRET-old-bridge", "notifications-token": "SECRET-registration"},
     POLLER: {"token": "SECRET-old-poller", "user": USER},
     STATS: {"token": "SECRET-old-stats"},
     ROTATOR: dict(CREDENTIALS),
 }
 ROLLED = {
     MCP: "jenkins-prd/deployment/jenkins-mcp",
-    BOT: "jenkins-prd/deployment/jenkins-telegram-bot",
+    BRIDGE: "jenkins-prd/deployment/jenkins-notifications-bridge",
     CATALOG: "kubecoder-prd/deployment/kubecoder-controller",
     STATS: "infra-statistics-prd/deployment/infra-statistics",
 }
 SYNCED = {
     MCP: "jenkins-prd/jenkins-mcp-secrets",
-    BOT: "jenkins-prd/jenkins-telegram-bot-secrets",
+    BRIDGE: "jenkins-prd/jenkins-notifications-bridge-secrets",
     POLLER: "version-poller-prd/version-poller-jenkins",
     CATALOG: "kubecoder-prd/kubecoder-secret-catalog",
     STATS: "infra-statistics-prd/infra-statistics-secrets",
@@ -78,7 +74,8 @@ def seed_store():
 
 def jenkins_objects():
     """(resource, object) of the readers of the kind's leaves, as prd holds them (2026-10-08) with
-    JenkinsDeploy's and InfraStatisticsDeploy's ExternalSecrets as slice 047 has them read."""
+    JenkinsDeploy's and InfraStatisticsDeploy's ExternalSecrets as slice 047 has them read, and the
+    Jenkins adapter's in place of the Jenkins Telegram bot's as slice 066 has it."""
     cronjob = {
         "metadata": {"namespace": "version-poller-prd", "name": "version-poller"},
         "spec": {
@@ -106,8 +103,8 @@ def jenkins_objects():
             "externalsecrets",
             externalsecret(
                 "jenkins-prd",
-                "jenkins-telegram-bot-secrets",
-                data=[(BOT, "jenkins-token"), (BOT, "telegram-bot-token")],
+                "jenkins-notifications-bridge-secrets",
+                data=[(BRIDGE, "jenkins-token"), (BRIDGE, "notifications-token")],
             ),
         ),
         (
@@ -115,8 +112,8 @@ def jenkins_objects():
             workload(
                 "Deployment",
                 "jenkins-prd",
-                "jenkins-telegram-bot",
-                pod_spec(env_from=["jenkins-telegram-bot-secrets"]),
+                "jenkins-notifications-bridge",
+                pod_spec(env_from=["jenkins-notifications-bridge-secrets"]),
             ),
         ),
         (
@@ -308,7 +305,7 @@ class TestTheSeed:
 
 
 class TestThePlans:
-    @pytest.mark.parametrize("leaf", [MCP, BOT, CATALOG, STATS])
+    @pytest.mark.parametrize("leaf", [MCP, BRIDGE, CATALOG, STATS])
     def test_an_activated_leaf_syncs_and_rolls_out_before_the_login_and_the_revoke(self, leaf):
         assert ids(World().plan(leaf)) == [
             "jenkins_token.mint",
@@ -400,7 +397,7 @@ class TestThePlans:
 
 
 class TestTheRuns:
-    @pytest.mark.parametrize("leaf", [MCP, BOT, CATALOG, STATS])
+    @pytest.mark.parametrize("leaf", [MCP, BRIDGE, CATALOG, STATS])
     def test_a_rotation_activates_the_new_token_and_revokes_the_old_one(self, leaf):
         world = World()
         key = LEAVES[leaf]

@@ -313,18 +313,12 @@ eso/prd/jenkins-mcp/prd/config:
         /mcp-server/stateless from user and token."
     user: {kind: none}
 
-eso/prd/jenkins-telegram-bot/prd/config:
+eso/prd/jenkins-notifications-bridge/prd/config:
   kind: jenkins-token
   interval: 14d
   activate: auto
   keys:
-    telegram-bot-token:
-      kind: manual
-      args: {"type":"telegram-bot-token"}
-      interval: 365d
-      notes: "The Jenkins build bot, loudOnly in prd: it posts each failed build and each alert a
-        build's log raises, in the chat of telegram-chat-id."
-    telegram-chat-id: {kind: none}
+    notifications-token: {kind: "copy:eso/prd/notifications/prd/registrations#jenkins-token"}
 
 eso/prd/kubecoder/dev/bot-token:
   kind: manual
@@ -576,8 +570,14 @@ eso/prd/notifications/prd/registrations:
   keys:
     alertmanager-telegram-bot-token: {kind: "copy:eso/prd/prometheus/prd/telegram#bot_token"}
     alertmanager-telegram-chat-ids: {kind: "copy:eso/prd/prometheus/prd/telegram#chat_id"}
-    jenkins-telegram-bot-token: {kind: "copy:eso/prd/jenkins-telegram-bot/prd/config#telegram-bot-token"}
-    jenkins-telegram-chat-ids: {kind: "copy:eso/prd/jenkins-telegram-bot/prd/config#telegram-chat-id"}
+    jenkins-telegram-bot-token:
+      kind: manual
+      args: {"type":"telegram-bot-token"}
+      interval: 365d
+      notes: "The Jenkins build bot: the bridge's jenkins registration posts through it, in the
+        chats of jenkins-telegram-chat-ids, each failed build until its job is next green or
+        yellow, and each alert a build's log raises."
+    jenkins-telegram-chat-ids: {kind: none}
     kubecoder-dev-telegram-bot-token: {kind: "copy:eso/prd/kubecoder/dev/bot-token#token"}
     kubecoder-dev-telegram-chat-ids: {kind: none}
     kubecoder-telegram-bot-token: {kind: "copy:eso/prd/kubecoder/prd/bot-token#token"}

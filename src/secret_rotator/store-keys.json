@@ -159,10 +159,9 @@
     "token",
     "user"
   ],
-  "eso/prd/jenkins-telegram-bot/prd/config": [
+  "eso/prd/jenkins-notifications-bridge/prd/config": [
     "jenkins-token",
-    "telegram-bot-token",
-    "telegram-chat-id"
+    "notifications-token"
   ],
   "eso/prd/kubecoder/dev/bot-token": [
     "token"
