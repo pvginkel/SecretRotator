@@ -236,7 +236,6 @@ def test_a_note_the_catalog_gives_one_key_of_a_leaf_is_that_key_s_alone(entries)
             "bridge-token",
         },
         REGISTRATIONS: {
-            "jenkins-telegram-bot-token",
             "pilot-app-pvginkel-token",
             "pilot-app-mvdbovenkamp-token",
         },
@@ -362,7 +361,6 @@ def test_every_scheduled_manual_key_names_the_type_the_catalog_gives_it(entries)
         ("rotator/github", "token"): "github-pat",
         ("rotator/ssh-key/credentials", "token"): "github-pat",
         ("rotator/terraform/credentials", "token"): "github-pat",
-        (REGISTRATIONS, "jenkins-telegram-bot-token"): "telegram-bot-token",
         ("eso/prd/kubecoder/dev/bot-token", "token"): "telegram-bot-token",
         ("eso/prd/kubecoder/prd/bot-token", "token"): "telegram-bot-token",
         ("eso/prd/newsfilter/prd/telegram", "bot-token"): "telegram-bot-token",
@@ -406,8 +404,6 @@ def test_the_notifications_leaves_mint_their_tokens_and_hold_or_copy_the_bots_ke
     rollout = "k8s-rollout:notifications-prd/deployment/notifications"
     tokens = ("jenkins-token", "alertmanager-token", "kubecoder-token", "kubecoder-dev-token")
     copies = {
-        "alertmanager-telegram-bot-token": "eso/prd/prometheus/prd/telegram#bot_token",
-        "alertmanager-telegram-chat-ids": "eso/prd/prometheus/prd/telegram#chat_id",
         "kubecoder-telegram-bot-token": "eso/prd/kubecoder/prd/bot-token#token",
         "kubecoder-dev-telegram-bot-token": "eso/prd/kubecoder/dev/bot-token#token",
     }
@@ -418,7 +414,10 @@ def test_the_notifications_leaves_mint_their_tokens_and_hold_or_copy_the_bots_ke
     assert got == {
         **{key: ("random", "14d", rollout) for key in tokens},
         **{key: (f"copy:{source}", None, rollout) for key, source in copies.items()},
-        "jenkins-telegram-bot-token": ("manual", "365d", rollout),
+        # jenkins and alertmanager send to ntfy alone: their Telegram keys are unread.
+        "alertmanager-telegram-bot-token": ("none", None, None),
+        "alertmanager-telegram-chat-ids": ("none", None, None),
+        "jenkins-telegram-bot-token": ("none", None, None),
         "jenkins-telegram-chat-ids": ("none", None, None),
         "kubecoder-telegram-chat-ids": ("none", None, None),
         "kubecoder-dev-telegram-chat-ids": ("none", None, None),

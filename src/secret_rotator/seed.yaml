@@ -562,21 +562,18 @@ eso/prd/notifications/prd/ntfy-auth:
         into it before pasting it here (Ansible docs/runbooks/notifications.md#seeding-both-leaves).
         The phone then logs in again."
 
-# The keys without a kind of their own are the four registrations' bearer tokens.
+# The keys without a kind of their own are the four registrations' bearer tokens. jenkins and
+# alertmanager send to ntfy alone since 2026-11-06 (Ansible plan task t9): their four -telegram-
+# keys are none, unread and kept until the operator deletes them, named here because the default
+# random would take them.
 eso/prd/notifications/prd/registrations:
   kind: random
   interval: 14d
   activate: k8s-rollout:notifications-prd/deployment/notifications
   keys:
-    alertmanager-telegram-bot-token: {kind: "copy:eso/prd/prometheus/prd/telegram#bot_token"}
-    alertmanager-telegram-chat-ids: {kind: "copy:eso/prd/prometheus/prd/telegram#chat_id"}
-    jenkins-telegram-bot-token:
-      kind: manual
-      args: {"type":"telegram-bot-token"}
-      interval: 365d
-      notes: "The Jenkins build bot: the bridge's jenkins registration posts through it, in the
-        chats of jenkins-telegram-chat-ids, each failed build until its job is next green or
-        yellow, and each alert a build's log raises."
+    alertmanager-telegram-bot-token: {kind: none}
+    alertmanager-telegram-chat-ids: {kind: none}
+    jenkins-telegram-bot-token: {kind: none}
     jenkins-telegram-chat-ids: {kind: none}
     kubecoder-dev-telegram-bot-token: {kind: "copy:eso/prd/kubecoder/dev/bot-token#token"}
     kubecoder-dev-telegram-chat-ids: {kind: none}
