@@ -285,6 +285,7 @@ def test_the_keys_rotated_outside_the_tool_are_external_at_365_days(entries):
         (CATALOG, "ansible-vault-password"),
         ("eso/prd/homeapps/extension-signing", "private-key"),
         ("eso/prd/pilot/dev/vapid", "private_key"),
+        ("eso/prd/pilot/prd/vapid", "private_key"),
         ("shared/wifi-iot", "password"),
         ("iac/tf-backend", "age_secret_key"),
         ("eso/prd/storage/prd/s3-mirror", "password"),

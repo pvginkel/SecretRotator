@@ -291,6 +291,9 @@
   "eso/prd/pilot/dev/vapid": [
     "private_key"
   ],
+  "eso/prd/pilot/prd/vapid": [
+    "private_key"
+  ],
   "eso/prd/pilot/prd/youtrack-webhook-token": [
     "token"
   ],
