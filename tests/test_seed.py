@@ -238,6 +238,7 @@ def test_a_note_the_catalog_gives_one_key_of_a_leaf_is_that_key_s_alone(entries)
         REGISTRATIONS: {
             "pilot-app-pvginkel-token",
             "pilot-app-mvdbovenkamp-token",
+            "pilot-app-dev-pvginkel-token",
         },
     }
     for leaf, keys in noted.items():
@@ -387,6 +388,7 @@ def test_every_scheduled_manual_key_names_the_type_the_catalog_gives_it(entries)
         (NTFY_AUTH, "bridge-token"): "ntfy-access-token",
         (REGISTRATIONS, "pilot-app-pvginkel-token"): "notification-bridge-token",
         (REGISTRATIONS, "pilot-app-mvdbovenkamp-token"): "notification-bridge-token",
+        (REGISTRATIONS, "pilot-app-dev-pvginkel-token"): "notification-bridge-token",
     }
     manual = {
         (leaf, key): fields
@@ -418,6 +420,7 @@ def test_the_notifications_leaves_mint_their_tokens_and_hold_or_copy_the_bots_ke
         "kubecoder-dev-telegram-chat-ids": ("none", None, None),
         "pilot-app-pvginkel-token": ("manual", "365d", rollout),
         "pilot-app-mvdbovenkamp-token": ("manual", "365d", rollout),
+        "pilot-app-dev-pvginkel-token": ("manual", "365d", rollout),
     }
     got = {key: (f["kind"], f["interval"], f["activate"]) for key, f in entries[NTFY_AUTH].items()}
     assert got == {
