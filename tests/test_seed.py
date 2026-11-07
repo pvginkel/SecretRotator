@@ -279,11 +279,12 @@ def test_the_bags_vault_passphrase_is_the_bootstrap_tier_external_and_activates_
 
 
 def test_the_keys_rotated_outside_the_tool_are_external_at_365_days(entries):
-    # design R82
+    # design R82, R161
     want = {
         *((f"rotator/bootstrap/{b}", b) for b in BOOTSTRAP),
         (CATALOG, "ansible-vault-password"),
         ("eso/prd/homeapps/extension-signing", "private-key"),
+        ("eso/prd/pilot/dev/vapid", "private_key"),
         ("shared/wifi-iot", "password"),
         ("iac/tf-backend", "age_secret_key"),
         ("eso/prd/storage/prd/s3-mirror", "password"),

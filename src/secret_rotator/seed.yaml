@@ -600,6 +600,16 @@ eso/prd/pgadmin/prd/oidc:
   interval: 14d
   activate: auto
 
+eso/prd/pilot/dev/vapid:
+  kind: external
+  interval: 365d
+  activate: none
+  notes: "Pilot dev's web-push (VAPID) private key, P-256 as PKCS#8 PEM (PilotApp slice 038). A new
+    key ends every browser's push subscription; each turns Notify me on this device on again. To
+    rotate: openssl ecparam -name prime256v1 -genkey -noout | openssl pkcs8 -topk8 -nocrypt | bao kv
+    put -mount=kv eso/prd/pilot/dev/vapid private_key=-, then force-sync its ExternalSecret and
+    restart deployment/pilot in pilot-dev."
+
 eso/prd/pilot/prd/youtrack-webhook-token:
   kind: copy:eso/prd/youtrack/prd/webhook-token#token
   activate: auto
