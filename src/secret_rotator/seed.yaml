@@ -419,6 +419,7 @@ eso/prd/kubecoder/prd/catalog:
       args: {"type":"openai-api-key"}
       notes: "The environments whose manifest asks for it (NewsFilter, ElectronicsInventory,
         DesignAssistant), whose suites call the live API; the dev bag copies it."
+    pilot-projects-token: {kind: "copy:eso/prd/pilot/projects-token#token"}
     proxmox-password: {kind: "copy:iac/proxmox#password"}
     share-deployment-password: {kind: "copy:eso/prd/storage/prd/deploy-user#password"}
     ssh-key-ansible: {kind: "copy:iac/ansible-ssh-key#private"}
@@ -634,6 +635,11 @@ eso/prd/pilot/prd/vapid:
 
 eso/prd/pilot/prd/youtrack-webhook-token:
   kind: copy:eso/prd/youtrack/prd/webhook-token#token
+  activate: auto
+
+eso/prd/pilot/projects-token:
+  kind: random
+  interval: 14d
   activate: auto
 
 eso/prd/postgres-pas/pgadmin-admin:
