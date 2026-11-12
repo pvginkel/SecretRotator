@@ -600,6 +600,12 @@ eso/prd/pgadmin/prd/oidc:
   interval: 14d
   activate: auto
 
+eso/prd/pilot/dev/service-user:
+  kind: keycloak-client
+  args: {"realm":"homelab"}
+  interval: 14d
+  activate: auto
+
 eso/prd/pilot/dev/vapid:
   kind: external
   interval: 365d
@@ -609,6 +615,12 @@ eso/prd/pilot/dev/vapid:
     rotate: openssl ecparam -name prime256v1 -genkey -noout | openssl pkcs8 -topk8 -nocrypt | bao kv
     put -mount=kv eso/prd/pilot/dev/vapid private_key=-, then force-sync its ExternalSecret and
     restart deployment/pilot in pilot-dev."
+
+eso/prd/pilot/prd/service-user:
+  kind: keycloak-client
+  args: {"realm":"homelab"}
+  interval: 14d
+  activate: auto
 
 eso/prd/pilot/prd/vapid:
   kind: external

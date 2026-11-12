@@ -288,8 +288,16 @@
     "client_id",
     "client_secret"
   ],
+  "eso/prd/pilot/dev/service-user": [
+    "client_id",
+    "client_secret"
+  ],
   "eso/prd/pilot/dev/vapid": [
     "private_key"
+  ],
+  "eso/prd/pilot/prd/service-user": [
+    "client_id",
+    "client_secret"
   ],
   "eso/prd/pilot/prd/vapid": [
     "private_key"
