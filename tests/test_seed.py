@@ -385,6 +385,7 @@ def test_every_scheduled_manual_key_names_the_type_the_catalog_gives_it(entries)
         (CATALOG, "ssh-key-pve"): "ssh-private-key",
         ("eso/prd/trello-mcp/prd/trello", "api-key"): "trello-api-credential",
         ("eso/prd/trello-mcp/prd/trello", "token"): "trello-api-credential",
+        ("eso/prd/sonos-controller/prd/plex", "token"): "plex-token",
         (NTFY_AUTH, "pvginkel-password"): "ntfy-password",
         (NTFY_AUTH, "mvdbovenkamp-password"): "ntfy-password",
         (NTFY_AUTH, "bridge-token"): "ntfy-access-token",

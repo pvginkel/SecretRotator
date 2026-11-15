@@ -420,6 +420,7 @@ eso/prd/kubecoder/prd/catalog:
       notes: "The environments whose manifest asks for it (NewsFilter, ElectronicsInventory,
         DesignAssistant), whose suites call the live API; the dev bag copies it."
     pilot-projects-token: {kind: "copy:eso/prd/pilot/projects-token#token"}
+    plex-token: {kind: "copy:eso/prd/sonos-controller/prd/plex#token"}
     proxmox-password: {kind: "copy:iac/proxmox#password"}
     share-deployment-password: {kind: "copy:eso/prd/storage/prd/deploy-user#password"}
     ssh-key-ansible: {kind: "copy:iac/ansible-ssh-key#private"}
@@ -683,6 +684,14 @@ eso/prd/registry/prd/http-signing:
   kind: random
   interval: 14d
   activate: auto
+
+eso/prd/sonos-controller/prd/plex:
+  kind: manual
+  args: {"type":"plex-token"}
+  interval: 365d
+  activate: auto
+  notes: "SonosController's Plex token, which it browses the Plex library and queues music with;
+    copied into the KubeCoder prd catalog as plex-token for SonosController's environments."
 
 eso/prd/storage/prd/backup-server:
   kind: random

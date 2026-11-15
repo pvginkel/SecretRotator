@@ -244,6 +244,7 @@ class TestCredentialTypes:
             "ntfy-access-token",
             "ntfy-password",
             "openai-api-key",
+            "plex-token",
             "ssh-private-key",
             "telegram-bot-token",
             "torguard-wireguard",
@@ -286,6 +287,11 @@ class TestCredentialTypes:
             ),
             ("argocd-token", ["eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln"], ["eyJhbGc", "a.b.c"]),
             ("grafana-api-key", ["glsa_AbC123_0a1b2c3d"], ["eyJrIjoi", "glsa"]),
+            (
+                "plex-token",
+                ["aB3-_xYz0123456789cD"],
+                ["aB3-_xYz0123456789c", "aB3 xYz0123456789cDe"],
+            ),
             (
                 "trello-api-credential",
                 ["0123456789abcdef" * 2, "0123456789abcdef" * 4, "ATTA" + "0a1B" * 17],

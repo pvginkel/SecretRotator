@@ -216,6 +216,7 @@
     "kubeconfig-prd-write",
     "openai-api-key",
     "pilot-projects-token",
+    "plex-token",
     "proxmox-password",
     "share-deployment-password",
     "ssh-key-ansible",
@@ -329,6 +330,9 @@
   ],
   "eso/prd/registry/prd/http-signing": [
     "secret"
+  ],
+  "eso/prd/sonos-controller/prd/plex": [
+    "token"
   ],
   "eso/prd/storage/prd/backup-server": [
     "management_token"
