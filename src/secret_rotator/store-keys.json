@@ -166,6 +166,10 @@
   "eso/prd/kerstdiner/prd/notifications": [
     "token"
   ],
+  "eso/prd/kerstdiner/prd/oidc": [
+    "client_id",
+    "client_secret"
+  ],
   "eso/prd/kubecoder/dev/bot-token": [
     "token"
   ],

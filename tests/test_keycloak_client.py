@@ -120,7 +120,7 @@ def ids(plan):
 class TestTheArgs:
     def test_every_row_of_the_seed_is_accepted_and_names_its_realm(self):
         found = rows()
-        assert len(found) == 18
+        assert len(found) == 19
         for leaf, row in found.items():
             assert KeycloakClient().args_problems(row["args"]) == [], leaf
         realms = {leaf: row["args"]["realm"] for leaf, row in found.items()}
@@ -136,6 +136,7 @@ class TestTheArgs:
             "eso/prd/fieldnotes/prd/oidc",
             "eso/prd/grafana/prd/oidc",
             "eso/prd/iot/prd/oidc",
+            "eso/prd/kerstdiner/prd/oidc",
             "eso/prd/pgadmin/prd/oidc",
             "eso/prd/pilot/dev/service-user",
             "eso/prd/pilot/prd/service-user",

@@ -324,6 +324,12 @@ eso/prd/kerstdiner/prd/notifications:
   kind: copy:eso/prd/notifications/prd/registrations#kerstdiner-token
   activate: auto
 
+eso/prd/kerstdiner/prd/oidc:
+  kind: keycloak-client
+  args: {"realm":"homelab"}
+  interval: 14d
+  activate: auto
+
 eso/prd/kubecoder/dev/bot-token:
   kind: manual
   args: {"type":"telegram-bot-token"}
