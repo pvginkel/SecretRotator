@@ -959,6 +959,24 @@ shared/jenkins/admin-password:
     reads until it reads eso/prd/infra-statistics/prd/jenkins. The operator revokes it after that
     leaf's first rotation, then deletes this leaf (slice 047)."
 
+shared/keycloak-review/homelab:
+  kind: keycloak-client
+  args: {"realm":"homelab"}
+  interval: 14d
+  activate: none
+  notes: "ANS-11's temporary read-only review account keycloak-review-readonly (realm-management's
+    view and query roles alone), read by the Ansible environment's review of the realm. Deleted,
+    with the client, once ANS-11 no longer needs it."
+
+shared/keycloak-review/homelab-dev:
+  kind: keycloak-client
+  args: {"realm":"homelab-dev"}
+  interval: 14d
+  activate: none
+  notes: "ANS-11's temporary read-only review account keycloak-review-readonly (realm-management's
+    view and query roles alone), read by the Ansible environment's review of the realm. Deleted,
+    with the client, once ANS-11 no longer needs it."
+
 shared/prd/ceph-csi:
   kind: cephx
   interval: 365d

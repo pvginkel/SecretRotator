@@ -120,11 +120,17 @@ def ids(plan):
 class TestTheArgs:
     def test_every_row_of_the_seed_is_accepted_and_names_its_realm(self):
         found = rows()
-        assert len(found) == 19
+        assert len(found) == 21
         for leaf, row in found.items():
             assert KeycloakClient().args_problems(row["args"]) == [], leaf
         realms = {leaf: row["args"]["realm"] for leaf, row in found.items()}
-        dev = {DEV, HOMELAB_DEV, "jenkins/keycloak-da-admin", "jenkins/keycloak-iotsupport-admin"}
+        dev = {
+            DEV,
+            HOMELAB_DEV,
+            "jenkins/keycloak-da-admin",
+            "jenkins/keycloak-iotsupport-admin",
+            "shared/keycloak-review/homelab-dev",
+        }
         assert {leaf for leaf, realm in realms.items() if realm == "homelab-dev"} == dev
         assert set(realms.values()) == {"homelab", "homelab-dev"}
 

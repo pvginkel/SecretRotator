@@ -556,6 +556,14 @@
   "shared/jenkins/admin-password": [
     "password"
   ],
+  "shared/keycloak-review/homelab": [
+    "client_id",
+    "client_secret"
+  ],
+  "shared/keycloak-review/homelab-dev": [
+    "client_id",
+    "client_secret"
+  ],
   "shared/prd/ceph-csi": [
     "user_id",
     "user_key"
