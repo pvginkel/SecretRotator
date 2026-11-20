@@ -163,6 +163,9 @@
     "jenkins-token",
     "notifications-token"
   ],
+  "eso/prd/kerstdiner/prd/notifications": [
+    "token"
+  ],
   "eso/prd/kubecoder/dev/bot-token": [
     "token"
   ],
@@ -276,6 +279,9 @@
   "eso/prd/notifications/prd/registrations": [
     "alertmanager-token",
     "jenkins-token",
+    "kerstdiner-telegram-bot-token",
+    "kerstdiner-telegram-chat-ids",
+    "kerstdiner-token",
     "kubecoder-dev-telegram-bot-token",
     "kubecoder-dev-telegram-chat-ids",
     "kubecoder-dev-token",

@@ -320,6 +320,10 @@ eso/prd/jenkins-notifications-bridge/prd/config:
   keys:
     notifications-token: {kind: "copy:eso/prd/notifications/prd/registrations#jenkins-token"}
 
+eso/prd/kerstdiner/prd/notifications:
+  kind: copy:eso/prd/notifications/prd/registrations#kerstdiner-token
+  activate: auto
+
 eso/prd/kubecoder/dev/bot-token:
   kind: manual
   args: {"type":"telegram-bot-token"}
@@ -570,6 +574,14 @@ eso/prd/notifications/prd/registrations:
   interval: 14d
   activate: k8s-rollout:notifications-prd/deployment/notifications
   keys:
+    kerstdiner-telegram-bot-token:
+      kind: manual
+      args: {"type":"telegram-bot-token"}
+      interval: 365d
+      notes: "KerstDiner's own bot: the registration kerstdiner posts the households' changes to
+        the family's KerstDiner group with it, where it must be an admin, so that a dismiss can
+        delete its message. This key is its only copy: no other leaf holds it."
+    kerstdiner-telegram-chat-ids: {kind: none}
     kubecoder-dev-telegram-bot-token: {kind: "copy:eso/prd/kubecoder/dev/bot-token#token"}
     kubecoder-dev-telegram-chat-ids: {kind: none}
     kubecoder-telegram-bot-token: {kind: "copy:eso/prd/kubecoder/prd/bot-token#token"}

@@ -236,6 +236,7 @@ def test_a_note_the_catalog_gives_one_key_of_a_leaf_is_that_key_s_alone(entries)
             "bridge-token",
         },
         REGISTRATIONS: {
+            "kerstdiner-telegram-bot-token",
             "pilot-app-pvginkel-token",
             "pilot-app-mvdbovenkamp-token",
             "pilot-app-dev-pvginkel-token",
@@ -369,6 +370,7 @@ def test_every_scheduled_manual_key_names_the_type_the_catalog_gives_it(entries)
         ("eso/prd/newsfilter/prd/telegram", "bot-token"): "telegram-bot-token",
         ("eso/prd/prometheus/prd/telegram", "bot_token"): "telegram-bot-token",
         ("eso/prd/telegram-mcp/prd/telegram", "bot-token"): "telegram-bot-token",
+        (REGISTRATIONS, "kerstdiner-telegram-bot-token"): "telegram-bot-token",
         ("rotator/telegram", "token"): "telegram-bot-token",
         ("eso/prd/electronics-inventory/prd/openai", "api_key"): "openai-api-key",
         ("eso/prd/intercom/prd/openai", "api_key"): "openai-api-key",
@@ -407,7 +409,13 @@ def test_every_scheduled_manual_key_names_the_type_the_catalog_gives_it(entries)
 
 def test_the_notifications_leaves_mint_their_tokens_and_hold_or_copy_the_bots_keys(entries):
     rollout = "k8s-rollout:notifications-prd/deployment/notifications"
-    tokens = ("jenkins-token", "alertmanager-token", "kubecoder-token", "kubecoder-dev-token")
+    tokens = (
+        "jenkins-token",
+        "alertmanager-token",
+        "kubecoder-token",
+        "kubecoder-dev-token",
+        "kerstdiner-token",
+    )
     copies = {
         "kubecoder-telegram-bot-token": "eso/prd/kubecoder/prd/bot-token#token",
         "kubecoder-dev-telegram-bot-token": "eso/prd/kubecoder/dev/bot-token#token",
@@ -421,6 +429,8 @@ def test_the_notifications_leaves_mint_their_tokens_and_hold_or_copy_the_bots_ke
         **{key: (f"copy:{source}", None, rollout) for key, source in copies.items()},
         "kubecoder-telegram-chat-ids": ("none", None, None),
         "kubecoder-dev-telegram-chat-ids": ("none", None, None),
+        "kerstdiner-telegram-bot-token": ("manual", "365d", rollout),
+        "kerstdiner-telegram-chat-ids": ("none", None, None),
         "pilot-app-pvginkel-token": ("manual", "365d", rollout),
         "pilot-app-mvdbovenkamp-token": ("manual", "365d", rollout),
         "pilot-app-dev-pvginkel-token": ("manual", "365d", rollout),
@@ -446,6 +456,14 @@ def test_the_jenkins_adapter_mints_its_jenkins_token_and_copies_its_registration
         "notifications-token": (f"copy:{REGISTRATIONS}#jenkins-token", None, "auto"),
     }
     assert "eso/prd/jenkins-telegram-bot/prd/config" not in entries
+
+
+def test_kerstdiner_s_leaf_copies_its_registration_s_token(entries):
+    got = {
+        key: (f["kind"], f.get("interval"), f.get("activate"))
+        for key, f in entries["eso/prd/kerstdiner/prd/notifications"].items()
+    }
+    assert got == {"token": (f"copy:{REGISTRATIONS}#kerstdiner-token", None, "auto")}
 
 
 def test_a_rotation_of_alertmanager_s_token_syncs_its_copy_and_leaves_alertmanager_running(
