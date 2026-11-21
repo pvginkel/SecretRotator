@@ -126,10 +126,6 @@
     "password",
     "username"
   ],
-  "eso/prd/iot/prd/keycloak-admin": [
-    "client_id",
-    "client_secret"
-  ],
   "eso/prd/iot/prd/mqtt": [
     "password",
     "username"
@@ -137,10 +133,6 @@
   "eso/prd/iot/prd/mqtt-cronjob": [
     "password",
     "username"
-  ],
-  "eso/prd/iot/prd/oidc": [
-    "client_id",
-    "client_secret"
   ],
   "eso/prd/jenkins-mcp/prd/config": [
     "bearer-token",
@@ -509,6 +501,12 @@
   ],
   "rotator/terraform/iot-prd/db": [
     "password"
+  ],
+  "rotator/terraform/iot-prd/keycloak_client": [
+    "client_secret"
+  ],
+  "rotator/terraform/iot-prd/keycloak_client_admin": [
+    "client_secret"
   ],
   "rotator/terraform/iot-prd/s3": [
     "access_key"

@@ -85,6 +85,20 @@ TERRAFORM = {
         ("guacamole",),
     ),
     "iot-prd/db": ("password", "IotDeploy", "", "iotsupport-db", ("iotsupport",)),
+    "iot-prd/keycloak_client": (
+        "client_secret",
+        "IotDeploy",
+        "",
+        "keycloak-client",
+        ("iotsupport",),
+    ),
+    "iot-prd/keycloak_client_admin": (
+        "client_secret",
+        "IotDeploy",
+        "",
+        "keycloak-client-admin",
+        ("iotsupport",),
+    ),
     "iot-prd/s3": ("access_key", "IotDeploy", "", "s3-credentials", ("iotsupport",)),
     "keycloak-dev/db": ("password", "HomelabAppsDeploy", "keycloak", "keycloak-db", ("keycloak",)),
     "keycloak-prd/db": ("password", "HomelabAppsDeploy", "keycloak", "keycloak-db", ("keycloak",)),
@@ -125,9 +139,9 @@ TERRAFORM = {
     ),
 }
 # The Deployments of the markers' namespaces as a snapshot of prd held them on 2026-10-10, and
-# pgadmin-prd's, dnsmasq-prd's, electronics-inventory-prd's, fieldnotes-prd's and zigbee2mqtt-prd's
-# on 2026-11-21, with the Secrets each reads; the CronJobs s3-mirror, youtrack-backup and
-# postgres-backup read the other three markers' Secrets.
+# pgadmin-prd's, dnsmasq-prd's, electronics-inventory-prd's, fieldnotes-prd's, zigbee2mqtt-prd's
+# and iot-prd's on 2026-11-21, with the Secrets each reads; the CronJobs s3-mirror, youtrack-backup
+# and postgres-backup read the other three markers' Secrets.
 PRD = {
     ("dnsmasq-prd", "dhcp"): (),
     ("dnsmasq-prd", "dhcp-app"): ("dnsmasq-dhcp-app", "keycloak-client"),
@@ -155,7 +169,17 @@ PRD = {
         "keycloak-client",
     ),
     ("guacamole-prd", "guacamole"): ("guacamole-db",),
-    ("iot-prd", "iotsupport"): ("iotsupport-db", "s3-credentials"),
+    ("iot-prd", "iotsupport"): (
+        "iot-app",
+        "iot-architecture-pipeline",
+        "iot-elastic-credentials",
+        "iot-mqtt",
+        "iot-wifi",
+        "iotsupport-db",
+        "keycloak-client",
+        "keycloak-client-admin",
+        "s3-credentials",
+    ),
     ("keycloak-dev", "keycloak"): ("keycloak-db",),
     ("keycloak-prd", "keycloak"): ("keycloak-db",),
     ("pgadmin-prd", "pgadmin"): ("keycloak-client", "postgres-pgadmin-admin"),

@@ -261,12 +261,6 @@ eso/prd/iot/prd/elastic-credentials:
   keys:
     username: {kind: none}
 
-eso/prd/iot/prd/keycloak-admin:
-  kind: keycloak-client
-  args: {"realm":"homelab","client":"iotsupport-admin"}
-  interval: 14d
-  activate: auto
-
 eso/prd/iot/prd/mqtt:
   kind: mosquitto-user
   interval: 365d
@@ -280,12 +274,6 @@ eso/prd/iot/prd/mqtt-cronjob:
   activate: auto
   keys:
     username: {kind: none}
-
-eso/prd/iot/prd/oidc:
-  kind: keycloak-client
-  args: {"realm":"homelab"}
-  interval: 14d
-  activate: auto
 
 eso/prd/jenkins-mcp/prd/config:
   kind: random
@@ -1221,6 +1209,20 @@ rotator/terraform/iot-prd/db:
   marker: password
   kind: terraform
   args: {"repo":"pvginkel/IotDeploy","path":"","app":"iot-prd","keeper":"db","secret":"iot-prd/iotsupport-db"}
+  interval: 14d
+  activate: none
+
+rotator/terraform/iot-prd/keycloak_client:
+  marker: client_secret
+  kind: terraform
+  args: {"repo":"pvginkel/IotDeploy","path":"","app":"iot-prd","keeper":"keycloak_client","secret":"iot-prd/keycloak-client"}
+  interval: 14d
+  activate: none
+
+rotator/terraform/iot-prd/keycloak_client_admin:
+  marker: client_secret
+  kind: terraform
+  args: {"repo":"pvginkel/IotDeploy","path":"","app":"iot-prd","keeper":"keycloak_client_admin","secret":"iot-prd/keycloak-client-admin"}
   interval: 14d
   activate: none
 
