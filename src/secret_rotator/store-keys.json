@@ -110,10 +110,6 @@
     "admin-password",
     "admin-user"
   ],
-  "eso/prd/grafana/prd/oidc": [
-    "client_id",
-    "client_secret"
-  ],
   "eso/prd/homeapps/extension-signing": [
     "private-key"
   ],

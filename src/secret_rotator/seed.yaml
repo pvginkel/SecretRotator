@@ -225,12 +225,6 @@ eso/prd/grafana/prd/admin:
   keys:
     admin-user: {kind: none}
 
-eso/prd/grafana/prd/oidc:
-  kind: keycloak-client
-  args: {"realm":"homelab"}
-  interval: 14d
-  activate: auto
-
 eso/prd/homeapps/extension-signing:
   kind: external
   interval: 365d
