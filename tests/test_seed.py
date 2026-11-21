@@ -67,6 +67,13 @@ TERRAFORM = {
     "iot-prd/s3": ("access_key", "IotDeploy", "", "s3-credentials", ("iotsupport",)),
     "keycloak-dev/db": ("password", "HomelabAppsDeploy", "keycloak", "keycloak-db", ("keycloak",)),
     "keycloak-prd/db": ("password", "HomelabAppsDeploy", "keycloak", "keycloak-db", ("keycloak",)),
+    "pgadmin-prd/keycloak_client": (
+        "client_secret",
+        "HomelabAppsDeploy",
+        "pgadmin",
+        "keycloak-client",
+        ("pgadmin",),
+    ),
     "postgres-pas-prd/backups": (
         "token",
         "HomelabAppsDeploy",
@@ -89,9 +96,9 @@ TERRAFORM = {
         (),
     ),
 }
-# The Deployments of the markers' namespaces as a snapshot of prd held them on 2026-10-10, with the
-# markers' Secrets each reads; the CronJobs s3-mirror, youtrack-backup and postgres-backup read the
-# other three.
+# The Deployments of the markers' namespaces as a snapshot of prd held them on 2026-10-10, and
+# pgadmin-prd's on 2026-11-21, with the Secrets each reads; the CronJobs s3-mirror, youtrack-backup
+# and postgres-backup read the other three markers' Secrets.
 PRD = {
     ("electronics-inventory-prd", "electronics-inventory"): (
         "electronics-inventory-db",
@@ -101,6 +108,7 @@ PRD = {
     ("iot-prd", "iotsupport"): ("iotsupport-db", "s3-credentials"),
     ("keycloak-dev", "keycloak"): ("keycloak-db",),
     ("keycloak-prd", "keycloak"): ("keycloak-db",),
+    ("pgadmin-prd", "pgadmin"): ("keycloak-client", "postgres-pgadmin-admin"),
     ("postgres-pas-prd", "postgres-pooler-rw"): (),
     ("storage-prd", "backup-server"): (),
     ("storage-prd", "storage"): (),

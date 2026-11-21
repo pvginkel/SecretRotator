@@ -7,7 +7,7 @@ import urllib.error
 from pathlib import Path
 
 import pytest
-from fake_cluster import FakeCluster, compliant_objects
+from fake_cluster import FakeCluster, compliant_objects, externalsecret
 from fake_keycloak import COUNTERPART, FakeKeycloak, FakeResponse
 from fake_openbao import oidc_config
 from fixtures import compliant_store
@@ -28,6 +28,7 @@ OIDC_AUTH = "rotator/oidc-auth-client"  # client openbao, target auth/oidc/confi
 HOMELAB, HOMELAB_DEV = counterpart("homelab"), counterpart("homelab-dev")
 DEV = "eso/dev/electronics-inventory/dev/oidc"  # homelab-dev, its client_id, activate none
 PIPELINE = "jenkins/iotsupport-pipeline-oidc"  # homelab, its client_id, activate none
+HOOK = "eso/prd/argocd-hooks/keycloak/homelab"  # client argocd-hook, the hook Jobs' credential
 APP = "eso/prd/app/prd/oidc"  # the fixture's: homelab, auto, copied into eso/prd/kc/prd/catalog
 CATALOG = "eso/prd/kc/prd/catalog"
 DATA = {
@@ -143,7 +144,6 @@ class TestTheArgs:
             "eso/prd/grafana/prd/oidc",
             "eso/prd/iot/prd/oidc",
             "eso/prd/kerstdiner/prd/oidc",
-            "eso/prd/pgadmin/prd/oidc",
             "eso/prd/pilot/dev/service-user",
             "eso/prd/pilot/prd/service-user",
             "eso/prd/zigbee2mqtt/prd/oidc",
@@ -164,6 +164,11 @@ class TestTheArgs:
         }
         assert (found[OIDC_AUTH]["interval"], found[OIDC_AUTH]["activate"]) == ("14d", "none")
         assert SEED.markers.get(OIDC_AUTH) is None
+
+    def test_the_hook_s_client_names_itself_and_activates_only_its_externalsecrets(self):
+        row = rows()[HOOK]
+        assert row["args"] == {"realm": "homelab", "client": "argocd-hook"}
+        assert (row["interval"], row["activate"]) == ("14d", "eso")
 
     def test_each_realm_is_reached_at_one_base_url(self):
         assert REALMS == {
@@ -212,6 +217,26 @@ class TestThePlans:
             "k8s.rollout:app-prd/daemonset/app-agent",
             "k8s.rollout:app-prd/deployment/app",
             "k8s.rollout:kubecoder-prd/deployment/kubecoder-controller",
+            "kv.stamp",
+        ]
+
+    def test_the_hook_s_client_syncs_argocd_hook_credentials_and_restarts_nothing(self):
+        # Its one reader on prd (2026-11-21), which only the hooks' Jobs read: no workload.
+        world = World()
+        hook = externalsecret(
+            "argocd-hooks",
+            "argocd-hook-credentials",
+            data=[
+                (HOOK, "client_id"),
+                (HOOK, "client_secret"),
+                ("eso/prd/argocd-hooks/git", "token"),
+            ],
+        )
+        world.cluster = FakeCluster([*compliant_objects(), ("externalsecrets", hook)])
+        assert ids(world.plan(HOOK, cluster=True)) == [
+            "keycloak.regenerate",
+            "kv.write",
+            "eso.sync:argocd-hooks/argocd-hook-credentials",
             "kv.stamp",
         ]
 

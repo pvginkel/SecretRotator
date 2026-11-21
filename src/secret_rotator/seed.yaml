@@ -49,6 +49,16 @@ eso/prd/argocd-hooks/git:
     Destroy Stage Jobs clone each pvginkel deploy repo, push pvginkel/TerraformState and create the
     deploy repos' GitHub webhooks."
 
+eso/prd/argocd-hooks/keycloak/homelab:
+  kind: keycloak-client
+  args: {"realm":"homelab","client":"argocd-hook"}
+  interval: 14d
+  activate: eso
+  notes: "The Argo CD hooks' Keycloak admin client argocd-hook in realm homelab (realm-management's
+    manage-clients, manage-users and view-users), which every hook Job reads through
+    argocd-hook-credentials as TF_VAR_keycloak_homelab_client_id and _client_secret. The operator
+    made it in the admin console; no Terraform declares it."
+
 eso/prd/argocd/prd/git:
   kind: manual
   args: {"type":"github-pat"}
@@ -614,12 +624,6 @@ eso/prd/notifications/prd/registrations:
         page, and Pilot's backend sends the operator's notifications under it. Pilot keeps it in
         its own database; no leaf holds a copy."
 
-eso/prd/pgadmin/prd/oidc:
-  kind: keycloak-client
-  args: {"realm":"homelab"}
-  interval: 14d
-  activate: auto
-
 eso/prd/pilot/dev/service-user:
   kind: keycloak-client
   args: {"realm":"homelab"}
@@ -1076,9 +1080,10 @@ rotator/terraform/credentials:
   interval: 365d
   activate: none
   notes: "The terraform kind's token: fine-grained, on pvginkel, permission Contents read and write
-    and nothing more, repository access only these three: ElectronicsInventoryDeploy, IotDeploy,
-    HomelabAppsDeploy. It commits their keepers to config/<stage>/rotation.tfvars on main, in
-    HomelabAppsDeploy to <app>/config/<stage>/rotation.tfvars."
+    and nothing more, repository access only these nine: ElectronicsInventoryDeploy, IotDeploy,
+    HomelabAppsDeploy, DnsmasqDeploy, FieldnotesDeploy, Zigbee2mqttDeploy, KerstDinerDeploy,
+    PlatformAddOnsDeploy, PilotDeploy (dev stage). It commits keepers to
+    [<app>/]config/<stage>/rotation.tfvars on main."
 
 # The ssh-key kind's GitHub token, minted by the operator.
 rotator/ssh-key/credentials:
@@ -1246,6 +1251,13 @@ rotator/terraform/keycloak-prd/db:
   marker: password
   kind: terraform
   args: {"repo":"pvginkel/HomelabAppsDeploy","path":"keycloak","app":"keycloak-prd","keeper":"db","secret":"keycloak-prd/keycloak-db"}
+  interval: 14d
+  activate: none
+
+rotator/terraform/pgadmin-prd/keycloak_client:
+  marker: client_secret
+  kind: terraform
+  args: {"repo":"pvginkel/HomelabAppsDeploy","path":"pgadmin","app":"pgadmin-prd","keeper":"keycloak_client","secret":"pgadmin-prd/keycloak-client"}
   interval: 14d
   activate: none
 

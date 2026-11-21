@@ -17,6 +17,10 @@
   "eso/prd/argocd-hooks/git": [
     "token"
   ],
+  "eso/prd/argocd-hooks/keycloak/homelab": [
+    "client_id",
+    "client_secret"
+  ],
   "eso/prd/argocd/prd/git": [
     "token"
   ],
@@ -296,10 +300,6 @@
     "pilot-app-mvdbovenkamp-token",
     "pilot-app-pvginkel-token"
   ],
-  "eso/prd/pgadmin/prd/oidc": [
-    "client_id",
-    "client_secret"
-  ],
   "eso/prd/pilot/dev/service-user": [
     "client_id",
     "client_secret"
@@ -529,6 +529,9 @@
   ],
   "rotator/terraform/keycloak-prd/db": [
     "password"
+  ],
+  "rotator/terraform/pgadmin-prd/keycloak_client": [
+    "client_secret"
   ],
   "rotator/terraform/postgres-pas-prd/backups": [
     "token"
