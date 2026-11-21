@@ -42,11 +42,25 @@ REGISTRATIONS = "eso/prd/notifications/prd/registrations"
 # ("" for its root), the Secret Terraform writes in the Application's namespace, and the
 # Deployments that read it on prd. A Secret only CronJobs read has none.
 TERRAFORM = {
+    "dnsmasq-prd/keycloak_client": (
+        "client_secret",
+        "DnsmasqDeploy",
+        "",
+        "keycloak-client",
+        ("dhcp-app",),
+    ),
     "electronics-inventory-prd/db": (
         "password",
         "ElectronicsInventoryDeploy",
         "",
         "electronics-inventory-db",
+        ("electronics-inventory",),
+    ),
+    "electronics-inventory-prd/keycloak_client": (
+        "client_secret",
+        "ElectronicsInventoryDeploy",
+        "",
+        "keycloak-client",
         ("electronics-inventory",),
     ),
     "electronics-inventory-prd/s3": (
@@ -55,6 +69,13 @@ TERRAFORM = {
         "",
         "s3-credentials",
         ("electronics-inventory",),
+    ),
+    "fieldnotes-prd/keycloak_client": (
+        "client_secret",
+        "FieldnotesDeploy",
+        "",
+        "keycloak-client",
+        ("fieldnotes",),
     ),
     "guacamole-prd/db": (
         "password",
@@ -95,14 +116,43 @@ TERRAFORM = {
         "youtrack-backup-upload",
         (),
     ),
+    "zigbee2mqtt-prd/keycloak_client": (
+        "client_secret",
+        "Zigbee2mqttDeploy",
+        "",
+        "keycloak-client",
+        ("zigbee-control",),
+    ),
 }
 # The Deployments of the markers' namespaces as a snapshot of prd held them on 2026-10-10, and
-# pgadmin-prd's on 2026-11-21, with the Secrets each reads; the CronJobs s3-mirror, youtrack-backup
-# and postgres-backup read the other three markers' Secrets.
+# pgadmin-prd's, dnsmasq-prd's, electronics-inventory-prd's, fieldnotes-prd's and zigbee2mqtt-prd's
+# on 2026-11-21, with the Secrets each reads; the CronJobs s3-mirror, youtrack-backup and
+# postgres-backup read the other three markers' Secrets.
 PRD = {
+    ("dnsmasq-prd", "dhcp"): (),
+    ("dnsmasq-prd", "dhcp-app"): ("dnsmasq-dhcp-app", "keycloak-client"),
+    ("dnsmasq-prd", "dnsmasq-management-api"): ("management-api-auth",),
     ("electronics-inventory-prd", "electronics-inventory"): (
+        "electronics-inventory-app",
         "electronics-inventory-db",
+        "electronics-inventory-drain-auth",
+        "electronics-inventory-mouser",
+        "electronics-inventory-openai",
+        "keycloak-client",
         "s3-credentials",
+    ),
+    ("fieldnotes-prd", "fieldnotes"): (
+        "fieldnotes-app-secret-key",
+        "fieldnotes-client-token-mcp",
+        "fieldnotes-client-token-skills",
+        "fieldnotes-drain-auth",
+        "fieldnotes-github-webhook-secret",
+        "fieldnotes-kubecoder-controller",
+        "fieldnotes-mcp-token",
+        "fieldnotes-store-token",
+        "fieldnotes-youtrack-token",
+        "fieldnotes-youtrack-webhook-token",
+        "keycloak-client",
     ),
     ("guacamole-prd", "guacamole"): ("guacamole-db",),
     ("iot-prd", "iotsupport"): ("iotsupport-db", "s3-credentials"),
@@ -113,6 +163,10 @@ PRD = {
     ("storage-prd", "backup-server"): (),
     ("storage-prd", "storage"): (),
     ("youtrack-prd", "youtrack"): (),
+    ("zigbee2mqtt-prd", "code-server"): (),
+    ("zigbee2mqtt-prd", "zigbee-control"): ("keycloak-client", "zigbee2mqtt-app"),
+    ("zigbee2mqtt-prd", "zigbee2mqtt1"): (),
+    ("zigbee2mqtt-prd", "zigbee2mqtt2"): (),
 }
 
 

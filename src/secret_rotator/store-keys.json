@@ -39,10 +39,6 @@
   "eso/prd/dnsmasq/prd/management-api": [
     "auth_token"
   ],
-  "eso/prd/dnsmasq/prd/oidc": [
-    "client_id",
-    "client_secret"
-  ],
   "eso/prd/elasticsearch/prd/elastic": [
     "password"
   ],
@@ -64,10 +60,6 @@
   "eso/prd/electronics-inventory/prd/mouser": [
     "search_api_key"
   ],
-  "eso/prd/electronics-inventory/prd/oidc": [
-    "client_id",
-    "client_secret"
-  ],
   "eso/prd/electronics-inventory/prd/openai": [
     "api_key"
   ],
@@ -85,10 +77,6 @@
   ],
   "eso/prd/fieldnotes/prd/mcp-token": [
     "token"
-  ],
-  "eso/prd/fieldnotes/prd/oidc": [
-    "client_id",
-    "client_secret"
   ],
   "eso/prd/fieldnotes/prd/store-token": [
     "token"
@@ -377,10 +365,6 @@
   "eso/prd/zigbee2mqtt/prd/app": [
     "secret_key"
   ],
-  "eso/prd/zigbee2mqtt/prd/oidc": [
-    "client_id",
-    "client_secret"
-  ],
   "iac/ansible-ssh-key": [
     "private"
   ],
@@ -505,11 +489,20 @@
   "rotator/terraform/credentials": [
     "token"
   ],
+  "rotator/terraform/dnsmasq-prd/keycloak_client": [
+    "client_secret"
+  ],
   "rotator/terraform/electronics-inventory-prd/db": [
     "password"
   ],
+  "rotator/terraform/electronics-inventory-prd/keycloak_client": [
+    "client_secret"
+  ],
   "rotator/terraform/electronics-inventory-prd/s3": [
     "access_key"
+  ],
+  "rotator/terraform/fieldnotes-prd/keycloak_client": [
+    "client_secret"
   ],
   "rotator/terraform/guacamole-prd/db": [
     "password"
@@ -537,6 +530,9 @@
   ],
   "rotator/terraform/youtrack-prd/backups": [
     "token"
+  ],
+  "rotator/terraform/zigbee2mqtt-prd/keycloak_client": [
+    "client_secret"
   ],
   "rotator/youtrack": [
     "token"

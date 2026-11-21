@@ -95,12 +95,6 @@ eso/prd/dnsmasq/prd/management-api:
   interval: 14d
   activate: auto
 
-eso/prd/dnsmasq/prd/oidc:
-  kind: keycloak-client
-  args: {"realm":"homelab"}
-  interval: 14d
-  activate: auto
-
 eso/prd/elasticsearch/prd/elastic:
   kind: elastic-user
   args: {"user":"elastic"}
@@ -141,12 +135,6 @@ eso/prd/electronics-inventory/prd/mouser:
   activate: auto
   notes: "ElectronicsInventory's Mouser Search API key (part-number and keyword search)."
 
-eso/prd/electronics-inventory/prd/oidc:
-  kind: keycloak-client
-  args: {"realm":"homelab"}
-  interval: 14d
-  activate: auto
-
 eso/prd/electronics-inventory/prd/openai:
   kind: manual
   args: {"type":"openai-api-key"}
@@ -177,12 +165,6 @@ eso/prd/fieldnotes/prd/kubecoder-controller:
 
 eso/prd/fieldnotes/prd/mcp-token:
   kind: random
-  interval: 14d
-  activate: auto
-
-eso/prd/fieldnotes/prd/oidc:
-  kind: keycloak-client
-  args: {"realm":"homelab"}
   interval: 14d
   activate: auto
 
@@ -794,12 +776,6 @@ eso/prd/zigbee2mqtt/prd/app:
   interval: 14d
   activate: auto
 
-eso/prd/zigbee2mqtt/prd/oidc:
-  kind: keycloak-client
-  args: {"realm":"homelab"}
-  interval: 14d
-  activate: auto
-
 # --- iac: iac-impl resolves at every run ------------------------------------------------------
 
 iac/ansible-ssh-key:
@@ -1199,6 +1175,13 @@ rotator/bootstrap/seal-key:
 # Marker leaves for the credentials Terraform mints in an app's PreSync hook (R11), each at
 # rotator/terraform/<Argo Application>/<keeper>; a keeper is named after the Terraform block whose
 # credential it re-mints.
+rotator/terraform/dnsmasq-prd/keycloak_client:
+  marker: client_secret
+  kind: terraform
+  args: {"repo":"pvginkel/DnsmasqDeploy","path":"","app":"dnsmasq-prd","keeper":"keycloak_client","secret":"dnsmasq-prd/keycloak-client"}
+  interval: 14d
+  activate: none
+
 rotator/terraform/electronics-inventory-prd/db:
   marker: password
   kind: terraform
@@ -1206,10 +1189,24 @@ rotator/terraform/electronics-inventory-prd/db:
   interval: 14d
   activate: none
 
+rotator/terraform/electronics-inventory-prd/keycloak_client:
+  marker: client_secret
+  kind: terraform
+  args: {"repo":"pvginkel/ElectronicsInventoryDeploy","path":"","app":"electronics-inventory-prd","keeper":"keycloak_client","secret":"electronics-inventory-prd/keycloak-client"}
+  interval: 14d
+  activate: none
+
 rotator/terraform/electronics-inventory-prd/s3:
   marker: access_key
   kind: terraform
   args: {"repo":"pvginkel/ElectronicsInventoryDeploy","path":"","app":"electronics-inventory-prd","keeper":"s3","secret":"electronics-inventory-prd/s3-credentials"}
+  interval: 14d
+  activate: none
+
+rotator/terraform/fieldnotes-prd/keycloak_client:
+  marker: client_secret
+  kind: terraform
+  args: {"repo":"pvginkel/FieldnotesDeploy","path":"","app":"fieldnotes-prd","keeper":"keycloak_client","secret":"fieldnotes-prd/keycloak-client"}
   interval: 14d
   activate: none
 
@@ -1273,5 +1270,12 @@ rotator/terraform/youtrack-prd/backups:
   marker: token
   kind: terraform
   args: {"repo":"pvginkel/HomelabAppsDeploy","path":"youtrack","app":"youtrack-prd","keeper":"backups","secret":"youtrack-prd/youtrack-backup-upload"}
+  interval: 14d
+  activate: none
+
+rotator/terraform/zigbee2mqtt-prd/keycloak_client:
+  marker: client_secret
+  kind: terraform
+  args: {"repo":"pvginkel/Zigbee2mqttDeploy","path":"","app":"zigbee2mqtt-prd","keeper":"keycloak_client","secret":"zigbee2mqtt-prd/keycloak-client"}
   interval: 14d
   activate: none
