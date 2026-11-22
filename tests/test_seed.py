@@ -109,6 +109,20 @@ TERRAFORM = {
         "keycloak-client",
         ("pgadmin",),
     ),
+    "pilot-dev/keycloak_client": (
+        "client_secret",
+        "PilotDeploy",
+        "",
+        "keycloak-client",
+        ("pilot",),
+    ),
+    "pilot-dev/keycloak_client_service": (
+        "client_secret",
+        "PilotDeploy",
+        "",
+        "keycloak-client-service",
+        ("pilot",),
+    ),
     "postgres-pas-prd/backups": (
         "token",
         "HomelabAppsDeploy",
@@ -138,10 +152,10 @@ TERRAFORM = {
         ("zigbee-control",),
     ),
 }
-# The Deployments of the markers' namespaces as a snapshot of prd held them on 2026-10-10, and
+# The Deployments of the markers' namespaces as a snapshot of prd held them on 2026-10-10,
 # pgadmin-prd's, dnsmasq-prd's, electronics-inventory-prd's, fieldnotes-prd's, zigbee2mqtt-prd's
-# and iot-prd's on 2026-11-21, with the Secrets each reads; the CronJobs s3-mirror, youtrack-backup
-# and postgres-backup read the other three markers' Secrets.
+# and iot-prd's on 2026-11-21, and pilot-dev's on 2026-11-22, with the Secrets each reads; the
+# CronJobs s3-mirror, youtrack-backup and postgres-backup read the other three markers' Secrets.
 PRD = {
     ("dnsmasq-prd", "dhcp"): (),
     ("dnsmasq-prd", "dhcp-app"): ("dnsmasq-dhcp-app", "keycloak-client"),
@@ -183,6 +197,19 @@ PRD = {
     ("keycloak-dev", "keycloak"): ("keycloak-db",),
     ("keycloak-prd", "keycloak"): ("keycloak-db",),
     ("pgadmin-prd", "pgadmin"): ("keycloak-client", "postgres-pgadmin-admin"),
+    ("pilot-dev", "pilot"): (
+        "keycloak-client",
+        "keycloak-client-service",
+        "pilot-collector-token",
+        "pilot-db",
+        "pilot-drain-auth",
+        "pilot-kubecoder",
+        "pilot-projects-token",
+        "pilot-secret-key",
+        "pilot-sync",
+        "pilot-vapid",
+    ),
+    ("pilot-dev", "pilot-collector"): ("pilot-collector-token",),
     ("postgres-pas-prd", "postgres-pooler-rw"): (),
     ("storage-prd", "backup-server"): (),
     ("storage-prd", "storage"): (),

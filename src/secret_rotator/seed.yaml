@@ -588,12 +588,6 @@ eso/prd/notifications/prd/registrations:
         page, and Pilot's backend sends the operator's notifications under it. Pilot keeps it in
         its own database; no leaf holds a copy."
 
-eso/prd/pilot/dev/service-user:
-  kind: keycloak-client
-  args: {"realm":"homelab"}
-  interval: 14d
-  activate: auto
-
 eso/prd/pilot/dev/vapid:
   kind: external
   interval: 365d
@@ -603,12 +597,6 @@ eso/prd/pilot/dev/vapid:
     rotate: openssl ecparam -name prime256v1 -genkey -noout | openssl pkcs8 -topk8 -nocrypt | bao kv
     put -mount=kv eso/prd/pilot/dev/vapid private_key=-, then force-sync its ExternalSecret and
     restart deployment/pilot in pilot-dev."
-
-eso/prd/pilot/prd/service-user:
-  kind: keycloak-client
-  args: {"realm":"homelab"}
-  interval: 14d
-  activate: auto
 
 eso/prd/pilot/prd/vapid:
   kind: external
@@ -920,24 +908,6 @@ shared/jenkins/admin-password:
   notes: "Not a password: the Jenkins admin account's API token OpenBao, which infra-statistics
     reads until it reads eso/prd/infra-statistics/prd/jenkins. The operator revokes it after that
     leaf's first rotation, then deletes this leaf (slice 047)."
-
-shared/keycloak-review/homelab:
-  kind: keycloak-client
-  args: {"realm":"homelab"}
-  interval: 14d
-  activate: none
-  notes: "ANS-11's temporary read-only review account keycloak-review-readonly (realm-management's
-    view and query roles alone), read by the Ansible environment's review of the realm. Deleted,
-    with the client, once ANS-11 no longer needs it."
-
-shared/keycloak-review/homelab-dev:
-  kind: keycloak-client
-  args: {"realm":"homelab-dev"}
-  interval: 14d
-  activate: none
-  notes: "ANS-11's temporary read-only review account keycloak-review-readonly (realm-management's
-    view and query roles alone), read by the Ansible environment's review of the realm. Deleted,
-    with the client, once ANS-11 no longer needs it."
 
 shared/prd/ceph-csi:
   kind: cephx
@@ -1251,6 +1221,20 @@ rotator/terraform/pgadmin-prd/keycloak_client:
   marker: client_secret
   kind: terraform
   args: {"repo":"pvginkel/HomelabAppsDeploy","path":"pgadmin","app":"pgadmin-prd","keeper":"keycloak_client","secret":"pgadmin-prd/keycloak-client"}
+  interval: 14d
+  activate: none
+
+rotator/terraform/pilot-dev/keycloak_client:
+  marker: client_secret
+  kind: terraform
+  args: {"repo":"pvginkel/PilotDeploy","path":"","app":"pilot-dev","keeper":"keycloak_client","secret":"pilot-dev/keycloak-client"}
+  interval: 14d
+  activate: none
+
+rotator/terraform/pilot-dev/keycloak_client_service:
+  marker: client_secret
+  kind: terraform
+  args: {"repo":"pvginkel/PilotDeploy","path":"","app":"pilot-dev","keeper":"keycloak_client_service","secret":"pilot-dev/keycloak-client-service"}
   interval: 14d
   activate: none
 

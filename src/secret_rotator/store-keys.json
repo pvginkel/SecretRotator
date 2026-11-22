@@ -276,16 +276,8 @@
     "pilot-app-mvdbovenkamp-token",
     "pilot-app-pvginkel-token"
   ],
-  "eso/prd/pilot/dev/service-user": [
-    "client_id",
-    "client_secret"
-  ],
   "eso/prd/pilot/dev/vapid": [
     "private_key"
-  ],
-  "eso/prd/pilot/prd/service-user": [
-    "client_id",
-    "client_secret"
   ],
   "eso/prd/pilot/prd/vapid": [
     "private_key"
@@ -520,6 +512,12 @@
   "rotator/terraform/pgadmin-prd/keycloak_client": [
     "client_secret"
   ],
+  "rotator/terraform/pilot-dev/keycloak_client": [
+    "client_secret"
+  ],
+  "rotator/terraform/pilot-dev/keycloak_client_service": [
+    "client_secret"
+  ],
   "rotator/terraform/postgres-pas-prd/backups": [
     "token"
   ],
@@ -548,14 +546,6 @@
   ],
   "shared/jenkins/admin-password": [
     "password"
-  ],
-  "shared/keycloak-review/homelab": [
-    "client_id",
-    "client_secret"
-  ],
-  "shared/keycloak-review/homelab-dev": [
-    "client_id",
-    "client_secret"
   ],
   "shared/prd/ceph-csi": [
     "user_id",

@@ -121,7 +121,7 @@ def ids(plan):
 class TestTheArgs:
     def test_every_row_of_the_seed_is_accepted_and_names_its_realm(self):
         found = rows()
-        assert len(found) == 14
+        assert len(found) == 10
         for leaf, row in found.items():
             assert KeycloakClient().args_problems(row["args"]) == [], leaf
         realms = {leaf: row["args"]["realm"] for leaf, row in found.items()}
@@ -130,7 +130,6 @@ class TestTheArgs:
             HOMELAB_DEV,
             "jenkins/keycloak-da-admin",
             "jenkins/keycloak-iotsupport-admin",
-            "shared/keycloak-review/homelab-dev",
         }
         assert {leaf for leaf, realm in realms.items() if realm == "homelab-dev"} == dev
         assert set(realms.values()) == {"homelab", "homelab-dev"}
@@ -139,8 +138,6 @@ class TestTheArgs:
         # Their consumers' issuer is https://auth.ginbov.nl/realms/homelab (2026-10-08).
         for leaf in (
             "eso/prd/kerstdiner/prd/oidc",
-            "eso/prd/pilot/dev/service-user",
-            "eso/prd/pilot/prd/service-user",
             PIPELINE,
         ):
             assert rows()[leaf]["args"] == {"realm": "homelab"}, leaf
