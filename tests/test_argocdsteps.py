@@ -3,10 +3,10 @@ pushed commit it waits for a sync that succeeded at a revision that contains the
 commit or a later head, left to auto-sync for a grace; without one, for any sync that started once
 it ran. It requests a sync itself only while no operation runs, of the tracked branch's head, never
 a pinned revision, and verifies Synced and, unless told to leave it, Healthy (slice 048, ruling
-F2)."""
+F2). Of a multi-source Application, an upstream app's, the revision is its deploy repo's (SR-13)."""
 
 import pytest
-from fake_cluster import ARGO, HEAD, RETRY, FakeCluster
+from fake_cluster import ARGO, HEAD, RETRY, FakeCluster, application
 from test_k8ssteps import NOW
 
 from secret_rotator.argocdsteps import AUTO_SYNC_GRACE, ArgocdSync
@@ -42,6 +42,7 @@ class Pushed:
     """COMMIT, staged as commit; whether a revision contains it is answered from history."""
 
     staged = "commit"
+    repo = "pvginkel/app-prd"  # the repository of the fake's Applications
 
     def __init__(self, history=None):
         self.history = history or {LATER: {COMMIT}}  # revision -> the commits it has
@@ -255,3 +256,60 @@ class TestWithoutACommit:
         assert self.step(fake).run(ctx) == "0e1f2a3 synced by secret-rotator: Synced, Healthy"
         assert ctx.progressed[0] == "waiting for the sync of 0e1f2a3 under way to end"
         assert len(requested(fake)) == 1
+
+
+def upstream():
+    """The fake cluster with the Application multi-source, as an upstream app's."""
+    fake = FakeCluster()
+    fake.objects["applications", "argocd-prd", APP] = application(APP, upstream=True)
+    return fake
+
+
+class TestAMultiSourceApplication:
+    """An upstream app's: its operations name a revision per source, the chart's pinned version
+    first, and a sync that started leaves its revision empty beside them (grafana-prd's on
+    2026-11-21). The step reads the revision of its first source in the pushed repo."""
+
+    def test_auto_sync_syncs_the_commit_and_the_chart_s_version_is_never_asked_about(self):
+        fake = upstream()
+        fake.push(APP, COMMIT)
+        step, pushed, ctx = pushed_sync(fake)
+        assert step.run(ctx) == "b2c4e6a synced by auto-sync: Synced, Healthy"
+        assert pushed.asked == [HEAD] and requested(fake) == []
+        state = fake.get("applications", "argocd-prd", APP)["status"]["operationState"]
+        assert state["syncResult"]["revision"] == ""
+        assert state["syncResult"]["revisions"] == ["10.5.15", COMMIT, COMMIT]
+
+    def test_a_later_head_that_has_it_will_do(self):
+        fake = upstream()
+        fake.push(APP, COMMIT, webhook=False)
+        fake.push(APP, LATER)
+        step, pushed, ctx = pushed_sync(fake)
+        assert step.run(ctx) == "d4e6f8a synced by auto-sync: Synced, Healthy"
+        assert pushed.asked == [HEAD, LATER]
+
+    def test_without_auto_sync_it_requests_the_heads_of_its_sources(self):
+        fake = upstream()
+        fake.push(APP, COMMIT, webhook=False)
+        step, _, ctx = pushed_sync(fake)
+        assert step.run(ctx) == "b2c4e6a synced by secret-rotator: Synced, Healthy"
+        (body,) = requested(fake)
+        assert body["operation"]["sync"] == {"prune": True}
+
+    def test_one_with_no_source_in_the_pushed_repo_fails_it_before_it_waits(self):
+        fake = upstream()
+        fake.push(APP, COMMIT)
+        step, pushed, ctx = pushed_sync(fake)
+        pushed.repo = "pvginkel/OtherDeploy"
+        with pytest.raises(StepFailed) as e:
+            step.run(ctx)
+        assert e.value.error == (
+            "Argo Application app-prd has no source in pvginkel/OtherDeploy: no sync of it takes "
+            "the commit"
+        )
+        assert ctx.progressed == [] and pushed.asked == []
+
+    def test_without_a_commit_it_shows_the_revision_of_its_first_source_from_git(self):
+        ctx = Ctx()
+        step = ArgocdSync(Cluster(upstream().kube()), APP)
+        assert step.run(ctx) == "5a1f3c9 synced by secret-rotator: Synced, Healthy"

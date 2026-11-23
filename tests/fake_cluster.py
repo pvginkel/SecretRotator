@@ -5,7 +5,8 @@ Its ESO syncs a force-synced ExternalSecret, its controllers roll a restarted wo
 Argo CD starts a requested operation, each once the fake clock, which the client's sleep advances,
 has passed their lag. Argo CD syncs the revision an operation names, else the head of the branch
 the Application tracks, running the Application's PreSync hook where a test gives it one, and
-auto-syncs a push to that branch. A merge patch that names a
+auto-syncs a push to that branch; a multi-source Application's operations name one revision per
+source, its chart's pinned version and the deploy repo's commit. A merge patch that names a
 resourceVersion is refused with a 409 once the object's is another.
 
 The compliant cluster references every eso/prd/ leaf of fixtures.COMPLIANT but
@@ -47,6 +48,8 @@ KINDS = {"deployments": "Deployment", "statefulsets": "StatefulSet", "daemonsets
 HEAD = "5a1f3c9e0b7d4e2a8c6f1b3d5e7a9c0b2d4f6a8e"  # every Application's branch head until a push
 EPOCH = datetime.datetime(2026, 10, 5, 4, 30, tzinfo=datetime.UTC)  # the fake clock's 0
 RETRY = {"limit": 3, "backoff": {"duration": "30s", "factor": 2}}
+UPSTREAM = "https://charts.example.org"  # an upstream app's Helm repository
+CHART_VERSION = "10.5.15"  # the chart version an upstream app's stage pins
 
 
 class FakeResponse(io.BytesIO):
@@ -209,37 +212,68 @@ def settle(kind, obj, ready=None):
     obj["status"] = {"observedGeneration": generation, **status}
 
 
-def application(name, *, health="Healthy", hook=None):
+def application(name, *, health="Healthy", hook=None, upstream=False):
     """An Argo CD Application as the releases chart makes one, auto-syncing main, Synced at HEAD
     by an auto-sync that succeeded a day before the fake clock's 0; hook: its PreSync hook's
-    parameters, each hook.<key> as the chart renders it."""
-    source = {"repoURL": f"https://github.com/pvginkel/{name}.git", "path": "chart"}
+    parameters, each hook.<key> as the chart renders it. upstream: an upstream app's, multi-source
+    as grafana-prd's was on 2026-11-21: the chart from its Helm repository at CHART_VERSION, the
+    values and the companion chart with the hook's parameters from the deploy repo, hook.repo's
+    where there is a hook."""
+    repo = (hook or {}).get("repo") if upstream else None
+    source = {"repoURL": repo or f"https://github.com/pvginkel/{name}.git", "path": "chart"}
     if hook:
         params = [{"name": f"hook.{key}", "value": value} for key, value in hook.items()]
         source["helm"] = {"parameters": params, "valueFiles": ["../config/prd/values.yaml"]}
+    source |= {"targetRevision": "main"}
+    spec = {"syncPolicy": {"automated": {"prune": True, "selfHeal": False}, "retry": RETRY}}
+    if upstream:
+        if hook:
+            source["helm"] = {"parameters": source["helm"]["parameters"]}
+        chart = {
+            "repoURL": UPSTREAM,
+            "chart": "upstream",
+            "targetRevision": CHART_VERSION,
+            "helm": {"valueFiles": ["$values/config/prd/values.yaml"]},
+        }
+        values = {"repoURL": source["repoURL"], "targetRevision": "main", "ref": "values"}
+        spec["sources"] = [chart, values, source]
+        revision = {"revisions": source_revisions(spec, HEAD)}
+        result = {"revision": ""} | revision  # as Argo CD resolves a multi-source sync
+    else:
+        spec["source"] = source
+        revision = result = {"revision": HEAD}
     return {
         "metadata": {"namespace": "argocd-prd", "name": name, "resourceVersion": "1"},
-        "spec": {
-            "source": source | {"targetRevision": "main"},
-            "syncPolicy": {"automated": {"prune": True, "selfHeal": False}, "retry": RETRY},
-        },
+        "spec": spec,
         "status": {
-            "sync": {"status": "Synced", "revision": HEAD},
+            "sync": {"status": "Synced"} | revision,
             "health": {"status": health},
             "operationState": {
                 "operation": {
                     "initiatedBy": {"automated": True},
-                    "sync": {"revision": HEAD, "prune": True},
+                    "sync": revision | {"prune": True},
                     "retry": RETRY,
                 },
                 "phase": "Succeeded",
                 "message": "successfully synced (all tasks run)",
                 "startedAt": "2026-10-04T04:30:00Z",
                 "finishedAt": "2026-10-04T04:31:22Z",
-                "syncResult": {"revision": HEAD},
+                "syncResult": result,
             },
         },
     }
+
+
+def source_revisions(spec, sha):
+    """The revision of each source of a multi-source Application at the deploy repo's sha: a
+    chart's its pinned version."""
+    return [s["targetRevision"] if "chart" in s else sha for s in spec["sources"]]
+
+
+def deployed(result):
+    """The deploy repo's revision a sync's result holds: of a multi-source Application, its last
+    source's, the companion chart with the hook's parameters."""
+    return result["revision"] or result["revisions"][-1]
 
 
 def compliant_objects():
@@ -584,9 +618,11 @@ class FakeCluster:
         if obj.get("operation") is not None:
             self.later(5, lambda: self.auto_sync(obj, sha))
             return
+        spec = obj["spec"]
+        revision = {"revisions": source_revisions(spec, sha)} if "sources" in spec else {}
         obj["operation"] = {
             "initiatedBy": {"automated": True},
-            "sync": {"revision": sha, "prune": True},
+            "sync": (revision or {"revision": sha}) | {"prune": True},
             "retry": RETRY,
         }
         self.touch(obj)
@@ -595,13 +631,18 @@ class FakeCluster:
     def start_sync(self, obj):
         """Argo CD starts the requested operation: of the revision it names, else of the head."""
         operation = obj["operation"]
-        revision = operation["sync"].get("revision") or self.head(obj["metadata"]["name"])
+        head = self.head(obj["metadata"]["name"])
+        if "sources" in obj["spec"]:
+            revisions = operation["sync"].get("revisions") or source_revisions(obj["spec"], head)
+            result = {"revision": "", "revisions": revisions}
+        else:
+            result = {"revision": operation["sync"].get("revision") or head}
         obj["status"]["operationState"] = {
             "operation": copy.deepcopy(operation),
             "phase": "Running",
             "message": "waiting for completion of hook batch/Job/terraform-presync",
             "startedAt": self.iso(),
-            "syncResult": {"revision": revision},
+            "syncResult": result,
         }
         self.touch(obj)
         self.later(self.sync_took, lambda: self.finish_sync(obj))
@@ -610,16 +651,17 @@ class FakeCluster:
         name = obj["metadata"]["name"]
         state = obj["status"]["operationState"]
         failing = self.sync_failing.get(name)
+        revision = deployed(state["syncResult"])
         if not failing and name in self.presync:
-            self.presync[name](state["syncResult"]["revision"])
+            self.presync[name](revision)
         state["phase"] = "Failed" if failing else "Succeeded"
         state["message"] = failing or "successfully synced (all tasks run)"
         state["finishedAt"] = self.iso()
         del obj["operation"]
         if not failing:
-            revision = state["syncResult"]["revision"]
             synced = "Synced" if revision == self.head(name) else "OutOfSync"
-            obj["status"]["sync"] = {"status": synced, "revision": revision}
+            result = {k: v for k, v in state["syncResult"].items() if v}
+            obj["status"]["sync"] = {"status": synced} | result
         self.touch(obj)
 
     @staticmethod

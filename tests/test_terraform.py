@@ -5,7 +5,8 @@ keeper through GitHub's contents API under the kind's own token, waits for the A
 of a revision that contains the commit, proves that the Secret changed (ruling F1), rewrites the
 marker, restarts every workload that reads the Secret (ruling D1) and stamps. Nothing undoes the
 commit, and a plan taken up past its commit by another process commits afresh before it proves
-anything."""
+anything. An upstream app's Application is multi-source: the hook's parameters are on one of its
+sources, and its syncs carry a revision per source (SR-13)."""
 
 import base64
 import datetime
@@ -75,12 +76,12 @@ def store_of(args=ARGS, activate="none"):
     }
 
 
-def objects(hook=HOOK, *, readers=True):
-    """(resource, object) of the app as prd holds it: its Application, the Secret Terraform
-    writes, a CronJob and, with readers, a Deployment that read it, and a Deployment that does
-    not."""
+def objects(hook=HOOK, *, readers=True, upstream=False):
+    """(resource, object) of the app as prd holds it: its Application, multi-source with
+    upstream, the Secret Terraform writes, a CronJob and, with readers, a Deployment that read it,
+    and a Deployment that does not."""
     found = [
-        ("applications", application(APP, hook=hook)),
+        ("applications", application(APP, hook=hook, upstream=upstream)),
         ("secrets", secret(NS, SECRET, username="iotsupport", password="SECRET-at-install")),
         ("deployments", workload("Deployment", NS, "other", pod_spec(env=["other"]), app=APP)),
         (
@@ -104,7 +105,15 @@ class World:
     long as the keeper is wired to the password."""
 
     def __init__(
-        self, *, args=ARGS, hook=HOOK, readers=True, activate="none", text=EMPTY, file=FILE
+        self,
+        *,
+        args=ARGS,
+        hook=HOOK,
+        readers=True,
+        activate="none",
+        text=EMPTY,
+        file=FILE,
+        upstream=False,
     ):
         self.store = store_of(args, activate)
         self.bao = fake_of(
@@ -114,7 +123,7 @@ class World:
         self.file = file
         self.github = FakeGitHub()
         self.github.repo(REPO, {file: text, "config/prd/values.yaml": "image: 1\n"}, sha=HEAD)
-        self.cluster = FakeCluster(objects(hook, readers=readers))
+        self.cluster = FakeCluster(objects(hook, readers=readers, upstream=upstream))
         self.github.on_commit.append(lambda repo, sha: self.cluster.push(APP, sha))
         self.cluster.presync[APP] = self.hook
         self.wired = True
@@ -316,6 +325,24 @@ class TestARotation:
         assert set(commit["files"]) == {file, "config/prd/values.yaml"}
         assert VALUE.fullmatch(world.keeper(commit))
 
+    def test_an_upstream_app_s_multi_source_application_takes_its_hook_s_source_and_revision(self):
+        # The releases chart's upstream app, as grafana-prd on 2026-11-21: no spec.source, the
+        # hook's parameters on the third of its sources, its syncs' revision empty beside one
+        # revision per source.
+        file = f"apps/iot/{FILE}"
+        args = ARGS | {"path": "apps/iot"}
+        world = World(args=args, hook=HOOK | {"path": "apps/iot"}, file=file, upstream=True)
+        assert "source" not in world.cluster.get("applications", "argocd-prd", APP)["spec"]
+        before = dict(world.secret()["data"])
+        assert world.executor().run() is Outcome.DONE, world.recorder.failures()
+        (commit,) = world.commits()
+        value = world.keeper(commit)
+        assert world.secret()["data"]["password"] == b64(f"SECRET-minted-{value}")
+        assert world.secret()["data"] != before and world.restarted("iotsupport")
+        details = finished(world)
+        assert details[COMMIT] == f"{commit['sha'][:7]}: postgres = {value} in {file}"
+        assert details[SYNC] == f"{commit['sha'][:7]} synced by auto-sync: Synced"
+
     def test_a_push_to_another_file_meanwhile_does_not_conflict(self):
         world = World()
         world.github.racing.append(
@@ -414,6 +441,22 @@ class TestARotation:
         assert world.failure().step.id == COMMIT and world.failure().error == why
         assert world.github.requests == [] and world.commits() == []
         assert executor.abort() is Outcome.CANCELLED
+
+    def test_a_multi_source_application_none_of_whose_sources_has_the_hook_fails_before_it(self):
+        world = World(hook=None, upstream=True)
+        assert world.executor().run() is Outcome.FAILED
+        assert world.failure().step.id == COMMIT and world.failure().error == (
+            "Argo Application iot-prd has no hook.stage: no PreSync hook applies it"
+        )
+        assert world.github.requests == []
+
+    def test_a_multi_source_application_whose_hook_s_source_is_on_another_branch_fails(self):
+        world = World(upstream=True)
+        spec = world.cluster.get("applications", "argocd-prd", APP)["spec"]
+        spec["sources"][-1]["targetRevision"] = "release"
+        assert world.executor().run() is Outcome.FAILED
+        assert world.failure().error == "Argo Application iot-prd tracks release, not main"
+        assert world.github.requests == []
 
     def test_an_application_on_another_branch_fails_before_its_commit(self):
         world = World()

@@ -488,6 +488,9 @@
   "rotator/terraform/fieldnotes-prd/keycloak_client": [
     "client_secret"
   ],
+  "rotator/terraform/grafana-prd/keycloak_client": [
+    "client_secret"
+  ],
   "rotator/terraform/guacamole-prd/db": [
     "password"
   ],

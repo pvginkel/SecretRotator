@@ -68,15 +68,31 @@ def fingerprint(cluster: Cluster, secret: SecretRef) -> str:
     return hashlib.sha256(json.dumps(obj.get("data") or {}, sort_keys=True).encode()).hexdigest()
 
 
+def _parameters(source: dict) -> dict:
+    """A source's Helm parameters, by name."""
+    return {
+        p.get("name"): p.get("value") for p in (source.get("helm") or {}).get("parameters") or []
+    }
+
+
+def _hook_source(application: dict) -> dict:
+    """The source that carries the PreSync hook's parameters: the Application's one source, or of
+    a multi-source Application, as the releases chart renders an upstream app's, the one of its
+    sources that sets hook.stage; empty when none does."""
+    spec = application.get("spec") or {}
+    if spec.get("source"):
+        return spec["source"]
+    hooked = (s for s in spec.get("sources") or [] if _parameters(s).get("hook.stage"))
+    return next(hooked, {})
+
+
 def keeper_file(application: dict, keeper: Keeper) -> str:
     """The keeper file the Application's PreSync hook reads: config/<hook.stage>/rotation.tfvars
     in the directory of the repo it applies. StepFailed when the hook applies another repo or
-    directory than the marker names, or the Application tracks another branch than main: no sync
-    of it would take the commit."""
-    source = (application.get("spec") or {}).get("source") or {}
-    params = {
-        p.get("name"): p.get("value") for p in (source.get("helm") or {}).get("parameters") or []
-    }
+    directory than the marker names, or its source tracks another branch than main: no sync of it
+    would take the commit."""
+    source = _hook_source(application)
+    params = _parameters(source)
     app = keeper.app
     stage = params.get("hook.stage")
     if not stage:

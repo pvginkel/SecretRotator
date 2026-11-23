@@ -1,8 +1,13 @@
 """The generic Argo CD step of design §4.2, argocd.sync: one Application synced and verified through
 the Application object in Argo CD's namespace, since the rotator holds no Argo CD API token. An
 activator: its undo is to run again after a rollback's undos (design §4.5). An Application that does
-not exist when the step starts counts as done, forward and in a rollback, with a line saying so."""
+not exist when the step starts counts as done, forward and in a rollback, with a line saying so.
 
+A multi-source Application, as the releases chart renders an upstream app's (ArgoCDDeploy
+releases/templates/applications.yaml), carries one revision per source in its operations, and an
+empty revision beside them once a sync resolved them: the step reads the revision of one source."""
+
+import re
 from typing import Protocol
 
 from secret_rotator.cluster import APPLICATIONS, Cluster, sync_state
@@ -19,6 +24,8 @@ AUTO_SYNC_GRACE = 60
 INITIATOR = "secret-rotator"  # the username of the operations the step requests
 RUNNING = ("Running", "Terminating")
 FAILED = ("Failed", "Error")
+# A source's repoURL on GitHub, as the releases chart renders it, with .git or without.
+GITHUB = re.compile(r"https://github\.com/(?P<repo>[^/]+/[^/]+?)(?:\.git)?")
 
 
 class Pushed(Protocol):
@@ -27,15 +34,43 @@ class Pushed(Protocol):
     contains the commit."""
 
     staged: str  # the staging name of the commit's SHA
+    repo: str  # <owner>/<repo>, the GitHub repository it pushed the commit to
 
     def contains(self, ctx: Context, revision: str, commit: str) -> bool:
         """Whether the revision is the commit or a later head of the branch that has it."""
 
 
-def _revision(op: dict) -> str | None:
-    """The revision an operation syncs: as resolved once it started, else as requested."""
-    resolved = (op.get("syncResult") or {}).get("revision")
-    return resolved or ((op.get("operation") or {}).get("sync") or {}).get("revision")
+def _source(application: dict, repo: str | None) -> int | None:
+    """Of a multi-source Application, the index of the source whose revision the step reads: the
+    first in the repo the commit was pushed to, without a commit the first from git rather than a
+    Helm repository; None for a single-source Application. StepFailed when no source is in the
+    pushed repo: no sync of the Application would take the commit."""
+    sources = (application.get("spec") or {}).get("sources") or []
+    if not sources:
+        return None
+    if repo is None:
+        return next((i for i, source in enumerate(sources) if not source.get("chart")), 0)
+    for i, source in enumerate(sources):
+        found = GITHUB.fullmatch(source.get("repoURL") or "")
+        if found is not None and found["repo"] == repo:
+            return i
+    name = (application.get("metadata") or {}).get("name")
+    raise StepFailed(
+        f"Argo Application {name} has no source in {repo}: no sync of it takes the commit"
+    )
+
+
+def _revision(op: dict, source: int | None) -> str | None:
+    """The revision an operation syncs, of the source at that index of a multi-source
+    Application: as resolved once it started, else as requested."""
+    resolved = op.get("syncResult") or {}
+    requested = (op.get("operation") or {}).get("sync") or {}
+    if source is None:
+        return resolved.get("revision") or requested.get("revision")
+    for revisions in (resolved.get("revisions") or [], requested.get("revisions") or []):
+        if source < len(revisions) and revisions[source]:
+            return revisions[source]
+    return None
 
 
 class ArgocdSync(Step):
@@ -43,7 +78,8 @@ class ArgocdSync(Step):
     and, unless healthy is False, Healthy; healthy False leaves its health to the steps after it.
 
     With pushed, the sync is one at a revision that contains the commit: the commit or any later
-    head of the branch, which moves on its own. An Application that auto-syncs gets
+    head of the branch, which moves on its own; of a multi-source Application, the revision of its
+    first source in the repo the commit is in. An Application that auto-syncs gets
     AUTO_SYNC_GRACE to start it. Without pushed, as an argocd-sync: activator after a KV write the
     hook's Terraform reads, it is any sync that started after this run of the step read the
     Application.
@@ -117,7 +153,8 @@ class _Sync:
         if application is None:
             raise StepFailed(f"Argo Application {self.step.app} does not exist")
         op = _operation(application)
-        phase, revision = op.get("phase"), _revision(op)
+        source = _source(application, self.step.pushed.repo if self.step.pushed else None)
+        phase, revision = op.get("phase"), _revision(op, source)
         awaited = bool(op) and self.awaited(op, revision)
         retry = awaited and phase in FAILED and op["startedAt"] == self.failed
         if awaited and not retry:

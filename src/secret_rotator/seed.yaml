@@ -1168,6 +1168,13 @@ rotator/terraform/fieldnotes-prd/keycloak_client:
   interval: 14d
   activate: none
 
+rotator/terraform/grafana-prd/keycloak_client:
+  marker: client_secret
+  kind: terraform
+  args: {"repo":"pvginkel/PlatformAddOnsDeploy","path":"grafana","app":"grafana-prd","keeper":"keycloak_client","secret":"grafana-prd/keycloak-client"}
+  interval: 14d
+  activate: none
+
 rotator/terraform/guacamole-prd/db:
   marker: password
   kind: terraform

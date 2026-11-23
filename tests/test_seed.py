@@ -15,6 +15,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from fake_cluster import application as argo_application
 from fake_cluster import externalsecret, pod_spec, snapshot, workload
 
 from secret_rotator import annotate as ann
@@ -76,6 +77,13 @@ TERRAFORM = {
         "",
         "keycloak-client",
         ("fieldnotes",),
+    ),
+    "grafana-prd/keycloak_client": (
+        "client_secret",
+        "PlatformAddOnsDeploy",
+        "grafana",
+        "keycloak-client",
+        ("grafana",),
     ),
     "guacamole-prd/db": (
         "password",
@@ -152,9 +160,13 @@ TERRAFORM = {
         ("zigbee-control",),
     ),
 }
+# The markers' Applications the releases chart renders multi-source: upstream apps (ArgoCDDeploy
+# releases/values.yaml, an entry with `upstream:`).
+UPSTREAM = {"grafana-prd"}
 # The Deployments of the markers' namespaces as a snapshot of prd held them on 2026-10-10,
 # pgadmin-prd's, dnsmasq-prd's, electronics-inventory-prd's, fieldnotes-prd's, zigbee2mqtt-prd's
-# and iot-prd's on 2026-11-21, and pilot-dev's on 2026-11-22, with the Secrets each reads; the
+# and iot-prd's on 2026-11-21, pilot-dev's on 2026-11-22 and grafana-prd's on 2026-11-23, with the
+# Secrets each reads; the
 # CronJobs s3-mirror, youtrack-backup and postgres-backup read the other three markers' Secrets.
 PRD = {
     ("dnsmasq-prd", "dhcp"): (),
@@ -182,6 +194,7 @@ PRD = {
         "fieldnotes-youtrack-webhook-token",
         "keycloak-client",
     ),
+    ("grafana-prd", "grafana"): ("grafana-admin", "keycloak-client"),
     ("guacamole-prd", "guacamole"): ("guacamole-db",),
     ("iot-prd", "iotsupport"): (
         "iot-app",
@@ -755,22 +768,18 @@ def test_every_terraform_marker_names_its_repo_application_keeper_and_secret(ent
 
 @pytest.mark.parametrize("at", sorted(TERRAFORM))
 def test_a_terraform_marker_takes_the_keeper_file_its_application_s_hook_reads(entries, at):
-    # The hook parameters as the releases chart renders them, which prd's Applications held on
-    # 2026-10-11: hook.path only for an app in a directory of its repo.
+    # The Application as the releases chart renders it, which prd's Applications held on
+    # 2026-10-11: hook.path only for an app in a directory of its repo, and an upstream app's
+    # multi-source, its hook's parameters on its third source, as grafana-prd's on 2026-11-21.
     key, repo, path, _, _ = TERRAFORM[at]
     app = at.split("/")[0]
     stage = app.rsplit("-", 1)[1]
-    params = {"hook.repo": f"https://github.com/pvginkel/{repo}.git", "hook.stage": stage}
+    hook = {"repo": f"https://github.com/pvginkel/{repo}.git", "stage": stage}
     if path:
-        params["hook.path"] = path
-    application = {
-        "spec": {
-            "source": {
-                "targetRevision": "main",
-                "helm": {"parameters": [{"name": n, "value": v} for n, v in params.items()]},
-            }
-        }
-    }
+        hook["path"] = path
+    upstream = app in UPSTREAM
+    application = argo_application(app, hook=hook, upstream=upstream)
+    assert ("sources" in application["spec"]) == upstream
     keeper = Keeper.of(entries[f"rotator/terraform/{at}"][key]["args"])
     where = f"{path}/" if path else ""
     assert keeper_file(application, keeper) == f"{where}config/{stage}/rotation.tfvars"
