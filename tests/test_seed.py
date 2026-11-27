@@ -447,6 +447,7 @@ def test_the_never_keys_that_stay_until_their_cards_land(entries):
         if fields.get("interval") == "never"
     }
     assert never == {
+        ("jenkins/intercom-android-keystore", "password", "manual"),
         ("jenkins/mydownloads-android-keystore", "password", "manual"),
         ("jenkins/scantopdf-android-keystore", "password", "manual"),
         ("eso/prd/prometheus/prd/healthchecks", "ping_url", "manual"),

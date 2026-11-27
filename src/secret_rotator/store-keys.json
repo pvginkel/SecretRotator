@@ -379,6 +379,13 @@
   "jenkins/home-automation-fleet": [
     "ha_token"
   ],
+  "jenkins/intercom-android-keystore": [
+    "password"
+  ],
+  "jenkins/intercom-pipeline-oidc": [
+    "client_id",
+    "client_secret"
+  ],
   "jenkins/iot-mqtt": [
     "password"
   ],

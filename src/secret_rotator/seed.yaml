@@ -820,6 +820,20 @@ jenkins/home-automation-fleet:
   interval: 14d
   activate: none
 
+jenkins/intercom-android-keystore:
+  kind: manual
+  interval: never
+  activate: none
+  notes: "IntercomClient's release keystore password, for keystore.jks at the repository's root,
+    which its Jenkinsfile signs with; minted 2026-11-27, its own value, not the other Android
+    keystores' personal password; changing it re-encrypts keystore.jks, an operator project"
+
+jenkins/intercom-pipeline-oidc:
+  kind: keycloak-client
+  args: {"realm":"homelab"}
+  interval: 14d
+  activate: none
+
 jenkins/iot-mqtt:
   kind: manual
   interval: never
